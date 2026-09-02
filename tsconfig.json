@@ -23,6 +23,6 @@
     "skipLibCheck": true,
     "types": ["node", "jest"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "drizzle.config.ts", "jest.config.ts", "eslint.config.js"],
+  "include": ["src/**/*.ts", "tests/**/*.ts", "drizzle.config.ts", "jest.config.ts", "neon.ts", "eslint.config.js"],
   "exclude": ["node_modules", "dist", "drizzle"]
 }

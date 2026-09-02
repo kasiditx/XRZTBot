@@ -22,6 +22,8 @@
     "ops:migrate-finance-logs": "npm run build && node scripts/migrate-finance-logs.mjs"
   },
   "dependencies": {
+    "@neon/config": "^1.2.0",
+    "@neon/env": "^1.2.0",
     "csv-parse": "7.0.2",
     "discord.js": "14.27.0",
     "dotenv": "17.4.2",

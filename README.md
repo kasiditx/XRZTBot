@@ -98,7 +98,8 @@ Environment variables:
 | `DISCORD_TOKEN` | yes | Bot token |
 | `DISCORD_APPLICATION_ID` | yes | Application ID |
 | `DISCORD_GUILD_ID` | yes | Server ID สำหรับ MVP server เดียว |
-| `DATABASE_URL` | yes | External PostgreSQL connection URL |
+| `DATABASE_URL` | yes | External PostgreSQL connection URL สำหรับ runtime |
+| `DATABASE_URL_UNPOOLED` | no | Direct PostgreSQL URL สำหรับ migration; ถ้าไม่ตั้งจะใช้ `DATABASE_URL` |
 | `TIMEZONE` | no | ค่าเริ่มต้น `Asia/Bangkok` |
 | `LOG_LEVEL` | no | ค่าเริ่มต้น `info` |
 | `SCHEDULER_POLL_MS` | no | ค่าเริ่มต้น `5000`, ต่ำสุด `1000` |
