@@ -21,6 +21,7 @@ export const fightPositionComponentIds = {
   add: 'fight:add',
   addModal: 'fight:add_modal',
   nameInput: 'fight:name',
+  emojiInput: 'fight:emoji',
   assignSetPrefix: 'fight:assign_set:',
   editAssignmentSetPrefix: 'fight:edit_assignment_set:',
   publish: 'fight:publish',
@@ -57,7 +58,7 @@ export function buildFightPositionAdminPanel(
     ? 'ยังไม่มีตำแหน่ง Fight กด **เพิ่มตำแหน่ง** เพื่อเริ่มใช้งาน'
     : positions
         .slice(0, 20)
-        .map((position, index) => `${(index + 1).toString()}. ⚔️ ${escapeMarkdown(position.name)}`)
+        .map((position, index) => `${(index + 1).toString()}. ${position.emoji} ${escapeMarkdown(position.name)}`)
         .join('\n');
   const embed = buildMiruEmbed({
     title: 'จัดการตำแหน่ง Fight',
@@ -113,7 +114,7 @@ export function buildFightPositionAdminPanel(
       .addOptions(pageState.items.map((position) => ({
         label: position.name.slice(0, 100),
         value: position.id,
-        emoji: '⚔️',
+        emoji: position.emoji,
       })));
     components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selector));
     appendPageNavigation(
@@ -142,7 +143,7 @@ export function buildFightPositionSetNameModal(): ModalBuilder {
 }
 
 export function buildFightPositionNameModal(position?: FightPosition): ModalBuilder {
-  const input = new TextInputBuilder()
+  const nameInput = new TextInputBuilder()
     .setCustomId(fightPositionComponentIds.nameInput)
     .setLabel('ชื่อตำแหน่ง Fight')
     .setPlaceholder('เช่น Main Fight, Support, Driver')
@@ -150,14 +151,28 @@ export function buildFightPositionNameModal(position?: FightPosition): ModalBuil
     .setMinLength(2)
     .setMaxLength(80)
     .setRequired(true);
-  if (position !== undefined) input.setValue(position.name);
+  const emojiInput = new TextInputBuilder()
+    .setCustomId(fightPositionComponentIds.emojiInput)
+    .setLabel('Emoji หน้าชื่อตำแหน่ง')
+    .setPlaceholder('เช่น 🔫, 🎯, 🛡️')
+    .setStyle(TextInputStyle.Short)
+    .setMinLength(1)
+    .setMaxLength(32)
+    .setRequired(true);
+  if (position !== undefined) {
+    nameInput.setValue(position.name);
+    emojiInput.setValue(position.emoji);
+  }
 
   return new ModalBuilder()
     .setCustomId(position === undefined
       ? fightPositionComponentIds.addModal
       : `${fightPositionComponentIds.renameModalPrefix}${position.id}`)
-    .setTitle(position === undefined ? 'เพิ่มตำแหน่ง Fight' : 'เปลี่ยนชื่อตำแหน่ง Fight')
-    .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
+    .setTitle(position === undefined ? 'เพิ่มตำแหน่ง Fight' : 'แก้ไขตำแหน่ง Fight')
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(nameInput),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(emojiInput),
+    );
 }
 
 export function buildFightPositionManagement(position: FightPosition) {
@@ -166,13 +181,13 @@ export function buildFightPositionManagement(position: FightPosition) {
     icon: '⚔️',
     tone: 'warning',
     module: 'Fight Positions',
-    description: `> **${escapeMarkdown(position.name)}**\n\nเลือกการทำงานที่ต้องการจากปุ่มด้านล่าง`,
+    description: `> ${position.emoji} **${escapeMarkdown(position.name)}**\n\nเลือกการทำงานที่ต้องการจากปุ่มด้านล่าง`,
   })
     .setFooter({ text: `Position ID: ${position.id}` });
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId(`${fightPositionComponentIds.renamePrefix}${position.id}`)
-      .setLabel('เปลี่ยนชื่อ')
+      .setLabel('แก้ไขชื่อ/Emoji')
       .setEmoji('✏️')
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
@@ -190,7 +205,7 @@ export function buildFightPositionDeleteConfirmation(position: FightPosition) {
     icon: '🗑️',
     tone: 'danger',
     module: 'Fight Positions',
-    description: `> ตำแหน่ง: **${escapeMarkdown(position.name)}**\n\n⚠️ สมาชิกที่ใช้ตำแหน่งนี้จะถูกเปลี่ยนเป็น **ยังไม่กำหนดตำแหน่ง**`,
+    description: `> ตำแหน่ง: ${position.emoji} **${escapeMarkdown(position.name)}**\n\n⚠️ สมาชิกที่ใช้ตำแหน่งนี้จะถูกเปลี่ยนเป็น **ยังไม่กำหนดตำแหน่ง**`,
   });
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
@@ -278,7 +293,7 @@ export function buildFightPositionAssignmentSelector(
       .addOptions(pageState.items.map((position) => ({
         label: position.name.slice(0, 100),
         value: position.id,
-        emoji: '⚔️',
+        emoji: position.emoji,
       })));
     components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selector));
     appendPageNavigation(
@@ -334,7 +349,11 @@ export function buildFightPositionSummary(setRosters: readonly FightPositionSetR
 }
 
 function buildFightPositionGroupSections(entries: readonly FightPositionRosterEntry[]): string[] {
-  const groups = new Map<string, { readonly label: string; readonly entries: FightPositionRosterEntry[] }>();
+  const groups = new Map<string, {
+    readonly label: string;
+    readonly emoji: string;
+    readonly entries: FightPositionRosterEntry[];
+  }>();
   for (const entry of entries) {
     const key = entry.positionId ?? 'UNASSIGNED';
     const existing = groups.get(key);
@@ -344,15 +363,16 @@ function buildFightPositionGroupSections(entries: readonly FightPositionRosterEn
     }
     groups.set(key, {
       label: entry.positionName ?? 'ยังไม่กำหนดตำแหน่ง',
+      emoji: entry.positionEmoji ?? '➖',
       entries: [entry],
     });
   }
 
-  return [...groups.entries()].map(([key, group]) => {
+  return [...groups.values()].map((group) => {
     const lines = group.entries.map((entry, index) => (
       `> **${(index + 1).toString().padStart(2, '0')}・${escapeMarkdown(entry.inGameName)}**  •  <@${entry.discordUserId}>`
     ));
-    return `**${key === 'UNASSIGNED' ? '➖' : '⚔️'}・${escapeMarkdown(group.label)} 〔${group.entries.length.toString()} คน〕**\n${lines.join('\n')}`;
+    return `**${group.emoji}・${escapeMarkdown(group.label)} 〔${group.entries.length.toString()} คน〕**\n${lines.join('\n')}`;
   });
 }
 

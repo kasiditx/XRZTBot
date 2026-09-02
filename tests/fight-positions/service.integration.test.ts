@@ -35,6 +35,27 @@ describeWithDatabase('FightPositionService PostgreSQL integration', () => {
     await pool.end();
   });
 
+  it('creates the eight default positions for a guild without positions', async () => {
+    const defaultGuildId = `${guildId}-defaults`;
+    await db.insert(guildSettings).values({ guildId: defaultGuildId });
+
+    try {
+      const positions = await service.listActive(defaultGuildId);
+      expect(positions.map(({ name, emoji }) => [name, emoji])).toEqual([
+        ['ปืน', '🔫'],
+        ['ไม้หน้า', '⚔️'],
+        ['ไม้กลาง', '🎯'],
+        ['ซัพพอตหลังบ้าน', '🩹'],
+        ['ปีกซ้าย', '🪽'],
+        ['ปีกขวา', '🪽'],
+        ['หลังบ้าน', '🛡️'],
+        ['อิสระ', '🕊️'],
+      ]);
+    } finally {
+      await db.delete(guildSettings).where(eq(guildSettings.guildId, defaultGuildId));
+    }
+  });
+
   it('creates positions and assigns one position to an active registered member', async () => {
     const [active, pending] = await db.insert(members).values([
       { guildId, discordUserId: '700000000000000001', inGameName: 'Zixx', status: 'ACTIVE' },
@@ -43,8 +64,8 @@ describeWithDatabase('FightPositionService PostgreSQL integration', () => {
     expect(active).toBeDefined();
     expect(pending).toBeDefined();
 
-    const main = await service.create(guildId, 'Main Fight', adminId);
-    const support = await service.create(guildId, 'Support', adminId);
+    const main = await service.create(guildId, 'Main Fight', '🔫', adminId);
+    const support = await service.create(guildId, 'Support', '🩹', adminId);
     const set1 = await service.getActiveSet(guildId);
     const set2 = await service.createSet(guildId, 'Set 2', adminId);
     await service.assign(guildId, set1.id, active!.id, main.id, adminId);
@@ -88,8 +109,9 @@ describeWithDatabase('FightPositionService PostgreSQL integration', () => {
   it('renames a position and soft-deletes it while clearing member assignments', async () => {
     const support = (await service.listActive(guildId)).find((position) => position.name === 'Support');
     expect(support).toBeDefined();
-    const renamed = await service.rename(guildId, support!.id, 'Backline', adminId);
+    const renamed = await service.rename(guildId, support!.id, 'Backline', '🛡️', adminId);
     expect(renamed.name).toBe('Backline');
+    expect(renamed.emoji).toBe('🛡️');
 
     const removed = await service.remove(guildId, renamed.id, adminId);
     expect(removed.isActive).toBe(false);

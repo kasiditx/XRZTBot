@@ -303,7 +303,15 @@ export class FightPositionInteractionHandler {
         requireUuid(selectedId),
         interaction.user.id,
       );
-      await interaction.update({ ...buildNotice('success', 'มอบตำแหน่งสำเร็จ', `Fight Set: **${result.set.name}**\n**${result.member.inGameName}** → ⚔️ **${result.position?.name ?? 'ยังไม่กำหนดตำแหน่ง'}**`, 'Fight Positions'), components: [] });
+      await interaction.update({
+        ...buildNotice(
+          'success',
+          'มอบตำแหน่งสำเร็จ',
+          `Fight Set: **${result.set.name}**\n**${result.member.inGameName}** → ${result.position?.emoji ?? '➖'} **${result.position?.name ?? 'ยังไม่กำหนดตำแหน่ง'}**`,
+          'Fight Positions',
+        ),
+        components: [],
+      });
     }
   }
 
@@ -317,9 +325,10 @@ export class FightPositionInteractionHandler {
       return;
     }
     const name = interaction.fields.getTextInputValue(fightPositionComponentIds.nameInput);
+    const emoji = interaction.fields.getTextInputValue(fightPositionComponentIds.emojiInput);
     if (interaction.customId === fightPositionComponentIds.addModal) {
-      const position = await this.dependencies.fightPositions.create(guild.id, name, interaction.user.id);
-      await interaction.reply({ ...buildNotice('success', 'เพิ่มตำแหน่งแล้ว', `⚔️ **${position.name}** พร้อมใช้งาน`, 'Fight Positions'), flags: MessageFlags.Ephemeral });
+      const position = await this.dependencies.fightPositions.create(guild.id, name, emoji, interaction.user.id);
+      await interaction.reply({ ...buildNotice('success', 'เพิ่มตำแหน่งแล้ว', `${position.emoji} **${position.name}** พร้อมใช้งาน`, 'Fight Positions'), flags: MessageFlags.Ephemeral });
       return;
     }
     if (interaction.customId.startsWith(fightPositionComponentIds.renameModalPrefix)) {
@@ -327,9 +336,10 @@ export class FightPositionInteractionHandler {
         guild.id,
         entityId(interaction.customId, fightPositionComponentIds.renameModalPrefix),
         name,
+        emoji,
         interaction.user.id,
       );
-      await interaction.reply({ ...buildNotice('success', 'เปลี่ยนชื่อตำแหน่งแล้ว', `ชื่อใหม่: ⚔️ **${position.name}**`, 'Fight Positions'), flags: MessageFlags.Ephemeral });
+      await interaction.reply({ ...buildNotice('success', 'แก้ไขตำแหน่งแล้ว', `ตำแหน่ง: ${position.emoji} **${position.name}**`, 'Fight Positions'), flags: MessageFlags.Ephemeral });
     }
   }
 

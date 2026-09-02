@@ -4,6 +4,7 @@ import {
   buildFightPositionAssignedMemberSelector,
   buildFightPositionAssignmentSelector,
   buildFightPositionMemberSelector,
+  buildFightPositionNameModal,
   buildFightPositionSummary,
 } from '../../src/infrastructure/discord/fight-position-components.js';
 import { buildControlPanel } from '../../src/infrastructure/discord/components.js';
@@ -20,7 +21,7 @@ describe('fight position Discord components', () => {
 
   it('provides add, assign, publish, rename and delete controls', () => {
     const activeSet = fightSet(1, 'Set 1', true);
-    const panel = buildFightPositionAdminPanel([activeSet], activeSet, [position(1, 'Main Fight')]);
+    const panel = buildFightPositionAdminPanel([activeSet], activeSet, [position(1, 'Main Fight', '🔫')]);
     const buttons = panel.components[1]?.toJSON().components;
     const selector = panel.components[3]?.toJSON().components[0];
 
@@ -35,8 +36,20 @@ describe('fight position Discord components', () => {
     ]));
     expect(selector).toMatchObject({
       custom_id: 'fight:manage_select:1',
-      options: [expect.objectContaining({ label: 'Main Fight', value: position(1).id })],
     });
+    if (selector === undefined || !('options' in selector)) throw new Error('Expected a position selector');
+    expect(selector.options[0]).toMatchObject({ label: 'Main Fight', value: position(1).id, emoji: { name: '🔫' } });
+    expect(panel.embeds[0]?.toJSON().fields?.[0]?.value).toContain('🔫 Main Fight');
+  });
+
+  it('asks for a custom emoji when adding a position', () => {
+    const modal = buildFightPositionNameModal().toJSON();
+
+    expect(modal.components).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        components: [expect.objectContaining({ custom_id: 'fight:emoji', required: true })],
+      }),
+    ]));
   });
 
   it('uses only the supplied active registry members in assignment controls', () => {
@@ -46,7 +59,7 @@ describe('fight position Discord components', () => {
     const assignmentSelector = buildFightPositionAssignmentSelector(
       activeSet,
       activeMembers[0]!,
-      [position(1, 'Support')],
+      [position(1, 'Support', '🩹')],
     ).components[0]?.toJSON().components[0];
 
     expect(memberSelector).toMatchObject({
@@ -58,8 +71,11 @@ describe('fight position Discord components', () => {
     });
     expect(assignmentSelector).toMatchObject({
       custom_id: `fight:assign_position:${activeSet.id}:${activeMembers[0]!.id}:1`,
-      options: [expect.objectContaining({ label: 'Support', value: position(1).id })],
     });
+    if (assignmentSelector === undefined || !('options' in assignmentSelector)) {
+      throw new Error('Expected an assignment selector');
+    }
+    expect(assignmentSelector.options[0]).toMatchObject({ label: 'Support', value: position(1).id, emoji: { name: '🩹' } });
   });
 
   it('uses a separate selector for members who already have a position', () => {
@@ -85,6 +101,7 @@ describe('fight position Discord components', () => {
             inGameName: 'Zixx Quint',
             positionId: position(1).id,
             positionName: 'Main Fight',
+            positionEmoji: '🔫',
             positionSortOrder: 0,
           },
           {
@@ -93,6 +110,7 @@ describe('fight position Discord components', () => {
             inGameName: 'Lily Miru',
             positionId: null,
             positionName: null,
+            positionEmoji: null,
             positionSortOrder: null,
           },
         ],
@@ -106,6 +124,7 @@ describe('fight position Discord components', () => {
             inGameName: 'Zixx Quint',
             positionId: position(2).id,
             positionName: 'Support',
+            positionEmoji: '🩹',
             positionSortOrder: 1,
           },
         ],
@@ -115,7 +134,7 @@ describe('fight position Discord components', () => {
 
     expect(embed?.description).toContain('Set ปัจจุบันกำหนดแล้ว **1/2 คน**');
     expect(embed?.description).toContain('Set 1 • ใช้งานอยู่');
-    expect(embed?.description).toContain('⚔️・Main Fight 〔1 คน〕');
+    expect(embed?.description).toContain('🔫・Main Fight 〔1 คน〕');
     expect(embed?.description).toContain('Zixx Quint');
     expect(embed?.description).toContain('➖・ยังไม่กำหนดตำแหน่ง 〔1 คน〕');
     expect(embed?.description).toContain('Lily Miru');
@@ -124,11 +143,12 @@ describe('fight position Discord components', () => {
   });
 });
 
-function position(index: number, name = `Position ${index.toString()}`): FightPosition {
+function position(index: number, name = `Position ${index.toString()}`, emoji = '⚔️'): FightPosition {
   return {
     id: `10000000-0000-4000-8000-${index.toString().padStart(12, '0')}`,
     guildId: 'guild',
     name,
+    emoji,
     isActive: true,
     sortOrder: index - 1,
     createdAt: now,

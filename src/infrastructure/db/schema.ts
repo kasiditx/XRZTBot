@@ -110,6 +110,7 @@ export const fightPositions = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     guildId: text('guild_id').notNull().references(() => guildSettings.guildId, { onDelete: 'cascade' }),
     name: text('name').notNull(),
+    emoji: text('emoji').notNull().default('⚔️'),
     isActive: boolean('is_active').notNull().default(true),
     sortOrder: integer('sort_order').notNull().default(0),
     ...auditColumns,
@@ -117,6 +118,7 @@ export const fightPositions = pgTable(
   (table) => [
     uniqueIndex('fight_positions_guild_name_uq').on(table.guildId, table.name),
     check('fight_positions_name_not_blank', sql`length(trim(${table.name})) > 0`),
+    check('fight_positions_emoji_not_blank', sql`length(trim(${table.emoji})) > 0`),
   ],
 );
 

@@ -21,6 +21,7 @@ export interface FightPositionRosterEntry {
   readonly inGameName: string;
   readonly positionId: string | null;
   readonly positionName: string | null;
+  readonly positionEmoji: string | null;
   readonly positionSortOrder: number | null;
 }
 
@@ -36,6 +37,16 @@ export interface FightPositionAssignmentResult {
 }
 
 const maxFightPositionSets = 10;
+const defaultFightPositions = [
+  { name: 'ปืน', emoji: '🔫' },
+  { name: 'ไม้หน้า', emoji: '⚔️' },
+  { name: 'ไม้กลาง', emoji: '🎯' },
+  { name: 'ซัพพอตหลังบ้าน', emoji: '🩹' },
+  { name: 'ปีกซ้าย', emoji: '🪽' },
+  { name: 'ปีกขวา', emoji: '🪽' },
+  { name: 'หลังบ้าน', emoji: '🛡️' },
+  { name: 'อิสระ', emoji: '🕊️' },
+] as const;
 
 export class FightPositionService {
   public constructor(private readonly db: Database) {}
@@ -128,6 +139,7 @@ export class FightPositionService {
   }
 
   public async listActive(guildId: string): Promise<FightPosition[]> {
+    await this.ensureDefaultPositions(guildId);
     return this.db.select().from(fightPositions)
       .where(and(eq(fightPositions.guildId, guildId), eq(fightPositions.isActive, true)))
       .orderBy(asc(fightPositions.sortOrder), asc(fightPositions.name));
@@ -182,8 +194,9 @@ export class FightPositionService {
       .then((rows) => rows.map(({ member }) => member));
   }
 
-  public async create(guildId: string, name: string, actorDiscordUserId: string): Promise<FightPosition> {
+  public async create(guildId: string, name: string, emoji: string, actorDiscordUserId: string): Promise<FightPosition> {
     const normalizedName = normalizeName(name, 'ชื่อตำแหน่ง Fight');
+    const normalizedEmoji = normalizeEmoji(emoji);
     return this.db.transaction(async (tx) => {
       await lockGuild(tx, guildId);
       const [existing] = await tx.select().from(fightPositions)
@@ -193,9 +206,14 @@ export class FightPositionService {
 
       const nextSortOrder = await findNextPositionSortOrder(tx, guildId);
       const [saved] = existing === undefined
-        ? await tx.insert(fightPositions).values({ guildId, name: normalizedName, sortOrder: nextSortOrder }).returning()
+        ? await tx.insert(fightPositions).values({
+            guildId,
+            name: normalizedName,
+            emoji: normalizedEmoji,
+            sortOrder: nextSortOrder,
+          }).returning()
         : await tx.update(fightPositions)
-            .set({ isActive: true, sortOrder: nextSortOrder, updatedAt: new Date() })
+            .set({ emoji: normalizedEmoji, isActive: true, sortOrder: nextSortOrder, updatedAt: new Date() })
             .where(eq(fightPositions.id, existing.id)).returning();
       if (saved === undefined) throw new Error('Fight position creation did not return a row');
 
@@ -213,24 +231,35 @@ export class FightPositionService {
     });
   }
 
-  public async rename(guildId: string, positionId: string, name: string, actorDiscordUserId: string): Promise<FightPosition> {
+  public async rename(
+    guildId: string,
+    positionId: string,
+    name: string,
+    emoji: string,
+    actorDiscordUserId: string,
+  ): Promise<FightPosition> {
     const normalizedName = normalizeName(name, 'ชื่อตำแหน่ง Fight');
+    const normalizedEmoji = normalizeEmoji(emoji);
     return this.db.transaction(async (tx) => {
       await lockGuild(tx, guildId);
       const position = await lockActivePosition(tx, guildId, positionId);
-      if (position.name === normalizedName) return position;
+      if (position.name === normalizedName && position.emoji === normalizedEmoji) return position;
       const [duplicate] = await tx.select({ id: fightPositions.id }).from(fightPositions)
         .where(and(eq(fightPositions.guildId, guildId), eq(fightPositions.name, normalizedName), ne(fightPositions.id, position.id)))
         .limit(1);
       if (duplicate !== undefined) throw new ConflictError('มีตำแหน่ง Fight ชื่อนี้อยู่แล้ว');
-      const [updated] = await tx.update(fightPositions).set({ name: normalizedName, updatedAt: new Date() })
+      const [updated] = await tx.update(fightPositions).set({
+        name: normalizedName,
+        emoji: normalizedEmoji,
+        updatedAt: new Date(),
+      })
         .where(eq(fightPositions.id, position.id)).returning();
       if (updated === undefined) throw new Error('Fight position rename did not return a row');
 
       await writeAudit(tx, {
         guildId,
         actorDiscordUserId,
-        action: 'FIGHT_POSITION_RENAMED',
+        action: 'FIGHT_POSITION_UPDATED',
         entityType: 'FIGHT_POSITION',
         entityId: updated.id,
         before: position,
@@ -329,6 +358,21 @@ export class FightPositionService {
     });
   }
 
+  private async ensureDefaultPositions(guildId: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await lockGuild(tx, guildId);
+      const [existing] = await tx.select({ id: fightPositions.id }).from(fightPositions)
+        .where(eq(fightPositions.guildId, guildId)).limit(1);
+      if (existing !== undefined) return;
+      await tx.insert(fightPositions).values(defaultFightPositions.map((position, sortOrder) => ({
+        guildId,
+        name: position.name,
+        emoji: position.emoji,
+        sortOrder,
+      })));
+    });
+  }
+
   private async listRosterForSet(guildId: string, setId: string): Promise<FightPositionRosterEntry[]> {
     return this.db.select({
       memberId: members.id,
@@ -336,6 +380,7 @@ export class FightPositionService {
       inGameName: members.inGameName,
       positionId: fightPositions.id,
       positionName: fightPositions.name,
+      positionEmoji: fightPositions.emoji,
       positionSortOrder: fightPositions.sortOrder,
     }).from(members)
       .leftJoin(memberFightPositions, and(
@@ -364,6 +409,16 @@ function normalizeName(name: string, label: string): string {
   const normalized = name.trim().replace(/\s+/gu, ' ');
   if (normalized.length < 2 || normalized.length > 80) {
     throw new ValidationError(`${label}ต้องมี 2–80 ตัวอักษร`);
+  }
+  return normalized;
+}
+
+function normalizeEmoji(emoji: string): string {
+  const normalized = emoji.trim();
+  const graphemes = [...new Intl.Segmenter('th', { granularity: 'grapheme' }).segment(normalized)];
+  const containsEmoji = /[\p{Extended_Pictographic}\p{Emoji_Presentation}]/u.test(normalized);
+  if (graphemes.length !== 1 || !containsEmoji || normalized.length > 32) {
+    throw new ValidationError('Emoji ต้องเป็น Emoji 1 ตัว เช่น 🔫, 🎯 หรือ 🛡️');
   }
   return normalized;
 }
