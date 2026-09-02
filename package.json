@@ -1,0 +1,48 @@
+{
+  "name": "mirubot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Discord-first gang management bot",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio",
+    "ops:migrate-finance-logs": "npm run build && node scripts/migrate-finance-logs.mjs"
+  },
+  "dependencies": {
+    "csv-parse": "7.0.2",
+    "discord.js": "14.27.0",
+    "dotenv": "17.4.2",
+    "drizzle-orm": "0.45.2",
+    "luxon": "3.7.2",
+    "pg": "8.23.0",
+    "pino": "10.3.1",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/jest": "30.0.0",
+    "@types/luxon": "3.7.5",
+    "@types/node": "22.20.1",
+    "@types/pg": "8.23.1",
+    "drizzle-kit": "0.31.10",
+    "eslint": "10.9.1",
+    "jest": "30.4.2",
+    "ts-jest": "29.4.12",
+    "tsx": "4.23.12",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.68.0"
+  }
+}

@@ -1,0 +1,1 @@
+ALTER TABLE "guild_settings" ADD COLUMN "fight_position_summary_message_id" text;

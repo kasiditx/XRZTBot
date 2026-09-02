@@ -1,0 +1,3 @@
+batch_ref,item_code,item_name,expected_quantity,action,change_quantity,reason
+2026-08-26-LOOP-001,MR-001,Repair Kit,100,ADD,20,รับของจาก Loop
+2026-08-26-LOOP-001,MR-002,Armor,50,REMOVE,5,ปรับยอดตามการตรวจนับ
