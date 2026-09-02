@@ -12,6 +12,7 @@ import type { GuildConfigService } from '../../modules/guild-config/service.js';
 import type { MemberService } from '../../modules/members/service.js';
 import { hasCapability, resolveAuthority } from '../../modules/authorization/permissions.js';
 import type { GuildSettings } from '../db/schema.js';
+import type { FightPositionSet } from '../db/schema.js';
 import { componentIds } from './components.js';
 import {
   buildFightPositionAdminPanel,
@@ -21,6 +22,7 @@ import {
   buildFightPositionManagement,
   buildFightPositionMemberSelector,
   buildFightPositionNameModal,
+  buildFightPositionSetNameModal,
   buildFightPositionSummary,
   fightPositionComponentIds,
 } from './fight-position-components.js';
@@ -62,40 +64,73 @@ export class FightPositionInteractionHandler {
     const guild = requireGuild(interaction.guild);
     if (interaction.customId.startsWith(fightPositionComponentIds.summaryPagePrefix)) {
       const page = parsePage(interaction.customId.slice(fightPositionComponentIds.summaryPagePrefix.length));
-      await interaction.update(buildFightPositionSummary(await this.dependencies.fightPositions.listRoster(guild.id), page));
+      await interaction.update(buildFightPositionSummary(
+        await this.dependencies.fightPositions.listAllSetRosters(guild.id),
+        page,
+      ));
       return;
     }
 
     await this.requireAdmin(guild, interaction.user.id);
     if (interaction.customId === componentIds.controlFightPositions) {
+      const [sets, positions] = await Promise.all([
+        this.dependencies.fightPositions.listSets(guild.id),
+        this.dependencies.fightPositions.listActive(guild.id),
+      ]);
+      const selectedSet = requireSelectedSet(sets);
       await interaction.reply({
-        ...buildFightPositionAdminPanel(await this.dependencies.fightPositions.listActive(guild.id)),
+        ...buildFightPositionAdminPanel(sets, selectedSet, positions),
         flags: MessageFlags.Ephemeral,
       });
+      return;
+    }
+    if (interaction.customId === fightPositionComponentIds.addSet) {
+      await interaction.showModal(buildFightPositionSetNameModal());
       return;
     }
     if (interaction.customId === fightPositionComponentIds.add) {
       await interaction.showModal(buildFightPositionNameModal());
       return;
     }
-    if (interaction.customId === fightPositionComponentIds.assign) {
+    if (interaction.customId.startsWith(fightPositionComponentIds.activateSetPrefix)) {
+      const activeSet = await this.dependencies.fightPositions.activateSet(
+        guild.id,
+        entityId(interaction.customId, fightPositionComponentIds.activateSetPrefix),
+        interaction.user.id,
+      );
+      const [sets, positions] = await Promise.all([
+        this.dependencies.fightPositions.listSets(guild.id),
+        this.dependencies.fightPositions.listActive(guild.id),
+      ]);
+      await interaction.update(buildFightPositionAdminPanel(sets, activeSet, positions));
+      return;
+    }
+    if (interaction.customId.startsWith(fightPositionComponentIds.assignSetPrefix)) {
+      const set = await this.dependencies.fightPositions.getSet(
+        guild.id,
+        entityId(interaction.customId, fightPositionComponentIds.assignSetPrefix),
+      );
       const members = await this.filterRoleVerifiedMembers(
         guild,
-        await this.dependencies.fightPositions.listUnassignedMembers(guild.id),
+        await this.dependencies.fightPositions.listUnassignedMembers(guild.id, set.id),
       );
       await interaction.reply({
-        ...buildFightPositionMemberSelector(members),
+        ...buildFightPositionMemberSelector(set, members),
         flags: MessageFlags.Ephemeral,
       });
       return;
     }
-    if (interaction.customId === fightPositionComponentIds.editAssignment) {
+    if (interaction.customId.startsWith(fightPositionComponentIds.editAssignmentSetPrefix)) {
+      const set = await this.dependencies.fightPositions.getSet(
+        guild.id,
+        entityId(interaction.customId, fightPositionComponentIds.editAssignmentSetPrefix),
+      );
       const members = await this.filterRoleVerifiedMembers(
         guild,
-        await this.dependencies.fightPositions.listAssignedMembers(guild.id),
+        await this.dependencies.fightPositions.listAssignedMembers(guild.id, set.id),
       );
       await interaction.reply({
-        ...buildFightPositionAssignedMemberSelector(members),
+        ...buildFightPositionAssignedMemberSelector(set, members),
         flags: MessageFlags.Ephemeral,
       });
       return;
@@ -113,43 +148,57 @@ export class FightPositionInteractionHandler {
       return;
     }
     if (interaction.customId.startsWith(fightPositionComponentIds.managePagePrefix)) {
-      const page = parsePage(interaction.customId.slice(fightPositionComponentIds.managePagePrefix.length));
-      await interaction.update(buildFightPositionAdminPanel(await this.dependencies.fightPositions.listActive(guild.id), page));
+      const context = parseSetPageContext(interaction.customId, fightPositionComponentIds.managePagePrefix);
+      const [sets, selectedSet, positions] = await Promise.all([
+        this.dependencies.fightPositions.listSets(guild.id),
+        this.dependencies.fightPositions.getSet(guild.id, context.setId),
+        this.dependencies.fightPositions.listActive(guild.id),
+      ]);
+      await interaction.update(buildFightPositionAdminPanel(sets, selectedSet, positions, context.page));
       return;
     }
     if (interaction.customId.startsWith(fightPositionComponentIds.assignMemberPagePrefix)) {
-      const page = parsePage(interaction.customId.slice(fightPositionComponentIds.assignMemberPagePrefix.length));
+      const context = parseSetPageContext(interaction.customId, fightPositionComponentIds.assignMemberPagePrefix);
+      const set = await this.dependencies.fightPositions.getSet(guild.id, context.setId);
       const members = await this.filterRoleVerifiedMembers(
         guild,
-        await this.dependencies.fightPositions.listUnassignedMembers(guild.id),
+        await this.dependencies.fightPositions.listUnassignedMembers(guild.id, set.id),
       );
       await interaction.update(buildFightPositionMemberSelector(
+        set,
         members,
-        page,
+        context.page,
       ));
       return;
     }
     if (interaction.customId.startsWith(fightPositionComponentIds.editMemberPagePrefix)) {
-      const page = parsePage(interaction.customId.slice(fightPositionComponentIds.editMemberPagePrefix.length));
+      const context = parseSetPageContext(interaction.customId, fightPositionComponentIds.editMemberPagePrefix);
+      const set = await this.dependencies.fightPositions.getSet(guild.id, context.setId);
       const members = await this.filterRoleVerifiedMembers(
         guild,
-        await this.dependencies.fightPositions.listAssignedMembers(guild.id),
+        await this.dependencies.fightPositions.listAssignedMembers(guild.id, set.id),
       );
       await interaction.update(buildFightPositionAssignedMemberSelector(
+        set,
         members,
-        page,
+        context.page,
       ));
       return;
     }
     if (interaction.customId.startsWith(fightPositionComponentIds.assignPositionPagePrefix)) {
-      const context = parseMemberPageContext(
+      const context = parseSetMemberPageContext(
         interaction.customId,
         fightPositionComponentIds.assignPositionPagePrefix,
       );
-      const member = await this.requireRoleVerifiedActiveMember(guild, context.memberId);
+      const [set, member, positions] = await Promise.all([
+        this.dependencies.fightPositions.getSet(guild.id, context.setId),
+        this.requireRoleVerifiedActiveMember(guild, context.memberId),
+        this.dependencies.fightPositions.listActive(guild.id),
+      ]);
       await interaction.update(buildFightPositionAssignmentSelector(
+        set,
         member,
-        await this.dependencies.fightPositions.listActive(guild.id),
+        positions,
         context.page,
       ));
       return;
@@ -180,13 +229,15 @@ export class FightPositionInteractionHandler {
       return;
     }
     if (interaction.customId.startsWith(fightPositionComponentIds.clearPrefix)) {
+      const context = parseSetMemberContext(interaction.customId, fightPositionComponentIds.clearPrefix);
       const result = await this.dependencies.fightPositions.assign(
         guild.id,
-        entityId(interaction.customId, fightPositionComponentIds.clearPrefix),
+        context.setId,
+        context.memberId,
         null,
         interaction.user.id,
       );
-      await interaction.update({ ...buildNotice('success', 'ถอดตำแหน่งแล้ว', `สมาชิก: **${result.member.inGameName}**\nสถานะ: **ยังไม่กำหนดตำแหน่ง**`, 'Fight Positions'), components: [] });
+      await interaction.update({ ...buildNotice('success', 'ถอดตำแหน่งแล้ว', `Fight Set: **${result.set.name}**\nสมาชิก: **${result.member.inGameName}**\nสถานะ: **ยังไม่กำหนดตำแหน่ง**`, 'Fight Positions'), components: [] });
     }
   }
 
@@ -196,6 +247,15 @@ export class FightPositionInteractionHandler {
     const selectedId = interaction.values[0];
     if (selectedId === undefined) throw new ValidationError('กรุณาเลือกรายการ');
 
+    if (interaction.customId === fightPositionComponentIds.setSelect) {
+      const [sets, selectedSet, positions] = await Promise.all([
+        this.dependencies.fightPositions.listSets(guild.id),
+        this.dependencies.fightPositions.getSet(guild.id, requireUuid(selectedId)),
+        this.dependencies.fightPositions.listActive(guild.id),
+      ]);
+      await interaction.update(buildFightPositionAdminPanel(sets, selectedSet, positions));
+      return;
+    }
     if (interaction.customId.startsWith(fightPositionComponentIds.manageSelectPrefix)) {
       await interaction.update(buildFightPositionManagement(
         await this.dependencies.fightPositions.getActive(guild.id, requireUuid(selectedId)),
@@ -203,40 +263,59 @@ export class FightPositionInteractionHandler {
       return;
     }
     if (interaction.customId.startsWith(fightPositionComponentIds.assignMemberPrefix)) {
-      const member = await this.requireRoleVerifiedActiveMember(guild, requireUuid(selectedId));
+      const context = parseSetPageContext(interaction.customId, fightPositionComponentIds.assignMemberPrefix);
+      const [set, member, positions] = await Promise.all([
+        this.dependencies.fightPositions.getSet(guild.id, context.setId),
+        this.requireRoleVerifiedActiveMember(guild, requireUuid(selectedId)),
+        this.dependencies.fightPositions.listActive(guild.id),
+      ]);
       await interaction.update(buildFightPositionAssignmentSelector(
+        set,
         member,
-        await this.dependencies.fightPositions.listActive(guild.id),
+        positions,
       ));
       return;
     }
     if (interaction.customId.startsWith(fightPositionComponentIds.editMemberPrefix)) {
-      const member = await this.requireRoleVerifiedActiveMember(guild, requireUuid(selectedId));
+      const context = parseSetPageContext(interaction.customId, fightPositionComponentIds.editMemberPrefix);
+      const [set, member, positions] = await Promise.all([
+        this.dependencies.fightPositions.getSet(guild.id, context.setId),
+        this.requireRoleVerifiedActiveMember(guild, requireUuid(selectedId)),
+        this.dependencies.fightPositions.listActive(guild.id),
+      ]);
       await interaction.update(buildFightPositionAssignmentSelector(
+        set,
         member,
-        await this.dependencies.fightPositions.listActive(guild.id),
+        positions,
       ));
       return;
     }
     if (interaction.customId.startsWith(fightPositionComponentIds.assignPositionPrefix)) {
-      const context = parseMemberPageContext(
+      const context = parseSetMemberPageContext(
         interaction.customId,
         fightPositionComponentIds.assignPositionPrefix,
       );
       await this.requireRoleVerifiedActiveMember(guild, context.memberId);
       const result = await this.dependencies.fightPositions.assign(
         guild.id,
+        context.setId,
         context.memberId,
         requireUuid(selectedId),
         interaction.user.id,
       );
-      await interaction.update({ ...buildNotice('success', 'มอบตำแหน่งสำเร็จ', `**${result.member.inGameName}** → ⚔️ **${result.position?.name ?? 'ยังไม่กำหนดตำแหน่ง'}**`, 'Fight Positions'), components: [] });
+      await interaction.update({ ...buildNotice('success', 'มอบตำแหน่งสำเร็จ', `Fight Set: **${result.set.name}**\n**${result.member.inGameName}** → ⚔️ **${result.position?.name ?? 'ยังไม่กำหนดตำแหน่ง'}**`, 'Fight Positions'), components: [] });
     }
   }
 
   private async handleModal(interaction: ModalSubmitInteraction): Promise<void> {
     const guild = requireGuild(interaction.guild);
     await this.requireAdmin(guild, interaction.user.id);
+    if (interaction.customId === fightPositionComponentIds.addSetModal) {
+      const setName = interaction.fields.getTextInputValue(fightPositionComponentIds.setNameInput);
+      const set = await this.dependencies.fightPositions.createSet(guild.id, setName, interaction.user.id);
+      await interaction.reply({ ...buildNotice('success', 'เพิ่ม Fight Set แล้ว', `📋 **${set.name}** พร้อมจัดตำแหน่ง\nกด **ใช้ Set นี้** เมื่อต้องการเปลี่ยนแผนที่ใช้งาน`, 'Fight Positions'), flags: MessageFlags.Ephemeral });
+      return;
+    }
     const name = interaction.fields.getTextInputValue(fightPositionComponentIds.nameInput);
     if (interaction.customId === fightPositionComponentIds.addModal) {
       const position = await this.dependencies.fightPositions.create(guild.id, name, interaction.user.id);
@@ -317,10 +396,32 @@ function parsePage(value: string): number {
   return page;
 }
 
-function parseMemberPageContext(customId: string, prefix: string) {
-  const [rawMemberId, rawPage, ...extra] = customId.slice(prefix.length).split(':');
-  if (rawMemberId === undefined || rawPage === undefined || extra.length > 0) {
+function parseSetPageContext(customId: string, prefix: string) {
+  const [rawSetId, rawPage, ...extra] = customId.slice(prefix.length).split(':');
+  if (rawSetId === undefined || rawPage === undefined || extra.length > 0) {
+    throw new ValidationError('ข้อมูล Fight Set ไม่ถูกต้อง');
+  }
+  return { setId: requireUuid(rawSetId), page: parsePage(rawPage) };
+}
+
+function parseSetMemberPageContext(customId: string, prefix: string) {
+  const [rawSetId, rawMemberId, rawPage, ...extra] = customId.slice(prefix.length).split(':');
+  if (rawSetId === undefined || rawMemberId === undefined || rawPage === undefined || extra.length > 0) {
     throw new ValidationError('ข้อมูลเลือกตำแหน่งไม่ถูกต้อง');
   }
-  return { memberId: requireUuid(rawMemberId), page: parsePage(rawPage) };
+  return { setId: requireUuid(rawSetId), memberId: requireUuid(rawMemberId), page: parsePage(rawPage) };
+}
+
+function parseSetMemberContext(customId: string, prefix: string) {
+  const [rawSetId, rawMemberId, ...extra] = customId.slice(prefix.length).split(':');
+  if (rawSetId === undefined || rawMemberId === undefined || extra.length > 0) {
+    throw new ValidationError('ข้อมูลเลือกตำแหน่งไม่ถูกต้อง');
+  }
+  return { setId: requireUuid(rawSetId), memberId: requireUuid(rawMemberId) };
+}
+
+function requireSelectedSet(sets: readonly FightPositionSet[]): FightPositionSet {
+  const set = sets.find((candidate) => candidate.isActive) ?? sets[0];
+  if (set === undefined) throw new ValidationError('ไม่พบ Fight Set');
+  return set;
 }

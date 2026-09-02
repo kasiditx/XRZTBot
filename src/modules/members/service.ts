@@ -312,7 +312,8 @@ export class MemberService {
           when 'HEAD' then 1
           when 'DEPUTY' then 2
           when 'ACCOUNTANT' then 3
-          else 4
+          when 'RESERVE' then 4
+          else 5
         end`,
         members.inGameName,
       );

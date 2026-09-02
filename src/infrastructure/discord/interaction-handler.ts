@@ -592,7 +592,7 @@ function parsePositivePage(value: string): number {
 }
 
 function parseRosterTitleSelection(value: string | undefined): RosterTitleSelection {
-  if (value === 'HEAD' || value === 'DEPUTY' || value === 'ACCOUNTANT' || value === 'NONE') return value;
+  if (value === 'HEAD' || value === 'DEPUTY' || value === 'ACCOUNTANT' || value === 'RESERVE' || value === 'NONE') return value;
   throw new ValidationError('ตำแหน่งกำกับสมาชิกไม่ถูกต้อง');
 }
 

@@ -21,7 +21,7 @@ export async function syncFightPositionSummary(
   if (channel === null || !channel.isTextBased() || !channel.isSendable()) {
     throw new ValidationError('Channel ตำแหน่ง Fight ไม่ใช่ Text Channel ที่ Bot ส่งข้อความได้');
   }
-  const summary = buildFightPositionSummary(await fightPositions.listRoster(guildId));
+  const summary = buildFightPositionSummary(await fightPositions.listAllSetRosters(guildId));
   if (settings.fightPositionSummaryMessageId !== null) {
     const existing = await channel.messages.fetch(settings.fightPositionSummaryMessageId).catch(() => null);
     if (existing !== null) {

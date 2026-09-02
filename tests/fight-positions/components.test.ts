@@ -1,4 +1,4 @@
-import type { FightPosition, Member } from '../../src/infrastructure/db/schema.js';
+import type { FightPosition, FightPositionSet, Member } from '../../src/infrastructure/db/schema.js';
 import {
   buildFightPositionAdminPanel,
   buildFightPositionAssignedMemberSelector,
@@ -19,14 +19,18 @@ describe('fight position Discord components', () => {
   });
 
   it('provides add, assign, publish, rename and delete controls', () => {
-    const panel = buildFightPositionAdminPanel([position(1, 'Main Fight')]);
-    const buttons = panel.components[0]?.toJSON().components;
-    const selector = panel.components[1]?.toJSON().components[0];
+    const activeSet = fightSet(1, 'Set 1', true);
+    const panel = buildFightPositionAdminPanel([activeSet], activeSet, [position(1, 'Main Fight')]);
+    const buttons = panel.components[1]?.toJSON().components;
+    const selector = panel.components[3]?.toJSON().components[0];
 
     expect(buttons).toEqual(expect.arrayContaining([
+      expect.objectContaining({ custom_id: 'fight:set_add' }),
       expect.objectContaining({ custom_id: 'fight:add' }),
-      expect.objectContaining({ custom_id: 'fight:assign' }),
-      expect.objectContaining({ custom_id: 'fight:edit_assignment' }),
+      expect.objectContaining({ custom_id: `fight:assign_set:${activeSet.id}` }),
+      expect.objectContaining({ custom_id: `fight:edit_assignment_set:${activeSet.id}` }),
+    ]));
+    expect(panel.components[2]?.toJSON().components).toEqual(expect.arrayContaining([
       expect.objectContaining({ custom_id: 'fight:publish' }),
     ]));
     expect(selector).toMatchObject({
@@ -36,33 +40,36 @@ describe('fight position Discord components', () => {
   });
 
   it('uses only the supplied active registry members in assignment controls', () => {
+    const activeSet = fightSet(1);
     const activeMembers = [member(1, 'Zixx Quint'), member(2, 'Lily Miru')];
-    const memberSelector = buildFightPositionMemberSelector(activeMembers).components[0]?.toJSON().components[0];
+    const memberSelector = buildFightPositionMemberSelector(activeSet, activeMembers).components[0]?.toJSON().components[0];
     const assignmentSelector = buildFightPositionAssignmentSelector(
+      activeSet,
       activeMembers[0]!,
       [position(1, 'Support')],
     ).components[0]?.toJSON().components[0];
 
     expect(memberSelector).toMatchObject({
-      custom_id: 'fight:assign_member:1',
+      custom_id: `fight:assign_member:${activeSet.id}:1`,
       options: [
         expect.objectContaining({ label: 'Zixx Quint', value: activeMembers[0]?.id }),
         expect.objectContaining({ label: 'Lily Miru', value: activeMembers[1]?.id }),
       ],
     });
     expect(assignmentSelector).toMatchObject({
-      custom_id: `fight:assign_position:${activeMembers[0]!.id}:1`,
+      custom_id: `fight:assign_position:${activeSet.id}:${activeMembers[0]!.id}:1`,
       options: [expect.objectContaining({ label: 'Support', value: position(1).id })],
     });
   });
 
   it('uses a separate selector for members who already have a position', () => {
+    const activeSet = fightSet(1);
     const assignedMembers = [member(1, 'Zixx Quint')];
-    const selector = buildFightPositionAssignedMemberSelector(assignedMembers)
+    const selector = buildFightPositionAssignedMemberSelector(activeSet, assignedMembers)
       .components[0]?.toJSON().components[0];
 
     expect(selector).toMatchObject({
-      custom_id: 'fight:edit_member:1',
+      custom_id: `fight:edit_member:${activeSet.id}:1`,
       options: [expect.objectContaining({ label: 'Zixx Quint', value: assignedMembers[0]?.id })],
     });
   });
@@ -70,29 +77,50 @@ describe('fight position Discord components', () => {
   it('shows assigned and unassigned active members in the public summary', () => {
     const summary = buildFightPositionSummary([
       {
-        memberId: member(1).id,
-        discordUserId: member(1).discordUserId,
-        inGameName: 'Zixx Quint',
-        positionId: position(1).id,
-        positionName: 'Main Fight',
-        positionSortOrder: 0,
+        set: fightSet(1, 'Set 1', true),
+        roster: [
+          {
+            memberId: member(1).id,
+            discordUserId: member(1).discordUserId,
+            inGameName: 'Zixx Quint',
+            positionId: position(1).id,
+            positionName: 'Main Fight',
+            positionSortOrder: 0,
+          },
+          {
+            memberId: member(2).id,
+            discordUserId: member(2).discordUserId,
+            inGameName: 'Lily Miru',
+            positionId: null,
+            positionName: null,
+            positionSortOrder: null,
+          },
+        ],
       },
       {
-        memberId: member(2).id,
-        discordUserId: member(2).discordUserId,
-        inGameName: 'Lily Miru',
-        positionId: null,
-        positionName: null,
-        positionSortOrder: null,
+        set: fightSet(2, 'Set 2', false),
+        roster: [
+          {
+            memberId: member(1).id,
+            discordUserId: member(1).discordUserId,
+            inGameName: 'Zixx Quint',
+            positionId: position(2).id,
+            positionName: 'Support',
+            positionSortOrder: 1,
+          },
+        ],
       },
     ]);
     const embed = summary.embeds[0]?.toJSON();
 
-    expect(embed?.description).toContain('กำหนดตำแหน่งแล้ว **1 คน**');
+    expect(embed?.description).toContain('Set ปัจจุบันกำหนดแล้ว **1/2 คน**');
+    expect(embed?.description).toContain('Set 1 • ใช้งานอยู่');
     expect(embed?.description).toContain('⚔️・Main Fight 〔1 คน〕');
     expect(embed?.description).toContain('Zixx Quint');
     expect(embed?.description).toContain('➖・ยังไม่กำหนดตำแหน่ง 〔1 คน〕');
     expect(embed?.description).toContain('Lily Miru');
+    expect(summary.embeds.map((item) => item.toJSON().description).join('\n')).toContain('Set 2');
+    expect(summary.embeds.map((item) => item.toJSON().description).join('\n')).toContain('Support');
   });
 });
 
@@ -102,6 +130,18 @@ function position(index: number, name = `Position ${index.toString()}`): FightPo
     guildId: 'guild',
     name,
     isActive: true,
+    sortOrder: index - 1,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function fightSet(index: number, name = `Set ${index.toString()}`, isActive = index === 1): FightPositionSet {
+  return {
+    id: `30000000-0000-4000-8000-${index.toString().padStart(12, '0')}`,
+    guildId: 'guild',
+    name,
+    isActive,
     sortOrder: index - 1,
     createdAt: now,
     updatedAt: now,

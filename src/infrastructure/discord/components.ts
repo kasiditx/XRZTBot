@@ -157,10 +157,11 @@ export function buildRosterTitleSelector() {
       { label: 'หัวแก๊ง', value: 'HEAD', emoji: '👑', description: 'มี 1 คน และได้รับ Role หัวแก๊ง' },
       { label: 'รองแก๊ง', value: 'DEPUTY', emoji: '⭐', description: 'มีหลายคนได้ และได้รับ Role รองแก๊ง' },
       { label: 'บัญชีแก๊ง', value: 'ACCOUNTANT', emoji: '💰', description: 'มี 1 คน ไม่มี Role หรือสิทธิ์พิเศษ' },
+      { label: 'สำรอง', value: 'RESERVE', emoji: '🛡️', description: 'มีหลายคนได้ ไม่มี Role หรือสิทธิ์พิเศษ' },
       { label: 'สมาชิกทั่วไป', value: 'NONE', emoji: '👤', description: 'ถอดตำแหน่งและ Role หัว/รอง' },
     );
   return {
-    content: formatPanelText('👥', 'จัดตำแหน่งสมาชิก', 'เลือกตำแหน่งกำกับ แล้วเลือกสมาชิกในขั้นตอนถัดไป', 'หัวแก๊งและรองแก๊งซิงก์ Role อัตโนมัติ ส่วนบัญชีไม่มีสิทธิ์พิเศษ'),
+    content: formatPanelText('👥', 'จัดตำแหน่งสมาชิก', 'เลือกตำแหน่งกำกับ แล้วเลือกสมาชิกในขั้นตอนถัดไป', 'เฉพาะหัวแก๊งและรองแก๊งที่ซิงก์ Role อัตโนมัติ'),
     components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selector)],
   };
 }
@@ -218,6 +219,8 @@ export function rosterTitleDisplay(title: Member['rosterTitle']): { readonly emo
       return { emoji: '⭐', label: 'รองแก๊ง' };
     case 'ACCOUNTANT':
       return { emoji: '💰', label: 'บัญชีแก๊ง' };
+    case 'RESERVE':
+      return { emoji: '🛡️', label: 'สำรอง' };
     case null:
       return { emoji: '👤', label: 'สมาชิก' };
   }
@@ -250,7 +253,7 @@ export function buildControlPanel() {
       {
         name: 'ระบบสมาชิกและกิจกรรม',
         value: [
-          '👥 **จัดตำแหน่งสมาชิก** — กำหนดหัวแก๊ง รองแก๊ง บัญชี หรือสมาชิกทั่วไป',
+          '👥 **จัดตำแหน่งสมาชิก** — กำหนดหัวแก๊ง รองแก๊ง บัญชี สำรอง หรือสมาชิกทั่วไป',
           '🏆 **กิจกรรม** — สร้างและจัดการกิจกรรม คะแนน ผลงาน และประกาศ',
           '✅ **เช็กชื่อ/ลา** — สร้างรอบ ตั้งเวลาประจำ แก้ผลย้อนหลัง และส่ง Panel แจ้งลา',
           '⚔️ **ตำแหน่ง Fight** — เพิ่ม มอบ เปลี่ยน/ถอด และเผยแพร่สรุปตำแหน่ง',

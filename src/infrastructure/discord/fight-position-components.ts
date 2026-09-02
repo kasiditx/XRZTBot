@@ -8,16 +8,21 @@ import {
   TextInputStyle,
   escapeMarkdown,
 } from 'discord.js';
-import type { FightPosition, Member } from '../db/schema.js';
-import type { FightPositionRosterEntry } from '../../modules/fight-positions/service.js';
+import type { FightPosition, FightPositionSet, Member } from '../db/schema.js';
+import type { FightPositionRosterEntry, FightPositionSetRoster } from '../../modules/fight-positions/service.js';
 import { buildMiruEmbed, formatOverview, formatPanelText } from './theme.js';
 
 export const fightPositionComponentIds = {
+  addSet: 'fight:set_add',
+  addSetModal: 'fight:set_add_modal',
+  setNameInput: 'fight:set_name',
+  setSelect: 'fight:set_select',
+  activateSetPrefix: 'fight:set_activate:',
   add: 'fight:add',
   addModal: 'fight:add_modal',
   nameInput: 'fight:name',
-  assign: 'fight:assign',
-  editAssignment: 'fight:edit_assignment',
+  assignSetPrefix: 'fight:assign_set:',
+  editAssignmentSetPrefix: 'fight:edit_assignment_set:',
   publish: 'fight:publish',
   manageSelectPrefix: 'fight:manage_select:',
   managePagePrefix: 'fight:manage_page:',
@@ -30,7 +35,9 @@ export const fightPositionComponentIds = {
   editMemberPrefix: 'fight:edit_member:',
   editMemberPagePrefix: 'fight:edit_member_page:',
   assignPositionPrefix: 'fight:assign_position:',
-  assignPositionPagePrefix: 'fight:assign_position_page:',
+  // Keep this short: Discord custom IDs are limited to 100 characters and
+  // this context carries both a Set UUID and a member UUID.
+  assignPositionPagePrefix: 'fight:position_page:',
   clearPrefix: 'fight:clear:',
   summaryPagePrefix: 'fight:summary_page:',
 } as const;
@@ -39,7 +46,12 @@ const selectPageSize = 25;
 // MiruEmbedBuilder decorates each line before Discord receives it.
 const summaryDescriptionLimit = 3_500;
 
-export function buildFightPositionAdminPanel(positions: readonly FightPosition[], requestedPage = 1) {
+export function buildFightPositionAdminPanel(
+  sets: readonly FightPositionSet[],
+  selectedSet: FightPositionSet,
+  positions: readonly FightPosition[],
+  requestedPage = 1,
+) {
   const pageState = paginate(positions, requestedPage, selectPageSize);
   const description = positions.length === 0
     ? 'ยังไม่มีตำแหน่ง Fight กด **เพิ่มตำแหน่ง** เพื่อเริ่มใช้งาน'
@@ -53,20 +65,46 @@ export function buildFightPositionAdminPanel(positions: readonly FightPosition[]
     tone: 'primary',
     module: 'Fight Positions',
     description: formatOverview([
-      `ตำแหน่งที่ใช้งาน **${positions.length.toString()} รายการ**`,
+      `กำลังจัดแผน **${escapeMarkdown(selectedSet.name)}**${selectedSet.isActive ? ' • 🟢 ใช้งานอยู่' : ''}`,
+      `Fight Set ทั้งหมด **${sets.length.toString()} Set**`,
+      `ตำแหน่งกลาง **${positions.length.toString()} รายการ**`,
       positions.length === 0 ? 'เริ่มต้นด้วยปุ่ม **เพิ่มตำแหน่ง**' : 'เลือกตำแหน่งจากรายการด้านล่างเพื่อแก้ไข',
     ]),
   })
     .addFields(positions.length === 0 ? [] : [{ name: 'รายการตำแหน่ง', value: description }])
     .setFooter({ text: `ตำแหน่งที่ใช้งาน ${positions.length.toString()} รายการ` });
-  const components: Array<ActionRowBuilder<ButtonBuilder> | ActionRowBuilder<StringSelectMenuBuilder>> = [
+  const components: Array<ActionRowBuilder<ButtonBuilder> | ActionRowBuilder<StringSelectMenuBuilder>> = [];
+  if (sets.length > 0) {
+    components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId(fightPositionComponentIds.setSelect)
+        .setPlaceholder(`เลือก Fight Set • ปัจจุบัน ${selectedSet.name}`.slice(0, 150))
+        .addOptions(sets.slice(0, 25).map((set) => ({
+          label: set.name.slice(0, 100),
+          description: set.isActive ? 'กำลังใช้งานอยู่' : 'แผนสำรอง',
+          value: set.id,
+          emoji: set.isActive ? '🟢' : '📋',
+          default: set.id === selectedSet.id,
+        }))),
+    ));
+  }
+  components.push(
     new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId(fightPositionComponentIds.addSet).setLabel('เพิ่ม Set').setEmoji('🗂️').setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`${fightPositionComponentIds.activateSetPrefix}${selectedSet.id}`)
+        .setLabel(selectedSet.isActive ? 'กำลังใช้งาน' : 'ใช้ Set นี้')
+        .setEmoji('🟢')
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(selectedSet.isActive),
       new ButtonBuilder().setCustomId(fightPositionComponentIds.add).setLabel('เพิ่มตำแหน่ง').setEmoji('➕').setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId(fightPositionComponentIds.assign).setLabel('มอบตำแหน่ง').setEmoji('👥').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId(fightPositionComponentIds.editAssignment).setLabel('เปลี่ยน/ถอด').setEmoji('🔄').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId(fightPositionComponentIds.publish).setLabel('อัปเดตสรุป').setEmoji('📋').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`${fightPositionComponentIds.assignSetPrefix}${selectedSet.id}`).setLabel('มอบตำแหน่ง').setEmoji('👥').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`${fightPositionComponentIds.editAssignmentSetPrefix}${selectedSet.id}`).setLabel('เปลี่ยน/ถอด').setEmoji('🔄').setStyle(ButtonStyle.Secondary),
     ),
-  ];
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId(fightPositionComponentIds.publish).setLabel('อัปเดตสรุปทุก Set').setEmoji('📋').setStyle(ButtonStyle.Secondary),
+    ),
+  );
 
   if (pageState.items.length > 0) {
     const selector = new StringSelectMenuBuilder()
@@ -80,12 +118,27 @@ export function buildFightPositionAdminPanel(positions: readonly FightPosition[]
     components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selector));
     appendPageNavigation(
       components,
-      fightPositionComponentIds.managePagePrefix,
+      `${fightPositionComponentIds.managePagePrefix}${selectedSet.id}:`,
       pageState.page,
       pageState.totalPages,
     );
   }
   return { embeds: [embed], components };
+}
+
+export function buildFightPositionSetNameModal(): ModalBuilder {
+  const input = new TextInputBuilder()
+    .setCustomId(fightPositionComponentIds.setNameInput)
+    .setLabel('ชื่อ Fight Set')
+    .setPlaceholder('เช่น Set 2, แผนบุก, แผนตั้งรับ')
+    .setStyle(TextInputStyle.Short)
+    .setMinLength(2)
+    .setMaxLength(80)
+    .setRequired(true);
+  return new ModalBuilder()
+    .setCustomId(fightPositionComponentIds.addSetModal)
+    .setTitle('เพิ่ม Fight Set')
+    .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
 }
 
 export function buildFightPositionNameModal(position?: FightPosition): ModalBuilder {
@@ -148,15 +201,24 @@ export function buildFightPositionDeleteConfirmation(position: FightPosition) {
   return { embeds: [embed], components: [row] };
 }
 
-export function buildFightPositionMemberSelector(activeMembers: readonly Member[], requestedPage = 1) {
-  return buildMemberSelector(activeMembers, requestedPage, 'ASSIGN');
+export function buildFightPositionMemberSelector(
+  set: FightPositionSet,
+  activeMembers: readonly Member[],
+  requestedPage = 1,
+) {
+  return buildMemberSelector(set, activeMembers, requestedPage, 'ASSIGN');
 }
 
-export function buildFightPositionAssignedMemberSelector(assignedMembers: readonly Member[], requestedPage = 1) {
-  return buildMemberSelector(assignedMembers, requestedPage, 'EDIT');
+export function buildFightPositionAssignedMemberSelector(
+  set: FightPositionSet,
+  assignedMembers: readonly Member[],
+  requestedPage = 1,
+) {
+  return buildMemberSelector(set, assignedMembers, requestedPage, 'EDIT');
 }
 
 function buildMemberSelector(
+  set: FightPositionSet,
   availableMembers: readonly Member[],
   requestedPage: number,
   mode: 'ASSIGN' | 'EDIT',
@@ -177,8 +239,8 @@ function buildMemberSelector(
     ? fightPositionComponentIds.assignMemberPagePrefix
     : fightPositionComponentIds.editMemberPagePrefix;
   const selector = new StringSelectMenuBuilder()
-    .setCustomId(`${selectPrefix}${pageState.page.toString()}`)
-    .setPlaceholder(`เลือกสมาชิกในแก๊ง • หน้า ${pageState.page.toString()}/${pageState.totalPages.toString()}`)
+    .setCustomId(`${selectPrefix}${set.id}:${pageState.page.toString()}`)
+    .setPlaceholder(`เลือกสมาชิกใน ${set.name} • หน้า ${pageState.page.toString()}/${pageState.totalPages.toString()}`.slice(0, 150))
     .addOptions(pageState.items.map((member) => ({
       label: member.inGameName.slice(0, 100),
       description: `Discord ID: ${member.discordUserId}`.slice(0, 100),
@@ -189,19 +251,20 @@ function buildMemberSelector(
   ];
   appendPageNavigation(
     components,
-    pagePrefix,
+    `${pagePrefix}${set.id}:`,
     pageState.page,
     pageState.totalPages,
   );
   return {
     content: mode === 'ASSIGN'
-      ? formatPanelText('👥', 'เลือกสมาชิก', 'เลือกสมาชิกที่ยังไม่มีตำแหน่ง Fight', 'แสดงเฉพาะสมาชิกที่ลงทะเบียน อนุมัติ และยังไม่ได้รับตำแหน่ง')
-      : formatPanelText('🔄', 'เปลี่ยนหรือถอดตำแหน่ง', 'เลือกสมาชิกที่ต้องการแก้ไข', 'แสดงเฉพาะสมาชิกที่มีตำแหน่งอยู่แล้ว'),
+      ? formatPanelText('👥', 'เลือกสมาชิก', `Fight Set: **${escapeMarkdown(set.name)}**\nเลือกสมาชิกที่ยังไม่มีตำแหน่ง Fight`, 'แสดงเฉพาะสมาชิกที่ลงทะเบียน อนุมัติ และยังไม่ได้รับตำแหน่ง')
+      : formatPanelText('🔄', 'เปลี่ยนหรือถอดตำแหน่ง', `Fight Set: **${escapeMarkdown(set.name)}**\nเลือกสมาชิกที่ต้องการแก้ไข`, 'แสดงเฉพาะสมาชิกที่มีตำแหน่งอยู่แล้ว'),
     components,
   };
 }
 
 export function buildFightPositionAssignmentSelector(
+  set: FightPositionSet,
   member: Member,
   positions: readonly FightPosition[],
   requestedPage = 1,
@@ -210,7 +273,7 @@ export function buildFightPositionAssignmentSelector(
   const components: Array<ActionRowBuilder<StringSelectMenuBuilder> | ActionRowBuilder<ButtonBuilder>> = [];
   if (pageState.items.length > 0) {
     const selector = new StringSelectMenuBuilder()
-      .setCustomId(`${fightPositionComponentIds.assignPositionPrefix}${member.id}:${pageState.page.toString()}`)
+      .setCustomId(`${fightPositionComponentIds.assignPositionPrefix}${set.id}:${member.id}:${pageState.page.toString()}`)
       .setPlaceholder(`เลือกตำแหน่ง • หน้า ${pageState.page.toString()}/${pageState.totalPages.toString()}`)
       .addOptions(pageState.items.map((position) => ({
         label: position.name.slice(0, 100),
@@ -220,14 +283,14 @@ export function buildFightPositionAssignmentSelector(
     components.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selector));
     appendPageNavigation(
       components,
-      `${fightPositionComponentIds.assignPositionPagePrefix}${member.id}:`,
+      `${fightPositionComponentIds.assignPositionPagePrefix}${set.id}:${member.id}:`,
       pageState.page,
       pageState.totalPages,
     );
   }
   components.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId(`${fightPositionComponentIds.clearPrefix}${member.id}`)
+      .setCustomId(`${fightPositionComponentIds.clearPrefix}${set.id}:${member.id}`)
       .setLabel('ยังไม่กำหนดตำแหน่ง')
       .setEmoji('➖')
       .setStyle(ButtonStyle.Secondary),
@@ -236,26 +299,28 @@ export function buildFightPositionAssignmentSelector(
     content: formatPanelText(
       '⚔️',
       'เลือกตำแหน่ง Fight',
-      `สมาชิก: **${escapeMarkdown(member.inGameName)}**${positions.length === 0 ? '\nยังไม่มีตำแหน่ง Fight กรุณาเพิ่มตำแหน่งก่อน' : ''}`,
+      `Fight Set: **${escapeMarkdown(set.name)}**\nสมาชิก: **${escapeMarkdown(member.inGameName)}**${positions.length === 0 ? '\nยังไม่มีตำแหน่ง Fight กรุณาเพิ่มตำแหน่งก่อน' : ''}`,
       'หนึ่งสมาชิกมีได้หนึ่งตำแหน่ง',
     ),
     components,
   };
 }
 
-export function buildFightPositionSummary(roster: readonly FightPositionRosterEntry[], requestedPage = 1) {
-  const pages = paginateFightPositionSummary(roster);
+export function buildFightPositionSummary(setRosters: readonly FightPositionSetRoster[], requestedPage = 1) {
+  const pages = paginateFightPositionSummary(setRosters);
   // Preserve compatibility with old navigation buttons. New displays contain
   // all sections in one Discord message instead of making members click pages.
   void requestedPage;
-  const assignedCount = roster.filter((entry) => entry.positionId !== null).length;
+  const activeSetRoster = setRosters.find(({ set }) => set.isActive) ?? setRosters[0];
+  const activeRoster = activeSetRoster?.roster ?? [];
+  const assignedCount = activeRoster.filter((entry) => entry.positionId !== null).length;
   const positionCount = new Set(
-    roster.flatMap((entry) => entry.positionId === null ? [] : [entry.positionId]),
+    setRosters.flatMap(({ roster }) => roster.flatMap((entry) => entry.positionId === null ? [] : [entry.positionId])),
   ).size;
   const overview = formatOverview([
-    `สมาชิกทั้งหมด **${roster.length.toString()} คน**`,
-    `กำหนดตำแหน่งแล้ว **${assignedCount.toString()} คน**`,
-    `ยังไม่กำหนด **${(roster.length - assignedCount).toString()} คน**`,
+    `Fight Set ทั้งหมด **${setRosters.length.toString()} Set**`,
+    `Set ที่ใช้งาน **${escapeMarkdown(activeSetRoster?.set.name ?? 'ยังไม่มี')}**`,
+    `Set ปัจจุบันกำหนดแล้ว **${assignedCount.toString()}/${activeRoster.length.toString()} คน**`,
     `ตำแหน่งที่ใช้งาน **${positionCount.toString()} ตำแหน่ง**`,
   ]);
   const embeds = pages.map((description, index) => buildMiruEmbed({
@@ -291,9 +356,17 @@ function buildFightPositionGroupSections(entries: readonly FightPositionRosterEn
   });
 }
 
-function paginateFightPositionSummary(roster: readonly FightPositionRosterEntry[]): string[] {
-  const sections = buildFightPositionGroupSections(roster);
-  if (sections.length === 0) return ['ยังไม่มีสมาชิกที่มีสถานะใช้งาน'];
+function paginateFightPositionSummary(setRosters: readonly FightPositionSetRoster[]): string[] {
+  if (setRosters.length === 0) return ['ยังไม่มี Fight Set'];
+  const sections = setRosters.flatMap(({ set, roster }) => {
+    const assignedCount = roster.filter((entry) => entry.positionId !== null).length;
+    const setHeader = [
+      `# ${set.isActive ? '🟢' : '📋'} ${escapeMarkdown(set.name)}${set.isActive ? ' • ใช้งานอยู่' : ''}`,
+      `> กำหนดแล้ว **${assignedCount.toString()} คน** • ยังไม่กำหนด **${(roster.length - assignedCount).toString()} คน**`,
+    ].join('\n');
+    const groups = buildFightPositionGroupSections(roster);
+    return [setHeader, ...(groups.length === 0 ? ['ยังไม่มีสมาชิกที่มีสถานะใช้งาน'] : groups)];
+  });
   const pages: string[] = [];
   let current = '';
   for (const section of sections) {

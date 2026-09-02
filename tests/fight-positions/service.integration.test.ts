@@ -45,18 +45,26 @@ describeWithDatabase('FightPositionService PostgreSQL integration', () => {
 
     const main = await service.create(guildId, 'Main Fight', adminId);
     const support = await service.create(guildId, 'Support', adminId);
-    await service.assign(guildId, active!.id, main.id, adminId);
-    await service.assign(guildId, active!.id, support.id, adminId);
+    const set1 = await service.getActiveSet(guildId);
+    const set2 = await service.createSet(guildId, 'Set 2', adminId);
+    await service.assign(guildId, set1.id, active!.id, main.id, adminId);
+    await service.assign(guildId, set1.id, active!.id, support.id, adminId);
+    await service.assign(guildId, set2.id, active!.id, main.id, adminId);
 
     const assignments = await db
       .select()
       .from(memberFightPositions)
       .where(and(eq(memberFightPositions.guildId, guildId), eq(memberFightPositions.memberId, active!.id)));
-    expect(assignments).toHaveLength(1);
-    expect(assignments[0]?.positionId).toBe(support.id);
-    expect((await service.listAssignedMembers(guildId)).map((member) => member.inGameName)).toEqual(['Zixx']);
-    expect(await service.listUnassignedMembers(guildId)).toEqual([]);
-    await expect(service.assign(guildId, pending!.id, main.id, adminId)).rejects.toBeInstanceOf(ConflictError);
+    expect(assignments).toHaveLength(2);
+    expect(assignments.find((assignment) => assignment.setId === set1.id)?.positionId).toBe(support.id);
+    expect(assignments.find((assignment) => assignment.setId === set2.id)?.positionId).toBe(main.id);
+    expect((await service.listAssignedMembers(guildId, set1.id)).map((member) => member.inGameName)).toEqual(['Zixx']);
+    expect(await service.listUnassignedMembers(guildId, set1.id)).toEqual([]);
+    await expect(service.assign(guildId, set1.id, pending!.id, main.id, adminId)).rejects.toBeInstanceOf(ConflictError);
+
+    const activated = await service.activateSet(guildId, set2.id, adminId);
+    expect(activated.isActive).toBe(true);
+    expect((await service.getActiveSet(guildId)).id).toBe(set2.id);
   });
 
   it('lists every active member and marks members without a position as unassigned', async () => {
@@ -66,9 +74,11 @@ describeWithDatabase('FightPositionService PostgreSQL integration', () => {
       inGameName: 'Lily',
       status: 'ACTIVE',
     });
-    const roster = await service.listRoster(guildId);
+    const set1 = (await service.listSets(guildId)).find((set) => set.name === 'Set 1');
+    expect(set1).toBeDefined();
+    const roster = await service.listRoster(guildId, set1!.id);
 
-    expect((await service.listUnassignedMembers(guildId)).map((member) => member.inGameName)).toEqual(['Lily']);
+    expect((await service.listUnassignedMembers(guildId, set1!.id)).map((member) => member.inGameName)).toEqual(['Lily']);
     expect(roster.map((entry) => [entry.inGameName, entry.positionName])).toEqual([
       ['Zixx', 'Support'],
       ['Lily', null],
@@ -84,8 +94,14 @@ describeWithDatabase('FightPositionService PostgreSQL integration', () => {
     const removed = await service.remove(guildId, renamed.id, adminId);
     expect(removed.isActive).toBe(false);
     expect((await service.listActive(guildId)).map((position) => position.name)).toEqual(['Main Fight']);
-    expect(await db.select().from(memberFightPositions).where(eq(memberFightPositions.guildId, guildId))).toHaveLength(0);
-    expect((await service.listRoster(guildId)).every((entry) => entry.positionId === null)).toBe(true);
+    const remainingAssignments = await db.select().from(memberFightPositions)
+      .where(eq(memberFightPositions.guildId, guildId));
+    expect(remainingAssignments).toHaveLength(1);
+    expect(remainingAssignments[0]?.positionId).not.toBe(removed.id);
+    const allSetRosters = await service.listAllSetRosters(guildId);
+    expect(allSetRosters).toHaveLength(2);
+    expect(allSetRosters.find(({ set }) => set.name === 'Set 1')?.roster.every((entry) => entry.positionId === null)).toBe(true);
+    expect(allSetRosters.find(({ set }) => set.name === 'Set 2')?.roster.some((entry) => entry.positionName === 'Main Fight')).toBe(true);
 
     const persisted = await db.select().from(fightPositions).where(eq(fightPositions.id, renamed.id));
     expect(persisted[0]?.isActive).toBe(false);

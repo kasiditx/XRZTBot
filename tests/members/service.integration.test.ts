@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { createDatabase, type Database } from '../../src/infrastructure/db/client.js';
 import {
   fightPositions,
+  fightPositionSets,
   guildSettings,
   memberFightPositions,
   scheduledJobs,
@@ -104,9 +105,15 @@ describeWithDatabase('MemberService PostgreSQL integration', () => {
       .filter((job) => job.jobType === 'MEMBER_ROSTER_REFRESH').length;
     const zixxBeforeDeparture = await service.findByDiscordUserId(guildId, '700000000000000001');
     expect(zixxBeforeDeparture).not.toBeNull();
+    const [fightSet] = await db.insert(fightPositionSets).values({
+      guildId,
+      name: 'Set 1',
+      isActive: true,
+    }).returning();
     const [fightPosition] = await db.insert(fightPositions).values({ guildId, name: 'Main Fight' }).returning();
     await db.insert(memberFightPositions).values({
       guildId,
+      setId: fightSet!.id,
       memberId: zixxBeforeDeparture!.id,
       positionId: fightPosition!.id,
       assignedByDiscordUserId: admin,

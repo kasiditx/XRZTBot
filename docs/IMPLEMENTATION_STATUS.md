@@ -17,11 +17,11 @@
 - Mark member as former while preserving history
 - Durable Discord role synchronization with retry and stale-lock recovery
 - Public active-member roster พร้อม pagination และ durable refresh เมื่ออนุมัติ เพิ่มตรง หรือให้ออกจากแก๊ง
-- Roster title workflow: หัวแก๊ง 1 คน, รองแก๊งหลายคน, บัญชีแก๊ง 1 คน และสมาชิกทั่วไป โดยเลือกจากสมาชิก ACTIVE แบบแบ่งหน้า
-- หัวแก๊ง/รองแก๊งซิงก์ Discord Role ผ่าน durable job; บัญชีแก๊งไม่มี Role/authorization พิเศษ และตำแหน่งถูกถอดเมื่อเป็นอดีตสมาชิก
+- Roster title workflow: หัวแก๊ง 1 คน, รองแก๊งหลายคน, บัญชีแก๊ง 1 คน, สำรองหลายคน และสมาชิกทั่วไป โดยเลือกจากสมาชิก ACTIVE แบบแบ่งหน้า
+- หัวแก๊ง/รองแก๊งซิงก์ Discord Role ผ่าน durable job; บัญชีแก๊งและสำรองไม่มี Role/authorization พิเศษ และตำแหน่งถูกถอดเมื่อเป็นอดีตสมาชิก
 - จำกัดการแต่งตั้งตำแหน่งไว้ที่ Head/Dev เพื่อป้องกัน Deputy ยกระดับสิทธิ์
-- Fight position workflow สำหรับ Dev/Head/Deputy: เพิ่ม เปลี่ยนชื่อ soft-delete และมอบตำแหน่งให้สมาชิก ACTIVE คนละหนึ่งตำแหน่ง
-- Public Fight summary แสดงสมาชิก ACTIVE ทั้งหมด รวมผู้ที่ยังไม่กำหนดตำแหน่ง และ durable refresh เมื่อข้อมูลเปลี่ยน
+- Fight position workflow สำหรับ Dev/Head/Deputy: สร้างได้สูงสุด 10 Set, เลือก Set ที่ใช้งาน และมอบตำแหน่งให้สมาชิก ACTIVE แยกกันในแต่ละ Set
+- Public Fight summary แสดงทุก Set พร้อมสมาชิก ACTIVE ทั้งหมด รวมผู้ที่ยังไม่กำหนดตำแหน่ง และ durable refresh เมื่อข้อมูลเปลี่ยน
 - HTTP health check
 - Activity Admin panel รองรับกิจกรรมสะสมคะแนน ส่งผลงานไม่มีคะแนน และประกาศอย่างเดียว
 - Activity score item เพิ่ม แก้คะแนน และปิดใช้งาน

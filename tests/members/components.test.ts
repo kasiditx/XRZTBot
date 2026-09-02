@@ -55,14 +55,16 @@ describe('member roster Discord component', () => {
       { ...member(1, 'Leader Miru'), rosterTitle: 'HEAD' as const },
       { ...member(2, 'Deputy Miru'), rosterTitle: 'DEPUTY' as const },
       { ...member(3, 'Account Miru'), rosterTitle: 'ACCOUNTANT' as const },
-      { ...member(4, 'General Miru'), rosterTitle: null },
+      { ...member(4, 'Reserve Miru'), rosterTitle: 'RESERVE' as const },
+      { ...member(5, 'General Miru'), rosterTitle: null },
     ];
     const embed = buildMemberRoster(titledMembers).embeds[0]?.toJSON();
 
     expect(embed?.description).toContain('1. 👑 **หัวแก๊ง** — **Leader Miru**');
     expect(embed?.description).toContain('2. ⭐ **รองแก๊ง** — **Deputy Miru**');
     expect(embed?.description).toContain('3. 💰 **บัญชีแก๊ง** — **Account Miru**');
-    expect(embed?.description).toContain('4. 👤 **สมาชิก** — **General Miru**');
+    expect(embed?.description).toContain('4. 🛡️ **สำรอง** — **Reserve Miru**');
+    expect(embed?.description).toContain('5. 👤 **สมาชิก** — **General Miru**');
   });
 });
 
@@ -110,7 +112,7 @@ describe('member roster title controls', () => {
     const financeField = embed?.fields?.find(({ name }) => name === '⌗・การเงินและตู้แก๊ง');
 
     expect(firstButton).toMatchObject({ custom_id: 'control:members', label: 'จัดตำแหน่งสมาชิก' });
-    expect(memberField?.value).toContain('👥 **จัดตำแหน่งสมาชิก** — กำหนดหัวแก๊ง รองแก๊ง บัญชี หรือสมาชิกทั่วไป');
+    expect(memberField?.value).toContain('👥 **จัดตำแหน่งสมาชิก** — กำหนดหัวแก๊ง รองแก๊ง บัญชี สำรอง หรือสมาชิกทั่วไป');
     expect(financeField?.value).toContain('🏦 **เงินกองกลาง** — บันทึกรายรับ–รายจ่าย ยอดตั้งต้น ย้อนรายการ และคำขอเบิกเงิน');
   });
 
@@ -120,6 +122,9 @@ describe('member roster title controls', () => {
     const memberSelector = buildRosterMemberSelector('HEAD', activeMembers).components[0]?.toJSON().components[0];
 
     expect(titleSelector).toMatchObject({ custom_id: 'member:roster_title' });
+    expect(titleSelector?.options).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'สำรอง', value: 'RESERVE' }),
+    ]));
     expect(memberSelector).toMatchObject({
       custom_id: 'member:roster_member:HEAD:1',
       options: [

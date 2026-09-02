@@ -3,6 +3,7 @@ import {
   bigint,
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -21,7 +22,7 @@ const auditColumns = {
 };
 
 export const memberStatusEnum = pgEnum('member_status', ['PENDING', 'ACTIVE', 'REJECTED', 'FORMER']);
-export const memberRosterTitleEnum = pgEnum('member_roster_title', ['HEAD', 'DEPUTY', 'ACCOUNTANT']);
+export const memberRosterTitleEnum = pgEnum('member_roster_title', ['HEAD', 'DEPUTY', 'ACCOUNTANT', 'RESERVE']);
 export const requestStatusEnum = pgEnum('request_status', ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED']);
 export const scheduledJobStatusEnum = pgEnum('scheduled_job_status', ['PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED']);
 export const activityStatusEnum = pgEnum('activity_status', ['DRAFT', 'SCHEDULED', 'OPEN', 'CLOSED', 'CANCELLED']);
@@ -119,18 +120,46 @@ export const fightPositions = pgTable(
   ],
 );
 
+export const fightPositionSets = pgTable(
+  'fight_position_sets',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    guildId: text('guild_id').notNull().references(() => guildSettings.guildId, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    isActive: boolean('is_active').notNull().default(false),
+    sortOrder: integer('sort_order').notNull().default(0),
+    ...auditColumns,
+  },
+  (table) => [
+    uniqueIndex('fight_position_sets_guild_name_uq').on(table.guildId, table.name),
+    uniqueIndex('fight_position_sets_guild_id_uq').on(table.guildId, table.id),
+    uniqueIndex('fight_position_sets_guild_active_uq')
+      .on(table.guildId)
+      .where(sql`${table.isActive} = true`),
+    index('fight_position_sets_guild_sort_idx').on(table.guildId, table.sortOrder),
+    check('fight_position_sets_name_not_blank', sql`length(trim(${table.name})) > 0`),
+  ],
+);
+
 export const memberFightPositions = pgTable(
   'member_fight_positions',
   {
     guildId: text('guild_id').notNull().references(() => guildSettings.guildId, { onDelete: 'cascade' }),
+    setId: uuid('set_id').notNull(),
     memberId: uuid('member_id').notNull().references(() => members.id, { onDelete: 'cascade' }),
     positionId: uuid('position_id').notNull().references(() => fightPositions.id, { onDelete: 'restrict' }),
     assignedByDiscordUserId: text('assigned_by_discord_user_id').notNull(),
     assignedAt: timestamp('assigned_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
   },
   (table) => [
-    primaryKey({ columns: [table.guildId, table.memberId] }),
+    primaryKey({ columns: [table.guildId, table.setId, table.memberId] }),
+    foreignKey({
+      columns: [table.guildId, table.setId],
+      foreignColumns: [fightPositionSets.guildId, fightPositionSets.id],
+      name: 'member_fight_positions_set_fk',
+    }).onDelete('cascade'),
     index('member_fight_positions_position_idx').on(table.guildId, table.positionId),
+    index('member_fight_positions_set_idx').on(table.guildId, table.setId),
   ],
 );
 
@@ -688,4 +717,5 @@ export const depositRequestItems = pgTable(
 export type GuildSettings = typeof guildSettings.$inferSelect;
 export type Member = typeof members.$inferSelect;
 export type FightPosition = typeof fightPositions.$inferSelect;
+export type FightPositionSet = typeof fightPositionSets.$inferSelect;
 export type MemberFightPosition = typeof memberFightPositions.$inferSelect;
