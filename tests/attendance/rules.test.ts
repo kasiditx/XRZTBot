@@ -1,10 +1,13 @@
 import { ValidationError } from '../../src/domain/errors.js';
 import {
+  buildAirdropRoundTimes,
   buildAttendanceRoundTimes,
   buildDailyAttendanceTitle,
+  buildGeneralRoundTimes,
   classifyAttendance,
   currentAttendanceDate,
   parseAttendanceDate,
+  validateAttendanceProof,
   validateWeekdays,
   type AttendanceEvidence,
 } from '../../src/modules/attendance/rules.js';
@@ -84,11 +87,64 @@ describe('attendance input parsing', () => {
     expect(times.emergencyLeaveCutoff.toISOString()).toBe('2026-08-27T16:59:59.999Z');
   });
 
-  it('rejects impossible dates, reversed windows, and invalid weekdays', () => {
+  it('builds a lenient Airdrop proof window ten minutes around the event', () => {
+    const times = buildAirdropRoundTimes(
+      new Date('2026-08-27T14:00:00.000Z'),
+      'Asia/Bangkok',
+      10,
+      10,
+    );
+
+    expect(times.attendanceDate).toBe('2026-08-27');
+    expect(times.opensAt.toISOString()).toBe('2026-08-27T13:50:00.000Z');
+    expect(times.closesAt.toISOString()).toBe('2026-08-27T14:10:00.000Z');
+    expect(times.emergencyLeaveCutoff.toISOString()).toBe('2026-08-27T16:59:59.999Z');
+  });
+
+  it('keeps a midnight Airdrop in one round that crosses calendar dates', () => {
+    const times = buildAirdropRoundTimes(
+      new Date('2026-08-27T17:00:00.000Z'),
+      'Asia/Bangkok',
+      10,
+      10,
+    );
+
+    expect(times.attendanceDate).toBe('2026-08-28');
+    expect(times.opensAt.toISOString()).toBe('2026-08-27T16:50:00.000Z');
+    expect(times.closesAt.toISOString()).toBe('2026-08-27T17:10:00.000Z');
+    expect(times.emergencyLeaveCutoff.toISOString()).toBe('2026-08-28T16:59:59.999Z');
+  });
+
+  it('supports recurring attendance windows that close after midnight', () => {
+    const times = buildAttendanceRoundTimes('2026-08-27', '23:50', '00:10', 'Asia/Bangkok');
+
+    expect(times.opensAt.toISOString()).toBe('2026-08-27T16:50:00.000Z');
+    expect(times.closesAt.toISOString()).toBe('2026-08-27T17:10:00.000Z');
+    expect(times.emergencyLeaveCutoff.toISOString()).toBe('2026-08-28T16:59:59.999Z');
+  });
+
+  it('builds a Manual general session from explicit datetimes', () => {
+    const times = buildGeneralRoundTimes(
+      new Date('2026-08-27T12:00:00.000Z'),
+      new Date('2026-08-27T15:00:00.000Z'),
+      'Asia/Bangkok',
+    );
+
+    expect(times.attendanceDate).toBe('2026-08-27');
+    expect(times.emergencyLeaveCutoff.toISOString()).toBe('2026-08-27T16:59:59.999Z');
+  });
+
+  it('rejects impossible dates, invalid Airdrop margins, and invalid weekdays', () => {
     expect(() => parseAttendanceDate('31/02/69')).toThrow(ValidationError);
-    expect(() => buildAttendanceRoundTimes('2026-08-27', '21:30', '19:00', 'Asia/Bangkok')).toThrow(ValidationError);
+    expect(() => buildAirdropRoundTimes(new Date('2026-08-27T14:00:00.000Z'), 'Asia/Bangkok', -1, 10)).toThrow(ValidationError);
     expect(() => validateWeekdays([])).toThrow(ValidationError);
     expect(() => validateWeekdays([0, 8])).toThrow(ValidationError);
     expect(validateWeekdays([7, 1, 1])).toEqual([1, 7]);
+  });
+
+  it('accepts one image proof up to 10 MB and rejects other uploads', () => {
+    expect(() => validateAttendanceProof({ contentType: 'image/png', size: 1_024 })).not.toThrow();
+    expect(() => validateAttendanceProof({ contentType: 'application/pdf', size: 1_024 })).toThrow(ValidationError);
+    expect(() => validateAttendanceProof({ contentType: 'image/jpeg', size: 10 * 1_024 * 1_024 + 1 })).toThrow(ValidationError);
   });
 });

@@ -155,6 +155,13 @@
       "when": 1788339029240,
       "tag": "0021_kind_blue_marvel",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1788417924460,
+      "tag": "0022_right_junta",
+      "breakpoints": true
     }
   ]
 }

@@ -13,6 +13,7 @@ import {
 } from '../../infrastructure/db/schema.js';
 import { writeAudit } from '../audit/service.js';
 import {
+  buildAirdropRoundTimes,
   buildAttendanceRoundTimes,
   classifyAttendance,
   parseLocalTime,
@@ -25,12 +26,15 @@ export type AttendanceRound = typeof attendanceRounds.$inferSelect;
 export type AttendanceRecord = typeof attendanceRecords.$inferSelect;
 export type AttendanceSchedule = typeof attendanceSchedules.$inferSelect;
 export type Leave = typeof leaves.$inferSelect;
+export type AttendanceMode = AttendanceRound['mode'];
 
 export interface MemberAttendanceView {
   readonly memberId: string;
   readonly discordUserId: string;
   readonly inGameName: string;
   readonly checkedInAt: Date | null;
+  readonly proofChannelId: string | null;
+  readonly proofMessageId: string | null;
   readonly result: AttendanceRecord['result'];
 }
 
@@ -54,21 +58,39 @@ export interface CreateRoundInput extends AttendanceRoundTimes {
   readonly guildId: string;
   readonly requestId: string;
   readonly title: string;
+  readonly mode: AttendanceMode;
+  readonly eventAt?: Date;
   readonly actorDiscordUserId: string;
   readonly now: Date;
   readonly sourceScheduleId?: string;
 }
 
-export interface CreateRecurringScheduleInput {
+interface CreateRecurringScheduleBaseInput {
   readonly guildId: string;
   readonly requestId: string;
   readonly name: string;
   readonly weekdays: readonly number[];
-  readonly opensAtLocalTime: string;
-  readonly closesAtLocalTime: string;
   readonly timezone: string;
   readonly actorDiscordUserId: string;
   readonly now: Date;
+}
+
+export type CreateRecurringScheduleInput = CreateRecurringScheduleBaseInput & ({
+  readonly mode: 'GENERAL';
+  readonly opensAtLocalTime: string;
+  readonly closesAtLocalTime: string;
+} | {
+  readonly mode: 'AIRDROP';
+  readonly eventAtLocalTime: string;
+  readonly opensBeforeMinutes: number;
+  readonly closesAfterMinutes: number;
+});
+
+export interface AttendanceProofInput {
+  readonly attachmentId: string;
+  readonly channelId: string;
+  readonly messageId: string;
+  readonly sha256: string;
 }
 
 export interface SubmitLeaveInput {
@@ -98,9 +120,7 @@ export class AttendanceService {
   public async createRecurringSchedule(input: CreateRecurringScheduleInput): Promise<AttendanceSchedule> {
     const name = requireText(input.name, 'ชื่อตารางเช็กชื่อ', 2, 100);
     const weekdays = validateWeekdays(input.weekdays);
-    parseLocalTime(input.opensAtLocalTime, 'เวลาเปิด');
-    parseLocalTime(input.closesAtLocalTime, 'เวลาปิด');
-    buildAttendanceRoundTimes('2026-01-01', input.opensAtLocalTime, input.closesAtLocalTime, input.timezone);
+    validateScheduleInput(input);
 
     return this.db.transaction(async (tx) => {
       const [existing] = await tx
@@ -118,9 +138,18 @@ export class AttendanceService {
           guildId: input.guildId,
           requestId: input.requestId,
           name,
+          mode: input.mode,
           weekdays,
-          opensAtLocalTime: input.opensAtLocalTime.trim(),
-          closesAtLocalTime: input.closesAtLocalTime.trim(),
+          ...(input.mode === 'GENERAL'
+            ? {
+                opensAtLocalTime: input.opensAtLocalTime.trim(),
+                closesAtLocalTime: input.closesAtLocalTime.trim(),
+              }
+            : {
+                eventAtLocalTime: input.eventAtLocalTime.trim(),
+                opensBeforeMinutes: input.opensBeforeMinutes,
+                closesAfterMinutes: input.closesAfterMinutes,
+              }),
           createdByDiscordUserId: input.actorDiscordUserId,
         })
         .returning();
@@ -199,8 +228,9 @@ export class AttendanceService {
   public async checkIn(guildId: string, roundId: string, discordUserId: string, now: Date): Promise<AttendanceRecord> {
     return this.db.transaction(async (tx) => {
       const round = await lockRound(tx, guildId, roundId);
-      if (round.status === 'CANCELLED' || round.status === 'CLOSED' || now < round.opensAt || now > round.closesAt) {
-        throw new ConflictError('รอบเช็กชื่อยังไม่เปิดหรือปิดแล้ว');
+      validateCheckInWindow(round, now);
+      if (round.mode === 'AIRDROP') {
+        throw new ValidationError('รอบ Airdrop ต้องแนบรูปตัวละครและรายชื่อในวอ');
       }
       const member = await findActiveMember(tx, guildId, discordUserId);
       const [existing] = await tx
@@ -228,6 +258,81 @@ export class AttendanceService {
       await queueRoundRefresh(tx, guildId, roundId, now);
       return record;
     });
+  }
+
+  public async checkInWithProof(
+    guildId: string,
+    roundId: string,
+    discordUserId: string,
+    proof: AttendanceProofInput,
+    now: Date,
+  ): Promise<AttendanceRecord> {
+    validateAttendanceProofInput(proof);
+    try {
+      return await this.db.transaction(async (tx) => {
+        const round = await lockRound(tx, guildId, roundId);
+        validateCheckInWindow(round, now);
+        if (round.mode !== 'AIRDROP') {
+          throw new ValidationError('เช็กชื่อทั่วไปไม่ต้องแนบรูปหลักฐาน');
+        }
+        const member = await findActiveMember(tx, guildId, discordUserId);
+        const [existing] = await tx
+          .select()
+          .from(attendanceRecords)
+          .where(and(eq(attendanceRecords.roundId, roundId), eq(attendanceRecords.memberId, member.id)))
+          .limit(1)
+          .for('update');
+        if (existing?.checkedInAt !== null && existing?.checkedInAt !== undefined) {
+          throw new ConflictError('คุณเช็กชื่อในรอบนี้แล้ว');
+        }
+        const [reusedProof] = await tx
+          .select({ roundId: attendanceRecords.roundId })
+          .from(attendanceRecords)
+          .where(eq(attendanceRecords.proofSha256, proof.sha256))
+          .limit(1);
+        if (reusedProof !== undefined) {
+          throw new ConflictError('รูปหลักฐานนี้ถูกใช้เช็กชื่อแล้ว กรุณาแนบรูปใหม่จากรอบปัจจุบัน');
+        }
+
+        const [record] = await tx
+          .insert(attendanceRecords)
+          .values({
+            roundId,
+            memberId: member.id,
+            result: 'PRESENT',
+            checkedInAt: now,
+            proofAttachmentId: proof.attachmentId,
+            proofChannelId: proof.channelId,
+            proofMessageId: proof.messageId,
+            proofSha256: proof.sha256,
+          })
+          .onConflictDoUpdate({
+            target: [attendanceRecords.roundId, attendanceRecords.memberId],
+            set: {
+              result: 'PRESENT',
+              checkedInAt: now,
+              leaveId: null,
+              proofAttachmentId: proof.attachmentId,
+              proofChannelId: proof.channelId,
+              proofMessageId: proof.messageId,
+              proofSha256: proof.sha256,
+              updatedAt: now,
+            },
+          })
+          .returning();
+        if (record === undefined) {
+          throw new Error('Attendance proof check-in did not return a row');
+        }
+        await writeAttendanceAudit(tx, guildId, discordUserId, 'ATTENDANCE_PROOF_CHECKED_IN', 'ATTENDANCE_RECORD', `${roundId}:${member.id}`, existing ?? null, record);
+        await queueRoundRefresh(tx, guildId, roundId, now);
+        return record;
+      });
+    } catch (error: unknown) {
+      if (isConstraintViolation(error, 'attendance_records_proof_sha256_uq')) {
+        throw new ConflictError('รูปหลักฐานนี้ถูกใช้เช็กชื่อแล้ว กรุณาแนบรูปใหม่จากรอบปัจจุบัน');
+      }
+      throw error;
+    }
   }
 
   public async closeRound(guildId: string, roundId: string, now: Date): Promise<AttendanceRound> {
@@ -416,6 +521,8 @@ export class AttendanceService {
         discordUserId: members.discordUserId,
         inGameName: members.inGameName,
         checkedInAt: attendanceRecords.checkedInAt,
+        proofChannelId: attendanceRecords.proofChannelId,
+        proofMessageId: attendanceRecords.proofMessageId,
         result: attendanceRecords.result,
       })
       .from(attendanceRecords)
@@ -556,7 +663,9 @@ async function createRoundWithTransaction(tx: Transaction, input: CreateRoundInp
       guildId: input.guildId,
       requestId: input.requestId,
       title: requireText(input.title, 'ชื่อรอบเช็กชื่อ', 2, 100),
+      mode: input.mode,
       attendanceDate: input.attendanceDate,
+      ...(input.eventAt === undefined ? {} : { eventAt: input.eventAt }),
       opensAt: input.opensAt,
       closesAt: input.closesAt,
       emergencyLeaveCutoff: input.emergencyLeaveCutoff,
@@ -590,7 +699,7 @@ async function materializeScheduleWithTransaction(
       continue;
     }
     const attendanceDate = date.toFormat('yyyy-MM-dd');
-    const times = buildAttendanceRoundTimes(attendanceDate, schedule.opensAtLocalTime, schedule.closesAtLocalTime, timezone);
+    const { times, eventAt } = buildScheduleRoundTimes(schedule, attendanceDate, timezone);
     if (times.closesAt <= now) {
       continue;
     }
@@ -598,12 +707,56 @@ async function materializeScheduleWithTransaction(
       guildId: schedule.guildId,
       requestId: `schedule:${schedule.id}:${attendanceDate}`,
       title: `${schedule.name} · ${attendanceDate}`,
+      mode: schedule.mode,
+      ...(eventAt === null ? {} : { eventAt }),
       ...times,
       actorDiscordUserId: schedule.createdByDiscordUserId,
       now,
       sourceScheduleId: schedule.id,
     });
   }
+}
+
+function buildScheduleRoundTimes(
+  schedule: AttendanceSchedule,
+  attendanceDate: string,
+  timezone: string,
+): { times: AttendanceRoundTimes; eventAt: Date | null } {
+  if (schedule.mode === 'GENERAL') {
+    if (schedule.opensAtLocalTime === null || schedule.closesAtLocalTime === null) {
+      throw new Error(`GENERAL attendance schedule ${schedule.id} has incomplete time configuration`);
+    }
+    return {
+      times: buildAttendanceRoundTimes(
+        attendanceDate,
+        schedule.opensAtLocalTime,
+        schedule.closesAtLocalTime,
+        timezone,
+      ),
+      eventAt: null,
+    };
+  }
+  if (
+    schedule.eventAtLocalTime === null
+    || schedule.opensBeforeMinutes === null
+    || schedule.closesAfterMinutes === null
+  ) {
+    throw new Error(`AIRDROP attendance schedule ${schedule.id} has incomplete time configuration`);
+  }
+  const eventTime = parseLocalTime(schedule.eventAtLocalTime, 'เวลา Airdrop');
+  const event = DateTime.fromISO(attendanceDate, { zone: timezone }).set(eventTime);
+  if (!event.isValid) {
+    throw new ValidationError('วันเวลา Airdrop หรือ Timezone ไม่ถูกต้อง');
+  }
+  return {
+    times: buildAirdropRoundTimes(
+      event.toJSDate(),
+      timezone,
+      schedule.opensBeforeMinutes,
+      schedule.closesAfterMinutes,
+    ),
+    eventAt: event.toJSDate(),
+  };
 }
 
 async function queueRoundLifecycleJobs(tx: Transaction, round: AttendanceRound, now: Date): Promise<void> {
@@ -809,6 +962,46 @@ function validateCreateRound(input: CreateRoundInput): void {
   if (input.closesAt <= input.now) {
     throw new ValidationError('เวลาปิดเช็กชื่อต้องอยู่ในอนาคต');
   }
+  if (input.mode === 'AIRDROP') {
+    if (input.eventAt === undefined || input.eventAt < input.opensAt || input.eventAt > input.closesAt) {
+      throw new ValidationError('เวลา Airdrop ต้องอยู่ในช่วงเปิดเช็กชื่อ');
+    }
+  } else if (input.eventAt !== undefined) {
+    throw new ValidationError('เช็กชื่อทั่วไปไม่ต้องระบุเวลา Airdrop');
+  }
+}
+
+function validateScheduleInput(input: CreateRecurringScheduleInput): void {
+  if (input.mode === 'GENERAL') {
+    parseLocalTime(input.opensAtLocalTime, 'เวลาเปิด');
+    parseLocalTime(input.closesAtLocalTime, 'เวลาปิด');
+    buildAttendanceRoundTimes('2026-01-01', input.opensAtLocalTime, input.closesAtLocalTime, input.timezone);
+    return;
+  }
+  const eventTime = parseLocalTime(input.eventAtLocalTime, 'เวลา Airdrop');
+  const event = DateTime.fromObject({ year: 2026, month: 1, day: 1, ...eventTime }, { zone: input.timezone });
+  buildAirdropRoundTimes(event.toJSDate(), input.timezone, input.opensBeforeMinutes, input.closesAfterMinutes);
+}
+
+function validateCheckInWindow(round: AttendanceRound, now: Date): void {
+  if (round.status === 'CANCELLED' || round.status === 'CLOSED' || now < round.opensAt || now > round.closesAt) {
+    throw new ConflictError('รอบเช็กชื่อยังไม่เปิดหรือปิดแล้ว');
+  }
+}
+
+function validateAttendanceProofInput(proof: AttendanceProofInput): void {
+  requireText(proof.attachmentId, 'รหัสไฟล์หลักฐาน', 1, 100);
+  requireText(proof.channelId, 'รหัส Channel หลักฐาน', 1, 100);
+  requireText(proof.messageId, 'รหัสข้อความหลักฐาน', 1, 100);
+  if (!/^[0-9a-f]{64}$/u.test(proof.sha256)) {
+    throw new ValidationError('ลายนิ้วมือรูปหลักฐานไม่ถูกต้อง');
+  }
+}
+
+function isConstraintViolation(error: unknown, constraint: string): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const databaseError = error as { readonly code?: unknown; readonly constraint?: unknown };
+  return databaseError.code === '23505' && databaseError.constraint === constraint;
 }
 
 function validateLeaveDates(startsOn: string, endsOn: string): void {

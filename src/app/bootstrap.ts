@@ -74,6 +74,7 @@ export async function bootstrap(): Promise<RunningApplication> {
     attendance: attendanceService,
     guildConfig,
     members: memberService,
+    logger,
   });
   const fineInteractions = new FineInteractionHandler({
     client,

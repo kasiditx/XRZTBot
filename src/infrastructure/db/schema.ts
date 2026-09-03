@@ -27,6 +27,7 @@ export const requestStatusEnum = pgEnum('request_status', ['PENDING', 'APPROVED'
 export const scheduledJobStatusEnum = pgEnum('scheduled_job_status', ['PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED']);
 export const activityStatusEnum = pgEnum('activity_status', ['DRAFT', 'SCHEDULED', 'OPEN', 'CLOSED', 'CANCELLED']);
 export const activityModeEnum = pgEnum('activity_mode', ['SCORE', 'EVIDENCE', 'ANNOUNCEMENT']);
+export const attendanceModeEnum = pgEnum('attendance_mode', ['AIRDROP', 'GENERAL']);
 export const attendanceRoundStatusEnum = pgEnum('attendance_round_status', ['SCHEDULED', 'OPEN', 'CLOSED', 'CANCELLED']);
 export const attendanceResultEnum = pgEnum('attendance_result', ['PENDING', 'PRESENT', 'LEAVE', 'EMERGENCY_LEAVE', 'ABSENT']);
 export const leaveStatusEnum = pgEnum('leave_status', ['ACTIVE', 'CANCELLED']);
@@ -295,7 +296,9 @@ export const attendanceRounds = pgTable(
     guildId: text('guild_id').notNull().references(() => guildSettings.guildId, { onDelete: 'cascade' }),
     requestId: text('request_id').notNull(),
     title: text('title').notNull(),
+    mode: attendanceModeEnum('mode').notNull().default('GENERAL'),
     attendanceDate: text('attendance_date').notNull(),
+    eventAt: timestamp('event_at', { withTimezone: true, mode: 'date' }),
     opensAt: timestamp('opens_at', { withTimezone: true, mode: 'date' }).notNull(),
     closesAt: timestamp('closes_at', { withTimezone: true, mode: 'date' }).notNull(),
     emergencyLeaveCutoff: timestamp('emergency_leave_cutoff', { withTimezone: true, mode: 'date' }).notNull(),
@@ -309,6 +312,8 @@ export const attendanceRounds = pgTable(
   (table) => [
     uniqueIndex('attendance_rounds_guild_request_uq').on(table.guildId, table.requestId),
     index('attendance_rounds_guild_date_idx').on(table.guildId, table.attendanceDate),
+    check('attendance_rounds_airdrop_event', sql`${table.mode} <> 'AIRDROP' OR ${table.eventAt} IS NOT NULL`),
+    check('attendance_rounds_event_in_window', sql`${table.eventAt} IS NULL OR (${table.eventAt} >= ${table.opensAt} AND ${table.eventAt} <= ${table.closesAt})`),
     check('attendance_rounds_valid_window', sql`${table.closesAt} > ${table.opensAt}`),
     check('attendance_rounds_date_format', sql`${table.attendanceDate} ~ '^\\d{4}-\\d{2}-\\d{2}$'`),
   ],
@@ -321,9 +326,13 @@ export const attendanceSchedules = pgTable(
     guildId: text('guild_id').notNull().references(() => guildSettings.guildId, { onDelete: 'cascade' }),
     requestId: text('request_id').notNull(),
     name: text('name').notNull(),
+    mode: attendanceModeEnum('mode').notNull().default('GENERAL'),
     weekdays: jsonb('weekdays').$type<number[]>().notNull(),
-    opensAtLocalTime: text('opens_at_local_time').notNull(),
-    closesAtLocalTime: text('closes_at_local_time').notNull(),
+    opensAtLocalTime: text('opens_at_local_time'),
+    closesAtLocalTime: text('closes_at_local_time'),
+    eventAtLocalTime: text('event_at_local_time'),
+    opensBeforeMinutes: integer('opens_before_minutes'),
+    closesAfterMinutes: integer('closes_after_minutes'),
     isActive: boolean('is_active').notNull().default(true),
     createdByDiscordUserId: text('created_by_discord_user_id').notNull(),
     ...auditColumns,
@@ -331,6 +340,22 @@ export const attendanceSchedules = pgTable(
   (table) => [
     uniqueIndex('attendance_schedules_guild_request_uq').on(table.guildId, table.requestId),
     check('attendance_schedules_weekdays_not_empty', sql`jsonb_array_length(${table.weekdays}) > 0`),
+    check('attendance_schedules_mode_fields', sql`(
+      ${table.mode} = 'GENERAL'
+      AND ${table.opensAtLocalTime} IS NOT NULL
+      AND ${table.closesAtLocalTime} IS NOT NULL
+      AND ${table.eventAtLocalTime} IS NULL
+      AND ${table.opensBeforeMinutes} IS NULL
+      AND ${table.closesAfterMinutes} IS NULL
+    ) OR (
+      ${table.mode} = 'AIRDROP'
+      AND ${table.opensAtLocalTime} IS NULL
+      AND ${table.closesAtLocalTime} IS NULL
+      AND ${table.eventAtLocalTime} IS NOT NULL
+      AND ${table.opensBeforeMinutes} BETWEEN 0 AND 1440
+      AND ${table.closesAfterMinutes} BETWEEN 0 AND 1440
+      AND (${table.opensBeforeMinutes} + ${table.closesAfterMinutes}) > 0
+    )`),
   ],
 );
 
@@ -367,11 +392,30 @@ export const attendanceRecords = pgTable(
     result: attendanceResultEnum('result').notNull(),
     checkedInAt: timestamp('checked_in_at', { withTimezone: true, mode: 'date' }),
     leaveId: uuid('leave_id').references(() => leaves.id, { onDelete: 'set null' }),
+    proofAttachmentId: text('proof_attachment_id'),
+    proofChannelId: text('proof_channel_id'),
+    proofMessageId: text('proof_message_id'),
+    proofSha256: text('proof_sha256'),
     correctedByDiscordUserId: text('corrected_by_discord_user_id'),
     correctionReason: text('correction_reason'),
     ...auditColumns,
   },
-  (table) => [primaryKey({ columns: [table.roundId, table.memberId] })],
+  (table) => [
+    primaryKey({ columns: [table.roundId, table.memberId] }),
+    uniqueIndex('attendance_records_proof_sha256_uq').on(table.proofSha256).where(sql`${table.proofSha256} IS NOT NULL`),
+    check('attendance_records_proof_sha256_format', sql`${table.proofSha256} IS NULL OR length(${table.proofSha256}) = 64`),
+    check('attendance_records_proof_fields_complete', sql`(
+      ${table.proofAttachmentId} IS NULL
+      AND ${table.proofChannelId} IS NULL
+      AND ${table.proofMessageId} IS NULL
+      AND ${table.proofSha256} IS NULL
+    ) OR (
+      ${table.proofAttachmentId} IS NOT NULL
+      AND ${table.proofChannelId} IS NOT NULL
+      AND ${table.proofMessageId} IS NOT NULL
+      AND ${table.proofSha256} IS NOT NULL
+    )`),
+  ],
 );
 
 export const fines = pgTable(

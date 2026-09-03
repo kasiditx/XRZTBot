@@ -23,6 +23,13 @@ export interface AttendanceEvidence {
   readonly leaves: readonly LeaveEvidence[];
 }
 
+export interface AttendanceProofFile {
+  readonly contentType: string | null;
+  readonly size: number;
+}
+
+const MAX_ATTENDANCE_PROOF_BYTES = 10 * 1_024 * 1_024;
+
 export function currentAttendanceDate(now: Date, timezone: string): string {
   const date = DateTime.fromJSDate(now, { zone: timezone });
   const isoDate = date.toISODate();
@@ -100,15 +107,64 @@ export function buildAttendanceRoundTimes(
     throw new ValidationError('วันที่เช็กชื่อไม่ถูกต้อง');
   }
   const opensAt = date.set(openTime);
-  const closesAt = date.set(closeTime);
-  if (closesAt <= opensAt) {
-    throw new ValidationError('เวลาปิดเช็กชื่อต้องอยู่หลังเวลาเปิดในวันเดียวกัน');
-  }
+  const closeOnAttendanceDate = date.set(closeTime);
+  const closesAt = closeOnAttendanceDate <= opensAt ? closeOnAttendanceDate.plus({ days: 1 }) : closeOnAttendanceDate;
   return {
     attendanceDate,
     opensAt: opensAt.toJSDate(),
     closesAt: closesAt.toJSDate(),
-    emergencyLeaveCutoff: date.endOf('day').toJSDate(),
+    emergencyLeaveCutoff: closesAt.endOf('day').toJSDate(),
+  };
+}
+
+export function buildAirdropRoundTimes(
+  eventAt: Date,
+  timezone: string,
+  opensBeforeMinutes = 10,
+  closesAfterMinutes = 10,
+): AttendanceRoundTimes {
+  const event = DateTime.fromJSDate(eventAt, { zone: timezone });
+  if (!event.isValid) {
+    throw new ValidationError('วันเวลา Airdrop หรือ Timezone ไม่ถูกต้อง');
+  }
+  validateWindowMargin(opensBeforeMinutes, 'นาทีก่อน Airdrop');
+  validateWindowMargin(closesAfterMinutes, 'นาทีหลัง Airdrop');
+  if (opensBeforeMinutes + closesAfterMinutes === 0) {
+    throw new ValidationError('ช่วงเช็กชื่อ Airdrop ต้องมากกว่า 0 นาที');
+  }
+
+  const attendanceDate = event.toISODate();
+  if (attendanceDate === null) {
+    throw new ValidationError('วันเวลา Airdrop ไม่ถูกต้อง');
+  }
+  const opensAt = event.minus({ minutes: opensBeforeMinutes });
+  const closesAt = event.plus({ minutes: closesAfterMinutes });
+  return {
+    attendanceDate,
+    opensAt: opensAt.toJSDate(),
+    closesAt: closesAt.toJSDate(),
+    emergencyLeaveCutoff: closesAt.endOf('day').toJSDate(),
+  };
+}
+
+export function buildGeneralRoundTimes(opensAt: Date, closesAt: Date, timezone: string): AttendanceRoundTimes {
+  const opens = DateTime.fromJSDate(opensAt, { zone: timezone });
+  const closes = DateTime.fromJSDate(closesAt, { zone: timezone });
+  if (!opens.isValid || !closes.isValid) {
+    throw new ValidationError('วันเวลาเช็กชื่อหรือ Timezone ไม่ถูกต้อง');
+  }
+  if (closes <= opens) {
+    throw new ValidationError('เวลาปิดเช็กชื่อต้องอยู่หลังเวลาเปิด');
+  }
+  const attendanceDate = opens.toISODate();
+  if (attendanceDate === null) {
+    throw new ValidationError('วันที่เช็กชื่อไม่ถูกต้อง');
+  }
+  return {
+    attendanceDate,
+    opensAt: opens.toJSDate(),
+    closesAt: closes.toJSDate(),
+    emergencyLeaveCutoff: closes.endOf('day').toJSDate(),
   };
 }
 
@@ -123,6 +179,22 @@ export function parseLocalTime(value: string, label: string): { hour: number; mi
     throw new ValidationError(`${label}ไม่ถูกต้อง`);
   }
   return { hour, minute };
+}
+
+export function validateAttendanceProof(file: AttendanceProofFile): void {
+  const supportedContentTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+  if (file.contentType === null || !supportedContentTypes.has(file.contentType)) {
+    throw new ValidationError('หลักฐานเช็กชื่อต้องเป็นไฟล์รูปภาพ');
+  }
+  if (!Number.isSafeInteger(file.size) || file.size < 1 || file.size > MAX_ATTENDANCE_PROOF_BYTES) {
+    throw new ValidationError('รูปหลักฐานต้องมีขนาดไม่เกิน 10 MB');
+  }
+}
+
+function validateWindowMargin(value: number, label: string): void {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 1_440) {
+    throw new ValidationError(`${label}ต้องเป็นจำนวนเต็มระหว่าง 0–1440`);
+  }
 }
 
 export function validateWeekdays(values: readonly number[]): number[] {

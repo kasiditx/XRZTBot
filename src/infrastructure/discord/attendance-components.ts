@@ -2,6 +2,7 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  FileUploadBuilder,
   LabelBuilder,
   ModalBuilder,
   StringSelectMenuBuilder,
@@ -12,6 +13,7 @@ import { MiruEmbedBuilder as EmbedBuilder, formatPanelText } from './theme.js';
 import type {
   AttendanceRound,
   AttendanceRoundView,
+  AttendanceMode,
   LeaveView,
 } from '../../modules/attendance/service.js';
 import type { MemberSelectionOption } from './role-verified-members.js';
@@ -21,12 +23,22 @@ export const attendanceComponentIds = {
   adminRecurring: 'attendance:admin_recurring',
   adminPublishLeave: 'attendance:admin_publish_leave',
   adminRoundSelect: 'attendance:admin_round_select',
+  createType: 'attendance:create_type',
+  createTitle: 'attendance:create_title',
+  createEventAt: 'attendance:create_event_at',
   createOpensAt: 'attendance:create_opens_at',
   createClosesAt: 'attendance:create_closes_at',
+  createBeforeMinutes: 'attendance:create_before_minutes',
+  createAfterMinutes: 'attendance:create_after_minutes',
+  recurringType: 'attendance:recurring_type',
   recurringName: 'attendance:recurring_name',
   recurringWeekdays: 'attendance:recurring_weekdays',
+  recurringEventAt: 'attendance:recurring_event_at',
   recurringOpensAt: 'attendance:recurring_opens_at',
   recurringClosesAt: 'attendance:recurring_closes_at',
+  recurringBeforeMinutes: 'attendance:recurring_before_minutes',
+  recurringAfterMinutes: 'attendance:recurring_after_minutes',
+  proofFile: 'attendance:proof_file',
   leaveSubmit: 'leave:submit',
   leaveStartsOn: 'leave:starts_on',
   leaveEndsOn: 'leave:ends_on',
@@ -36,15 +48,16 @@ export const attendanceComponentIds = {
   correctionReason: 'attendance:correction_reason',
 } as const;
 
-export const attendanceCreateModalId = 'attendance:create_modal';
-export const attendanceRecurringModalId = 'attendance:recurring_modal';
+export const attendanceCreateModalPrefix = 'attendance:create_modal:';
+export const attendanceRecurringModalPrefix = 'attendance:recurring_modal:';
+export const attendanceProofModalPrefix = 'attendance:proof_modal:';
 export const leaveSubmitModalId = 'leave:submit_modal';
 export const leaveEditModalPrefix = 'leave:edit_modal:';
 
 export function buildAttendanceAdminPanel(rounds: readonly AttendanceRound[]) {
   const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(attendanceComponentIds.adminCreate).setLabel('สร้างรอบเช็กชื่อ').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(attendanceComponentIds.adminRecurring).setLabel('ตั้งเวลาประจำ').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(attendanceComponentIds.adminCreate).setLabel('เปิดเช็กชื่อเอง').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(attendanceComponentIds.adminRecurring).setLabel('ตั้ง Auto').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId(attendanceComponentIds.adminPublishLeave).setLabel('ส่ง Panel แจ้งลา').setStyle(ButtonStyle.Secondary),
   );
   if (rounds.length === 0) {
@@ -67,25 +80,85 @@ export function buildAttendanceAdminPanel(rounds: readonly AttendanceRound[]) {
   };
 }
 
-export function buildCreateRoundModal(): ModalBuilder {
-  return new ModalBuilder()
-    .setCustomId(attendanceCreateModalId)
-    .setTitle('สร้างรอบเช็กชื่อวันนี้')
-    .addComponents(
-      inputRow(attendanceComponentIds.createOpensAt, 'เวลาเปิด (HH:mm)', '19:00', 4, 5, '19:00'),
-      inputRow(attendanceComponentIds.createClosesAt, 'เวลาปิด (HH:mm)', '21:30', 4, 5, '21:30'),
+export function buildAttendanceModeSelector(purpose: 'MANUAL' | 'AUTO') {
+  const isManual = purpose === 'MANUAL';
+  const selector = new StringSelectMenuBuilder()
+    .setCustomId(isManual ? attendanceComponentIds.createType : attendanceComponentIds.recurringType)
+    .setPlaceholder('เลือกรูปแบบเช็กชื่อ')
+    .addOptions(
+      { label: 'รอบ Airdrop', value: 'AIRDROP', emoji: '🪂', description: 'สมาชิกต้องแนบรูปตัวละครและรายชื่อในวอ' },
+      { label: 'เช็กชื่อทั่วไป', value: 'GENERAL', emoji: '✅', description: 'ใช้กับซ้อม ประชุม หรือกิจกรรมทั่วไป' },
     );
+  return {
+    content: formatPanelText(
+      '✅',
+      isManual ? 'เปิดเช็กชื่อเอง' : 'ตั้ง Auto เช็กชื่อ',
+      'เลือกแบบรอบ Airdrop หรือแบบทั่วไป',
+      isManual ? 'รายการ Manual จะแยกจาก Auto' : 'สร้างได้หลายรายการในวันเดียวกัน',
+    ),
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selector)],
+  };
 }
 
-export function buildRecurringScheduleModal(): ModalBuilder {
-  return new ModalBuilder()
-    .setCustomId(attendanceRecurringModalId)
-    .setTitle('ตั้งเวลาเช็กชื่อประจำ')
+export interface CreateRoundModalDefaults {
+  readonly title: string;
+  readonly eventAt: string;
+  readonly opensAt: string;
+  readonly closesAt: string;
+}
+
+export function buildCreateRoundModal(mode: AttendanceMode, defaults: CreateRoundModalDefaults): ModalBuilder {
+  const modal = new ModalBuilder()
+    .setCustomId(`${attendanceCreateModalPrefix}${mode}`)
+    .setTitle(mode === 'AIRDROP' ? 'เปิดรอบ Airdrop' : 'เปิดเช็กชื่อทั่วไป')
+    .addComponents(inputRow(attendanceComponentIds.createTitle, 'ชื่อรายการ', 'Airdrop 21:00', 2, 100, defaults.title));
+  if (mode === 'AIRDROP') {
+    return modal.addComponents(
+      inputRow(attendanceComponentIds.createEventAt, 'เวลา Airdrop (DD/MM/YYYY HH:mm)', undefined, 12, 16, defaults.eventAt),
+      inputRow(attendanceComponentIds.createBeforeMinutes, 'เปิดก่อน Airdrop กี่นาที', '10', 1, 4, '10'),
+      inputRow(attendanceComponentIds.createAfterMinutes, 'ปิดหลัง Airdrop กี่นาที', '10', 1, 4, '10'),
+    );
+  }
+  return modal.addComponents(
+    inputRow(attendanceComponentIds.createOpensAt, 'เปิด (DD/MM/YYYY HH:mm)', undefined, 12, 16, defaults.opensAt),
+    inputRow(attendanceComponentIds.createClosesAt, 'ปิด (DD/MM/YYYY HH:mm)', undefined, 12, 16, defaults.closesAt),
+  );
+}
+
+export function buildRecurringScheduleModal(mode: AttendanceMode): ModalBuilder {
+  const modal = new ModalBuilder()
+    .setCustomId(`${attendanceRecurringModalPrefix}${mode}`)
+    .setTitle(mode === 'AIRDROP' ? 'ตั้ง Auto รอบ Airdrop' : 'ตั้ง Auto เช็กชื่อทั่วไป')
     .addComponents(
-      inputRow(attendanceComponentIds.recurringName, 'ชื่อตาราง', 'เช็กชื่อประจำวัน', 2, 100),
+      inputRow(attendanceComponentIds.recurringName, 'ชื่อ Auto', mode === 'AIRDROP' ? 'Airdrop 21:00' : 'ซ้อมไฟต์', 2, 100),
       inputRow(attendanceComponentIds.recurringWeekdays, 'วัน: 1=จันทร์ ... 7=อาทิตย์', '1,2,3,4,5,6,7', 1, 13),
-      inputRow(attendanceComponentIds.recurringOpensAt, 'เวลาเปิด (HH:mm)', '19:00', 4, 5, '19:00'),
-      inputRow(attendanceComponentIds.recurringClosesAt, 'เวลาปิด (HH:mm)', '21:30', 4, 5, '21:30'),
+    );
+  if (mode === 'AIRDROP') {
+    return modal.addComponents(
+      inputRow(attendanceComponentIds.recurringEventAt, 'เวลา Airdrop (HH:mm)', '21:00', 4, 5, '21:00'),
+      inputRow(attendanceComponentIds.recurringBeforeMinutes, 'เปิดก่อน Airdrop กี่นาที', '10', 1, 4, '10'),
+      inputRow(attendanceComponentIds.recurringAfterMinutes, 'ปิดหลัง Airdrop กี่นาที', '10', 1, 4, '10'),
+    );
+  }
+  return modal.addComponents(
+    inputRow(attendanceComponentIds.recurringOpensAt, 'เวลาเปิด (HH:mm)', '19:00', 4, 5, '19:00'),
+    inputRow(attendanceComponentIds.recurringClosesAt, 'เวลาปิด (HH:mm)', '21:30', 4, 5, '21:30'),
+  );
+}
+
+export function buildAttendanceProofModal(roundId: string): ModalBuilder {
+  const file = new FileUploadBuilder()
+    .setCustomId(attendanceComponentIds.proofFile)
+    .setMinValues(1)
+    .setMaxValues(1)
+    .setRequired(true);
+  return new ModalBuilder()
+    .setCustomId(`${attendanceProofModalPrefix}${roundId}`)
+    .setTitle('แนบรูปเช็กชื่อ Airdrop')
+    .addLabelComponents(
+      new LabelBuilder()
+        .setLabel('รูปตัวละครของตัวเองและรายชื่อในวอ')
+        .setFileUploadComponent(file),
     );
 }
 
@@ -102,7 +175,7 @@ export function buildAttendanceAnnouncement(view: AttendanceRoundView) {
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId(`attendance:check_in:${round.id}`)
-      .setLabel(isOpen ? 'เช็กชื่อ' : round.status === 'CLOSED' ? 'ปิดแล้ว' : 'ยังไม่เปิด')
+      .setLabel(attendanceButtonLabel(round))
       .setEmoji('✅')
       .setStyle(ButtonStyle.Success)
       .setDisabled(!isOpen),
@@ -120,6 +193,23 @@ export function buildAttendanceManagement(view: AttendanceRoundView) {
       .setDisabled(view.round.status !== 'CLOSED'),
   );
   return { embeds: message.embeds, components: [correction] };
+}
+
+export function buildAttendanceProofLog(
+  round: AttendanceRound,
+  member: { readonly discordUserId: string; readonly inGameName: string },
+) {
+  return {
+    embeds: [new EmbedBuilder()
+      .setColor(0x57f287)
+      .setTitle('📸 หลักฐานเช็กชื่อ Airdrop')
+      .addFields(
+        { name: 'รายการ', value: round.title },
+        { name: 'สมาชิก', value: `<@${member.discordUserId}> (${member.inGameName})` },
+        { name: 'ข้อกำหนด', value: 'รูปต้องเห็นตัวละครของตัวเองและรายชื่อในวอ' },
+      )
+      .setTimestamp()],
+  };
 }
 
 export function buildCorrectionModal(roundId: string, members: readonly MemberSelectionOption[]): ModalBuilder {
@@ -240,11 +330,15 @@ function inputRow(
 function formatAttendanceMembers(
   values: readonly AttendanceRoundView['present'][number][],
   includeTime: boolean,
+  guildId: string,
 ): string {
   if (values.length === 0) return '—';
   return values.map((member) => {
     const timestamp = includeTime && member.checkedInAt !== null ? ` · ${discordTimestamp(member.checkedInAt, 't')}` : '';
-    return `• ${member.inGameName} (<@${member.discordUserId}>)${timestamp}`;
+    const proof = member.proofChannelId === null || member.proofMessageId === null
+      ? ''
+      : ` · [ดูรูป](https://discord.com/channels/${guildId}/${member.proofChannelId}/${member.proofMessageId})`;
+    return `• ${member.inGameName} (<@${member.discordUserId}>)${timestamp}${proof}`;
   }).join('\n');
 }
 
@@ -258,21 +352,26 @@ function buildAttendanceDescriptions(view: AttendanceRoundView): string[] {
   const { round } = view;
   const isClosed = round.status === 'CLOSED';
   const lines = [
+    `**รูปแบบ:** ${round.mode === 'AIRDROP' ? 'รอบ Airdrop' : 'เช็กชื่อทั่วไป'}`,
     `**วันที่:** ${round.attendanceDate}`,
+    ...(round.eventAt === null ? [] : [`**เวลา Airdrop:** ${discordTimestamp(round.eventAt, 'F')}`]),
     `**เปิด:** ${discordTimestamp(round.opensAt, 'F')}`,
     `**ปิด:** ${discordTimestamp(round.closesAt, 'F')}`,
+    ...(round.mode === 'AIRDROP' ? ['', '📸 แนบรูปที่เห็นตัวละครของตัวเองและรายชื่อในวอ รูปที่ใช้ในรอบอื่นแล้วจะส่งซ้ำไม่ได้'] : []),
     '',
     `**มา ${String(view.present.length)} คน**`,
-    formatAttendanceMembers(view.present, true),
+    formatAttendanceMembers(view.present, true, round.guildId),
     '',
     `**ลา ${String(view.leave.length + view.activeLeaves.length)} คน**`,
     formatLeaveMembers(view),
     '',
     isClosed ? `**ลาเหตุฉุกเฉิน ${String(view.emergencyLeave.length)} คน**` : `**ยังไม่เช็กชื่อ ${String(view.pending.length)} คน**`,
-    isClosed ? formatAttendanceMembers(view.emergencyLeave, false) : formatAttendanceMembers(view.pending, false),
+    isClosed
+      ? formatAttendanceMembers(view.emergencyLeave, false, round.guildId)
+      : formatAttendanceMembers(view.pending, false, round.guildId),
   ];
   if (isClosed) {
-    lines.push('', `**ขาด ${String(view.absent.length)} คน**`, formatAttendanceMembers(view.absent, false));
+    lines.push('', `**ขาด ${String(view.absent.length)} คน**`, formatAttendanceMembers(view.absent, false, round.guildId));
   }
   return splitDiscordDescription(lines, '**รายชื่อ (ต่อ)**');
 }
@@ -298,6 +397,12 @@ function splitDiscordDescription(lines: readonly string[], continuationHeading: 
 function thaiRoundStatus(status: AttendanceRound['status']): string {
   const labels = { SCHEDULED: 'รอเปิด', OPEN: 'เปิดอยู่', CLOSED: 'ปิดแล้ว', CANCELLED: 'ยกเลิก' } as const;
   return labels[status];
+}
+
+function attendanceButtonLabel(round: AttendanceRound): string {
+  if (round.status === 'CLOSED') return 'ปิดแล้ว';
+  if (round.status !== 'OPEN') return 'ยังไม่เปิด';
+  return round.mode === 'AIRDROP' ? 'แนบรูปเช็กชื่อ' : 'เช็กชื่อ';
 }
 
 function discordTimestamp(value: Date, style: 'F' | 't'): string {

@@ -1,4 +1,5 @@
 import { and, eq } from 'drizzle-orm';
+import { ConflictError, ValidationError } from '../../src/domain/errors.js';
 import { createDatabase, type Database } from '../../src/infrastructure/db/client.js';
 import {
   attendanceRecords,
@@ -6,7 +7,7 @@ import {
   members,
   scheduledJobs,
 } from '../../src/infrastructure/db/schema.js';
-import { buildAttendanceRoundTimes } from '../../src/modules/attendance/rules.js';
+import { buildAirdropRoundTimes, buildAttendanceRoundTimes } from '../../src/modules/attendance/rules.js';
 import { AttendanceService, type AttendanceRound } from '../../src/modules/attendance/service.js';
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -47,6 +48,7 @@ describeWithDatabase('AttendanceService PostgreSQL integration', () => {
       guildId,
       requestId: 'attendance-create-1',
       title: 'เช็กชื่อประจำวัน',
+      mode: 'GENERAL',
       ...buildAttendanceRoundTimes('2026-08-27', '19:00', '21:30', timezone),
       actorDiscordUserId: alpha,
       now: new Date('2026-08-27T12:05:00.000Z'),
@@ -129,6 +131,7 @@ describeWithDatabase('AttendanceService PostgreSQL integration', () => {
       guildId,
       requestId: 'attendance-schedule-1',
       name: 'รอบทุกวัน',
+      mode: 'GENERAL',
       weekdays: [1, 2, 3, 4, 5, 6, 7],
       opensAtLocalTime: '19:00',
       closesAtLocalTime: '21:30',
@@ -144,5 +147,93 @@ describeWithDatabase('AttendanceService PostgreSQL integration', () => {
       eq(scheduledJobs.jobType, 'ATTENDANCE_SCHEDULE_TICK'),
     ));
     expect(ticks).toHaveLength(1);
+  });
+
+  it('requires a fresh image proof for every Airdrop round', async () => {
+    const eventAt = new Date('2026-08-29T14:00:00.000Z');
+    const firstRound = await service.createRound({
+      guildId,
+      requestId: 'airdrop-round-1',
+      title: 'Airdrop 21:00',
+      mode: 'AIRDROP',
+      eventAt,
+      ...buildAirdropRoundTimes(eventAt, timezone, 10, 10),
+      actorDiscordUserId: alpha,
+      now: new Date('2026-08-29T13:51:00.000Z'),
+    });
+
+    await expect(service.checkIn(
+      guildId,
+      firstRound.id,
+      alpha,
+      new Date('2026-08-29T13:52:00.000Z'),
+    )).rejects.toBeInstanceOf(ValidationError);
+
+    const proof = {
+      attachmentId: 'proof-attachment-1',
+      channelId: 'proof-channel-1',
+      messageId: 'proof-message-1',
+      sha256: 'a'.repeat(64),
+    } as const;
+    const record = await service.checkInWithProof(
+      guildId,
+      firstRound.id,
+      alpha,
+      proof,
+      new Date('2026-08-29T13:52:00.000Z'),
+    );
+    expect(record).toMatchObject({ result: 'PRESENT', proofSha256: proof.sha256 });
+
+    const secondEventAt = new Date('2026-08-29T16:00:00.000Z');
+    const secondRound = await service.createRound({
+      guildId,
+      requestId: 'airdrop-round-2',
+      title: 'Airdrop 23:00',
+      mode: 'AIRDROP',
+      eventAt: secondEventAt,
+      ...buildAirdropRoundTimes(secondEventAt, timezone, 10, 10),
+      actorDiscordUserId: alpha,
+      now: new Date('2026-08-29T15:51:00.000Z'),
+    });
+    await expect(service.checkInWithProof(
+      guildId,
+      secondRound.id,
+      alpha,
+      { ...proof, attachmentId: 'proof-attachment-2', messageId: 'proof-message-2' },
+      new Date('2026-08-29T15:52:00.000Z'),
+    )).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it('materializes every configured Airdrop time on the same weekday', async () => {
+    const common = {
+      guildId,
+      weekdays: [1, 2, 3, 4, 5, 6, 7],
+      mode: 'AIRDROP' as const,
+      opensBeforeMinutes: 10,
+      closesAfterMinutes: 10,
+      timezone,
+      actorDiscordUserId: alpha,
+      now: new Date('2026-08-30T02:00:00.000Z'),
+    };
+    const evening = await service.createRecurringSchedule({
+      ...common,
+      requestId: 'airdrop-auto-evening',
+      name: 'Airdrop 21:00',
+      eventAtLocalTime: '21:00',
+    });
+    const midnight = await service.createRecurringSchedule({
+      ...common,
+      requestId: 'airdrop-auto-midnight',
+      name: 'Airdrop 00:00',
+      eventAtLocalTime: '00:00',
+    });
+
+    const rounds = await service.listRounds(guildId, 100);
+    const eveningRound = rounds.find((candidate) => candidate.sourceScheduleId === evening.id && candidate.attendanceDate === '2026-08-30');
+    const midnightRound = rounds.find((candidate) => candidate.sourceScheduleId === midnight.id && candidate.attendanceDate === '2026-08-31');
+    expect(eveningRound).toMatchObject({ mode: 'AIRDROP' });
+    expect(midnightRound).toMatchObject({ mode: 'AIRDROP' });
+    expect(midnightRound?.opensAt.toISOString()).toBe('2026-08-30T16:50:00.000Z');
+    expect(midnightRound?.closesAt.toISOString()).toBe('2026-08-30T17:10:00.000Z');
   });
 });

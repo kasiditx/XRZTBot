@@ -1,5 +1,8 @@
+import { createHash } from 'node:crypto';
+import type pino from 'pino';
 import {
   MessageFlags,
+  type Attachment,
   type ButtonInteraction,
   type Client,
   type Guild,
@@ -9,17 +12,23 @@ import {
   type StringSelectMenuInteraction,
 } from 'discord.js';
 import { AuthorizationError, ValidationError } from '../../domain/errors.js';
-import { formatDateInput, formatLocalDateInput, parseDateInput } from '../../domain/temporal-input.js';
+import {
+  formatDateInput,
+  formatDateTimeInput,
+  formatLocalDateInput,
+  parseDateInput,
+  parseDateTimeInput,
+} from '../../domain/temporal-input.js';
 import {
   hasCapability,
   resolveAuthority,
   type AuthorityLevel,
 } from '../../modules/authorization/permissions.js';
-import type { AttendanceService } from '../../modules/attendance/service.js';
+import type { AttendanceMode, AttendanceService } from '../../modules/attendance/service.js';
 import {
-  buildAttendanceRoundTimes,
-  buildDailyAttendanceTitle,
-  currentAttendanceDate,
+  buildAirdropRoundTimes,
+  buildGeneralRoundTimes,
+  validateAttendanceProof,
   type AttendanceResult,
 } from '../../modules/attendance/rules.js';
 import type { GuildConfigService } from '../../modules/guild-config/service.js';
@@ -27,10 +36,14 @@ import type { MemberService } from '../../modules/members/service.js';
 import type { GuildSettings } from '../db/schema.js';
 import {
   attendanceComponentIds,
-  attendanceCreateModalId,
-  attendanceRecurringModalId,
+  attendanceCreateModalPrefix,
+  attendanceProofModalPrefix,
+  attendanceRecurringModalPrefix,
   buildAttendanceAdminPanel,
   buildAttendanceManagement,
+  buildAttendanceModeSelector,
+  buildAttendanceProofLog,
+  buildAttendanceProofModal,
   buildCorrectionModal,
   buildCreateRoundModal,
   buildLeaveCancelConfirmation,
@@ -51,6 +64,7 @@ export interface AttendanceInteractionDependencies {
   readonly attendance: AttendanceService;
   readonly guildConfig: GuildConfigService;
   readonly members: MemberService;
+  readonly logger: pino.Logger;
 }
 
 export class AttendanceInteractionHandler {
@@ -84,14 +98,14 @@ export class AttendanceInteractionHandler {
       await this.requireAdmin(guild, interaction.user.id);
       const settings = await this.requireSettings(guild.id);
       requireAttendanceChannels(settings);
-      await interaction.showModal(buildCreateRoundModal());
+      await interaction.reply({ ...buildAttendanceModeSelector('MANUAL'), flags: MessageFlags.Ephemeral });
       return;
     }
     if (interaction.customId === attendanceComponentIds.adminRecurring) {
       await this.requireAdmin(guild, interaction.user.id);
       const settings = await this.requireSettings(guild.id);
       requireAttendanceChannels(settings);
-      await interaction.showModal(buildRecurringScheduleModal());
+      await interaction.reply({ ...buildAttendanceModeSelector('AUTO'), flags: MessageFlags.Ephemeral });
       return;
     }
     if (interaction.customId === attendanceComponentIds.adminPublishLeave) {
@@ -109,6 +123,11 @@ export class AttendanceInteractionHandler {
     if (interaction.customId.startsWith('attendance:check_in:')) {
       await this.requireActiveMember(guild, interaction.user.id);
       const roundId = entityId(interaction.customId, 'attendance:check_in:');
+      const round = await this.dependencies.attendance.getRound(guild.id, roundId);
+      if (round.mode === 'AIRDROP') {
+        await interaction.showModal(buildAttendanceProofModal(roundId));
+        return;
+      }
       await this.dependencies.attendance.checkIn(guild.id, roundId, interaction.user.id, new Date());
       await interaction.reply({ ...buildNotice('success', 'เช็กชื่อสำเร็จ', 'รายชื่อผู้มาเข้าร่วมจะอัปเดตอัตโนมัติ', 'Attendance'), flags: MessageFlags.Ephemeral });
       return;
@@ -164,8 +183,30 @@ export class AttendanceInteractionHandler {
   }
 
   private async handleSelect(interaction: StringSelectMenuInteraction): Promise<void> {
-    if (interaction.customId !== attendanceComponentIds.adminRoundSelect) return;
     const guild = requireGuild(interaction.guild);
+    if (interaction.customId === attendanceComponentIds.createType) {
+      await this.requireAdmin(guild, interaction.user.id);
+      const settings = await this.requireSettings(guild.id);
+      requireAttendanceChannels(settings);
+      const mode = requireAttendanceMode(interaction.values[0]);
+      const now = new Date();
+      const eventAt = new Date(now.getTime() + 10 * 60 * 1_000);
+      const closesAt = new Date(now.getTime() + 60 * 60 * 1_000);
+      await interaction.showModal(buildCreateRoundModal(mode, {
+        title: mode === 'AIRDROP' ? `Airdrop ${formatDateTimeInput(eventAt, settings.timezone).slice(-5)}` : 'เช็กชื่อทั่วไป',
+        eventAt: formatDateTimeInput(eventAt, settings.timezone),
+        opensAt: formatDateTimeInput(now, settings.timezone),
+        closesAt: formatDateTimeInput(closesAt, settings.timezone),
+      }));
+      return;
+    }
+    if (interaction.customId === attendanceComponentIds.recurringType) {
+      await this.requireAdmin(guild, interaction.user.id);
+      await this.requireSettings(guild.id);
+      await interaction.showModal(buildRecurringScheduleModal(requireAttendanceMode(interaction.values[0])));
+      return;
+    }
+    if (interaction.customId !== attendanceComponentIds.adminRoundSelect) return;
     await this.requireAdmin(guild, interaction.user.id);
     const roundId = interaction.values[0];
     if (roundId === undefined) throw new ValidationError('กรุณาเลือกรอบเช็กชื่อ');
@@ -175,12 +216,28 @@ export class AttendanceInteractionHandler {
 
   private async handleModal(interaction: ModalSubmitInteraction): Promise<void> {
     const guild = requireGuild(interaction.guild);
-    if (interaction.customId === attendanceCreateModalId) {
-      await this.createRound(interaction, guild);
+    if (interaction.customId.startsWith(attendanceCreateModalPrefix)) {
+      await this.createRound(
+        interaction,
+        guild,
+        requireAttendanceMode(interaction.customId.slice(attendanceCreateModalPrefix.length)),
+      );
       return;
     }
-    if (interaction.customId === attendanceRecurringModalId) {
-      await this.createRecurringSchedule(interaction, guild);
+    if (interaction.customId.startsWith(attendanceRecurringModalPrefix)) {
+      await this.createRecurringSchedule(
+        interaction,
+        guild,
+        requireAttendanceMode(interaction.customId.slice(attendanceRecurringModalPrefix.length)),
+      );
+      return;
+    }
+    if (interaction.customId.startsWith(attendanceProofModalPrefix)) {
+      await this.submitAttendanceProof(
+        interaction,
+        guild,
+        entityId(interaction.customId, attendanceProofModalPrefix),
+      );
       return;
     }
     if (interaction.customId === leaveSubmitModalId) {
@@ -196,22 +253,44 @@ export class AttendanceInteractionHandler {
     }
   }
 
-  private async createRound(interaction: ModalSubmitInteraction, guild: Guild): Promise<void> {
+  private async createRound(interaction: ModalSubmitInteraction, guild: Guild, mode: AttendanceMode): Promise<void> {
     await this.requireAdmin(guild, interaction.user.id);
     const settings = await this.requireSettings(guild.id);
     requireAttendanceChannels(settings);
     const now = new Date();
-    const attendanceDate = currentAttendanceDate(now, settings.timezone);
-    const times = buildAttendanceRoundTimes(
-      attendanceDate,
-      interaction.fields.getTextInputValue(attendanceComponentIds.createOpensAt),
-      interaction.fields.getTextInputValue(attendanceComponentIds.createClosesAt),
-      settings.timezone,
-    );
+    const eventAt = mode === 'AIRDROP'
+      ? parseDateTimeInput(
+          interaction.fields.getTextInputValue(attendanceComponentIds.createEventAt),
+          settings.timezone,
+          'เวลา Airdrop',
+        )
+      : undefined;
+    const times = eventAt === undefined
+      ? buildGeneralRoundTimes(
+          parseDateTimeInput(
+            interaction.fields.getTextInputValue(attendanceComponentIds.createOpensAt),
+            settings.timezone,
+            'วันเวลาเปิด',
+          ),
+          parseDateTimeInput(
+            interaction.fields.getTextInputValue(attendanceComponentIds.createClosesAt),
+            settings.timezone,
+            'วันเวลาปิด',
+          ),
+          settings.timezone,
+        )
+      : buildAirdropRoundTimes(
+          eventAt,
+          settings.timezone,
+          parseMinuteOffset(interaction.fields.getTextInputValue(attendanceComponentIds.createBeforeMinutes), 'นาทีก่อน Airdrop'),
+          parseMinuteOffset(interaction.fields.getTextInputValue(attendanceComponentIds.createAfterMinutes), 'นาทีหลัง Airdrop'),
+        );
     const round = await this.dependencies.attendance.createRound({
       guildId: guild.id,
       requestId: interaction.id,
-      title: buildDailyAttendanceTitle(attendanceDate),
+      title: interaction.fields.getTextInputValue(attendanceComponentIds.createTitle),
+      mode,
+      ...(eventAt === undefined ? {} : { eventAt }),
       ...times,
       actorDiscordUserId: interaction.user.id,
       now,
@@ -222,25 +301,107 @@ export class AttendanceInteractionHandler {
     });
   }
 
-  private async createRecurringSchedule(interaction: ModalSubmitInteraction, guild: Guild): Promise<void> {
+  private async createRecurringSchedule(
+    interaction: ModalSubmitInteraction,
+    guild: Guild,
+    mode: AttendanceMode,
+  ): Promise<void> {
     await this.requireAdmin(guild, interaction.user.id);
     const settings = await this.requireSettings(guild.id);
     requireAttendanceChannels(settings);
-    const schedule = await this.dependencies.attendance.createRecurringSchedule({
+    const common = {
       guildId: guild.id,
       requestId: interaction.id,
       name: interaction.fields.getTextInputValue(attendanceComponentIds.recurringName),
       weekdays: parseWeekdays(interaction.fields.getTextInputValue(attendanceComponentIds.recurringWeekdays)),
-      opensAtLocalTime: interaction.fields.getTextInputValue(attendanceComponentIds.recurringOpensAt),
-      closesAtLocalTime: interaction.fields.getTextInputValue(attendanceComponentIds.recurringClosesAt),
       timezone: settings.timezone,
       actorDiscordUserId: interaction.user.id,
       now: new Date(),
-    });
+    } as const;
+    const schedule = mode === 'AIRDROP'
+      ? await this.dependencies.attendance.createRecurringSchedule({
+          ...common,
+          mode,
+          eventAtLocalTime: interaction.fields.getTextInputValue(attendanceComponentIds.recurringEventAt),
+          opensBeforeMinutes: parseMinuteOffset(interaction.fields.getTextInputValue(attendanceComponentIds.recurringBeforeMinutes), 'นาทีก่อน Airdrop'),
+          closesAfterMinutes: parseMinuteOffset(interaction.fields.getTextInputValue(attendanceComponentIds.recurringAfterMinutes), 'นาทีหลัง Airdrop'),
+        })
+      : await this.dependencies.attendance.createRecurringSchedule({
+          ...common,
+          mode,
+          opensAtLocalTime: interaction.fields.getTextInputValue(attendanceComponentIds.recurringOpensAt),
+          closesAtLocalTime: interaction.fields.getTextInputValue(attendanceComponentIds.recurringClosesAt),
+        });
     await interaction.reply({
       ...buildNotice('success', 'ตั้งเวลาเช็กชื่อประจำแล้ว', `⏰ **${schedule.name}**\nสร้างรอบล่วงหน้า 21 วัน และระบบจะเติมรอบใหม่ให้อัตโนมัติ`, 'Attendance'),
       flags: MessageFlags.Ephemeral,
     });
+  }
+
+  private async submitAttendanceProof(
+    interaction: ModalSubmitInteraction,
+    guild: Guild,
+    roundId: string,
+  ): Promise<void> {
+    const uploaded = [...interaction.fields.getUploadedFiles(attendanceComponentIds.proofFile, true).values()];
+    const attachment = uploaded[0];
+    if (attachment === undefined || uploaded.length !== 1) {
+      throw new ValidationError('กรุณาแนบรูปหลักฐาน 1 รูป');
+    }
+    validateAttendanceProof({ contentType: attachment.contentType, size: attachment.size });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await this.requireActiveMember(guild, interaction.user.id);
+    const [round, member, settings, file] = await Promise.all([
+      this.dependencies.attendance.getRound(guild.id, roundId),
+      this.dependencies.members.findByDiscordUserId(guild.id, interaction.user.id),
+      this.requireSettings(guild.id),
+      downloadAttendanceProof(attachment),
+    ]);
+    if (round.mode !== 'AIRDROP') {
+      throw new ValidationError('เช็กชื่อทั่วไปไม่ต้องแนบรูปหลักฐาน');
+    }
+    if (member === null || member.status !== 'ACTIVE') {
+      throw new AuthorizationError('ต้องเป็นสมาชิกที่มีสถานะใช้งาน');
+    }
+    const channel = await fetchSendableChannel(
+      this.dependencies.client,
+      round.announcementChannelId ?? settings.attendanceChannelId,
+      'Channel เช็กชื่อ',
+    );
+
+    const proofMessage = await channel.send({
+      ...buildAttendanceProofLog(round, member),
+      files: [{ attachment: file.bytes, name: attendanceProofFilename(attachment) }],
+    });
+    try {
+      const persistedAttachment = [...proofMessage.attachments.values()][0];
+      if (persistedAttachment === undefined) {
+        throw new Error('Discord did not persist the attendance proof attachment');
+      }
+      await this.dependencies.attendance.checkInWithProof(
+        guild.id,
+        roundId,
+        interaction.user.id,
+        {
+          attachmentId: persistedAttachment.id,
+          channelId: channel.id,
+          messageId: proofMessage.id,
+          sha256: file.sha256,
+        },
+        new Date(),
+      );
+    } catch (error: unknown) {
+      await proofMessage.delete().catch((deleteError: unknown) => {
+        this.dependencies.logger.error({ err: deleteError, messageId: proofMessage.id }, 'failed to remove orphan attendance proof');
+      });
+      throw error;
+    }
+    await interaction.editReply(buildNotice(
+      'success',
+      'เช็กชื่อ Airdrop สำเร็จ',
+      'บันทึกรูปหลักฐานแล้ว ระบบนับผลเป็นมาในรอบนี้',
+      'Attendance',
+    ));
   }
 
   private async publishLeavePanel(interaction: ButtonInteraction, guild: Guild): Promise<void> {
@@ -421,6 +582,46 @@ function parseWeekdays(value: string): number[] {
 
 function isAttendanceResult(value: string | undefined): value is AttendanceResult {
   return value === 'PRESENT' || value === 'LEAVE' || value === 'EMERGENCY_LEAVE' || value === 'ABSENT';
+}
+
+function requireAttendanceMode(value: string | undefined): AttendanceMode {
+  if (value !== 'AIRDROP' && value !== 'GENERAL') {
+    throw new ValidationError('รูปแบบเช็กชื่อไม่ถูกต้อง');
+  }
+  return value;
+}
+
+function parseMinuteOffset(value: string, label: string): number {
+  const normalized = value.trim();
+  const minutes = Number(normalized);
+  if (!/^\d{1,4}$/u.test(normalized) || !Number.isSafeInteger(minutes) || minutes < 0 || minutes > 1_440) {
+    throw new ValidationError(`${label}ต้องเป็นจำนวนเต็มระหว่าง 0–1440`);
+  }
+  return minutes;
+}
+
+async function downloadAttendanceProof(attachment: Attachment): Promise<{ bytes: Buffer; sha256: string }> {
+  const url = new URL(attachment.url);
+  const allowedHosts = new Set(['cdn.discordapp.com', 'media.discordapp.net']);
+  if (url.protocol !== 'https:' || !allowedHosts.has(url.hostname)) {
+    throw new ValidationError('แหล่งที่มาของรูปหลักฐานไม่ถูกต้อง');
+  }
+  const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+  if (!response.ok) {
+    throw new ValidationError('ดาวน์โหลดรูปหลักฐานจาก Discord ไม่สำเร็จ กรุณาลองใหม่');
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  validateAttendanceProof({ contentType: attachment.contentType, size: bytes.byteLength });
+  return { bytes, sha256: createHash('sha256').update(bytes).digest('hex') };
+}
+
+function attendanceProofFilename(attachment: Attachment): string {
+  const extensionByContentType: Readonly<Record<string, string>> = {
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+  };
+  return `attendance-proof-${attachment.id}.${extensionByContentType[attachment.contentType ?? ''] ?? 'image'}`;
 }
 
 function requireAttendanceChannels(settings: GuildSettings): void {

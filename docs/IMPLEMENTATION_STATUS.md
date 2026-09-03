@@ -31,9 +31,10 @@
 - Top 20 leaderboard แบบอันดับร่วมและ dynamic score recalculation
 - Durable publish/open/one-day reminder/close/final-summary jobs
 - Shared date/time input parser สำหรับ Activity, Attendance/Recurring, Leave/Edit, Fine และ Weekly Dues โดยกรอกวัน/เวลาใน Modal เดียวตามรูปแบบที่กำหนด
-- Attendance Admin panel สำหรับสร้างรอบเองและตารางประจำ
+- Attendance Admin panel รองรับ Manual และ Auto แยก `AIRDROP`/`GENERAL` พร้อมหลาย Auto entry ต่อวัน
 - Durable attendance publish/open/15-minute reminder/close/refresh jobs
-- Active member check-in พร้อม public live list และ timestamp
+- Airdrop ใช้ event time กับช่วงรับรูปก่อน/หลัง รองรับข้ามเที่ยงคืน และบังคับรูป PNG/JPEG/WebP 1 รูปไม่เกิน 10 MB
+- Active member check-in พร้อม public live list, timestamp, ลิงก์หลักฐาน และ SHA-256 duplicate guard ข้ามรอบ
 - Leave panel และ public leave log ใช้ Channel แยกกัน โดยเจ้าของ/Admin แก้หรือยกเลิกได้
 - Final classification: present, leave, emergency leave และ absent
 - Admin correction หลังปิดรอบ พร้อม correction reason และ Audit log
@@ -88,10 +89,10 @@
 - ESLint: pass
 - TypeScript typecheck: pass
 - Production build: pass
-- Tests ล่าสุด: 82 pass, 47 skipped (integration suite ที่ไม่ได้เปิดฐานข้อมูล), รวม 129 tests
+- Tests ล่าสุด: 180 pass, 0 skipped โดยใช้ PostgreSQL local แยกสำหรับ integration
 - Member PostgreSQL integration tests: 5 pass
 - Activity PostgreSQL integration tests: 7 pass
-- Attendance PostgreSQL integration tests: 6 pass
+- Attendance PostgreSQL integration tests: 8 pass
 - Fine PostgreSQL integration tests: 6 pass
 - Treasury PostgreSQL integration tests: 6 pass
 - Weekly dues PostgreSQL integration tests: 4 pass
