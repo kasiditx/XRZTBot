@@ -2,7 +2,6 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  FileUploadBuilder,
   LabelBuilder,
   ModalBuilder,
   StringSelectMenuBuilder,
@@ -10,6 +9,7 @@ import {
   TextInputStyle,
   escapeMarkdown,
 } from 'discord.js';
+import { buildEvidenceInputLabel, type EvidenceInputMode } from './evidence-images.js';
 import { MiruEmbedBuilder as EmbedBuilder, formatPanelText } from './theme.js';
 import type {
   PreparedTreasuryEntry,
@@ -32,6 +32,7 @@ export const treasuryComponentIds = {
   amount: 'treasury:amount',
   description: 'treasury:description',
   evidence: 'treasury:evidence',
+  evidenceMediaLink: 'treasury:evidence_media_link',
   reversalReason: 'treasury:reversal_reason',
 } as const;
 
@@ -164,19 +165,23 @@ export function buildTreasuryWithdrawalRejectionModal(requestId: string): ModalB
     ));
 }
 
-export function buildManualTreasuryModal(entryType: 'INCOME' | 'EXPENSE'): ModalBuilder {
-  const file = new FileUploadBuilder()
-    .setCustomId(treasuryComponentIds.evidence)
-    .setMinValues(1)
-    .setMaxValues(1)
-    .setRequired(true);
+export function buildManualTreasuryModal(
+  entryType: 'INCOME' | 'EXPENSE',
+  evidenceMode: EvidenceInputMode,
+): ModalBuilder {
   return new ModalBuilder()
-    .setCustomId(`treasury:manual_modal:${entryType}`)
+    .setCustomId(`treasury:manual_modal:${evidenceMode}:${entryType}`)
     .setTitle(entryType === 'INCOME' ? 'เพิ่มรายรับ' : 'เพิ่มรายจ่าย')
     .addLabelComponents(
       new LabelBuilder().setLabel('จำนวนเงิน').setTextInputComponent(textInput(treasuryComponentIds.amount, '100000', 1, 15)),
       new LabelBuilder().setLabel('รายละเอียด').setTextInputComponent(textInput(treasuryComponentIds.description, 'ระบุที่มาหรือวัตถุประสงค์', 2, 500, TextInputStyle.Paragraph)),
-      new LabelBuilder().setLabel('รูปหลักฐาน 1 รูป').setFileUploadComponent(file),
+      buildEvidenceInputLabel({
+        mode: evidenceMode,
+        fileCustomId: treasuryComponentIds.evidence,
+        linkCustomId: treasuryComponentIds.evidenceMediaLink,
+        maximumImages: 1,
+        label: 'รูปหลักฐาน',
+      }),
     );
 }
 

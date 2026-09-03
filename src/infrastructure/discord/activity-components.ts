@@ -2,13 +2,13 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  FileUploadBuilder,
   LabelBuilder,
   ModalBuilder,
   StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js';
+import { buildEvidenceInputLabel, type EvidenceInputMode } from './evidence-images.js';
 import { MiruEmbedBuilder as EmbedBuilder, formatPanelText } from './theme.js';
 import type { LeaderboardRow } from '../../modules/activities/leaderboard.js';
 import type {
@@ -33,6 +33,7 @@ export const activityComponentIds = {
   submitScore: 'activity:submit_score',
   submitParticipants: 'activity:submit_participants',
   submitFiles: 'activity:submit_files',
+  submitMediaLinks: 'activity:submit_media_links',
   submitNote: 'activity:submit_note',
   participantOperation: 'activity:participant_operation',
   participantUsers: 'activity:participant_users',
@@ -182,12 +183,8 @@ export function buildActivityAnnouncement(activity: ActivityWithScores, closed =
 export function buildActivitySubmissionModal(
   activity: ActivityWithScores,
   activeMembers: readonly ActivityParticipantOption[],
+  evidenceMode: EvidenceInputMode,
 ): ModalBuilder {
-  const fileUpload = new FileUploadBuilder()
-    .setCustomId(activityComponentIds.submitFiles)
-    .setMinValues(1)
-    .setMaxValues(5)
-    .setRequired(true);
   const note = new TextInputBuilder()
     .setCustomId(activityComponentIds.submitNote)
     .setStyle(TextInputStyle.Paragraph)
@@ -214,11 +211,17 @@ export function buildActivitySubmissionModal(
     false,
   ));
   labels.push(
-    new LabelBuilder().setLabel('รูปหลักฐาน 1–5 รูป').setFileUploadComponent(fileUpload),
+    buildEvidenceInputLabel({
+      mode: evidenceMode,
+      fileCustomId: activityComponentIds.submitFiles,
+      linkCustomId: activityComponentIds.submitMediaLinks,
+      maximumImages: 5,
+      label: 'รูปหลักฐาน',
+    }),
     new LabelBuilder().setLabel('หมายเหตุ').setTextInputComponent(note),
   );
   return new ModalBuilder()
-    .setCustomId(`activity:submit_modal:${activity.activity.id}`)
+    .setCustomId(`activity:submit_modal:${evidenceMode}:${activity.activity.id}`)
     .setTitle(activity.activity.title.slice(0, 45))
     .addLabelComponents(...labels);
 }

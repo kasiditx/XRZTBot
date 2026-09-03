@@ -2,13 +2,13 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  FileUploadBuilder,
   LabelBuilder,
   ModalBuilder,
   StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js';
+import { buildEvidenceInputLabel, type EvidenceInputMode } from './evidence-images.js';
 import { MiruEmbedBuilder as EmbedBuilder, formatPanelText } from './theme.js';
 import type {
   AttendanceRound,
@@ -39,6 +39,7 @@ export const attendanceComponentIds = {
   recurringBeforeMinutes: 'attendance:recurring_before_minutes',
   recurringAfterMinutes: 'attendance:recurring_after_minutes',
   proofFile: 'attendance:proof_file',
+  proofMediaLink: 'attendance:proof_link',
   leaveSubmit: 'leave:submit',
   leaveStartsOn: 'leave:starts_on',
   leaveEndsOn: 'leave:ends_on',
@@ -146,19 +147,18 @@ export function buildRecurringScheduleModal(mode: AttendanceMode): ModalBuilder 
   );
 }
 
-export function buildAttendanceProofModal(roundId: string): ModalBuilder {
-  const file = new FileUploadBuilder()
-    .setCustomId(attendanceComponentIds.proofFile)
-    .setMinValues(1)
-    .setMaxValues(1)
-    .setRequired(true);
+export function buildAttendanceProofModal(roundId: string, evidenceMode: EvidenceInputMode): ModalBuilder {
   return new ModalBuilder()
-    .setCustomId(`${attendanceProofModalPrefix}${roundId}`)
+    .setCustomId(`${attendanceProofModalPrefix}${evidenceMode}:${roundId}`)
     .setTitle('แนบรูปเช็กชื่อ Airdrop')
     .addLabelComponents(
-      new LabelBuilder()
-        .setLabel('รูปตัวละครของตัวเองและรายชื่อในวอ')
-        .setFileUploadComponent(file),
+      buildEvidenceInputLabel({
+        mode: evidenceMode,
+        fileCustomId: attendanceComponentIds.proofFile,
+        linkCustomId: attendanceComponentIds.proofMediaLink,
+        maximumImages: 1,
+        label: 'รูปตัวละครของตัวเองและรายชื่อในวอ',
+      }),
     );
 }
 

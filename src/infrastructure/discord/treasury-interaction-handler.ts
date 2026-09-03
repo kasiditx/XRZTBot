@@ -1,7 +1,6 @@
 import type pino from 'pino';
 import {
   MessageFlags,
-  type Attachment,
   type ButtonInteraction,
   type Client,
   type Guild,
@@ -43,6 +42,14 @@ import {
   treasuryComponentIds,
 } from './treasury-components.js';
 import { buildNotice } from './theme.js';
+import {
+  buildEvidenceMethodPrompt,
+  parseEvidenceModalContext,
+  readEvidenceModalInput,
+  requireEvidenceInputMode,
+  resolveEvidenceImages,
+  type EvidenceInputMode,
+} from './evidence-images.js';
 
 export interface TreasuryInteractionDependencies {
   readonly client: Client;
@@ -83,13 +90,19 @@ export class TreasuryInteractionHandler {
     if (interaction.customId === treasuryComponentIds.adminIncome) {
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
       await this.requireTreasuryChannel(guild.id);
-      await interaction.showModal(buildManualTreasuryModal('INCOME'));
+      await interaction.reply({
+        ...buildEvidenceMethodPrompt('treasury:evidence_method:INCOME', 'หลักฐานรายรับ'),
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
     if (interaction.customId === treasuryComponentIds.adminExpense) {
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
       await this.requireTreasuryChannel(guild.id);
-      await interaction.showModal(buildManualTreasuryModal('EXPENSE'));
+      await interaction.reply({
+        ...buildEvidenceMethodPrompt('treasury:evidence_method:EXPENSE', 'หลักฐานรายจ่าย'),
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
     if (interaction.customId === treasuryComponentIds.adminOpening) {
@@ -149,8 +162,16 @@ export class TreasuryInteractionHandler {
   }
 
   private async handleSelect(interaction: StringSelectMenuInteraction): Promise<void> {
-    if (interaction.customId !== treasuryComponentIds.adminSelect) return;
     const guild = requireGuild(interaction.guild);
+    if (interaction.customId.startsWith('treasury:evidence_method:')) {
+      await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
+      await this.requireTreasuryChannel(guild.id);
+      const entryType = interaction.customId.slice('treasury:evidence_method:'.length);
+      if (entryType !== 'INCOME' && entryType !== 'EXPENSE') throw new ValidationError('ประเภทรายการไม่ถูกต้อง');
+      await interaction.showModal(buildManualTreasuryModal(entryType, requireEvidenceInputMode(interaction.values[0])));
+      return;
+    }
+    if (interaction.customId !== treasuryComponentIds.adminSelect) return;
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const entryId = interaction.values[0];
     if (entryId === undefined) throw new ValidationError('กรุณาเลือกรายการเงินกองกลาง');
@@ -161,9 +182,10 @@ export class TreasuryInteractionHandler {
   private async handleModal(interaction: ModalSubmitInteraction): Promise<void> {
     const guild = requireGuild(interaction.guild);
     if (interaction.customId.startsWith('treasury:manual_modal:')) {
-      const rawType = interaction.customId.slice('treasury:manual_modal:'.length);
+      const evidence = parseEvidenceModalContext(interaction.customId, 'treasury:manual_modal:');
+      const rawType = evidence.context;
       if (rawType !== 'INCOME' && rawType !== 'EXPENSE') throw new ValidationError('ประเภทรายการไม่ถูกต้อง');
-      await this.persistManualEntry(interaction, guild, rawType);
+      await this.persistManualEntry(interaction, guild, rawType, evidence.mode);
       return;
     }
     if (interaction.customId === 'treasury:opening_modal') {
@@ -226,12 +248,25 @@ export class TreasuryInteractionHandler {
     interaction: ModalSubmitInteraction,
     guild: Guild,
     entryType: 'INCOME' | 'EXPENSE',
+    evidenceMode: EvidenceInputMode,
   ): Promise<void> {
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const channel = await this.requireTreasuryChannel(guild.id);
-    const uploaded = [...interaction.fields.getUploadedFiles(treasuryComponentIds.evidence, true).values()];
-    const attachment = uploaded[0];
-    if (attachment === undefined || uploaded.length !== 1) throw new ValidationError('ต้องแนบรูปหลักฐาน 1 รูป');
+    const evidenceInput = readEvidenceModalInput(
+      interaction.fields,
+      evidenceMode,
+      treasuryComponentIds.evidence,
+      treasuryComponentIds.evidenceMediaLink,
+    );
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const [attachment] = await resolveEvidenceImages({
+      mode: evidenceMode,
+      ...evidenceInput,
+      maximumImages: 1,
+      maximumBytesPerImage: 10 * 1_024 * 1_024,
+      filenamePrefix: 'treasury-proof',
+    });
+    if (attachment === undefined) throw new ValidationError('ต้องส่งรูปหลักฐาน 1 รูป');
     validateTreasuryEvidence({ contentType: attachment.contentType, size: attachment.size });
     const prepared = await this.dependencies.treasury.prepareManualEntry(
       guild.id,
@@ -242,10 +277,9 @@ export class TreasuryInteractionHandler {
       interaction.user.id,
     );
 
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const logMessage = await channel.send({
       ...buildPreparedTreasuryEntryLog(prepared),
-      files: [toUploadFile(attachment)],
+      files: [{ attachment: attachment.attachment, name: attachment.name }],
     });
     try {
       const persistedAttachment = [...logMessage.attachments.values()][0];
@@ -443,10 +477,6 @@ function parseMoney(value: string): number {
     throw new ValidationError('จำนวนเงินต้องเป็นจำนวนเต็มตั้งแต่ 1 ขึ้นไป');
   }
   return amount;
-}
-
-function toUploadFile(attachment: Attachment) {
-  return { attachment: attachment.url, name: attachment.name ?? `treasury-${attachment.id}` };
 }
 
 async function fetchSendableChannel(client: Client, channelId: string | null, label: string): Promise<SendableChannels> {

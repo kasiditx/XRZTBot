@@ -1,7 +1,6 @@
 import type pino from 'pino';
 import {
   MessageFlags,
-  type Attachment,
   type ButtonInteraction,
   type Client,
   type Guild,
@@ -39,6 +38,14 @@ import {
 } from './fine-components.js';
 import { buildNotice } from './theme.js';
 import { filterRoleVerifiedActiveMembers } from './role-verified-members.js';
+import {
+  buildEvidenceMethodPrompt,
+  parseEvidenceModalContext,
+  readEvidenceModalInput,
+  requireEvidenceInputMode,
+  resolveEvidenceImages,
+  type EvidenceInputMode,
+} from './evidence-images.js';
 
 export interface FineInteractionDependencies {
   readonly client: Client;
@@ -96,7 +103,10 @@ export class FineInteractionHandler {
       if (view.member.discordUserId !== interaction.user.id) {
         throw new AuthorizationError('ส่งหลักฐานได้เฉพาะสมาชิกที่ถูกปรับ');
       }
-      await interaction.showModal(buildFinePaymentModal(view.fine));
+      await interaction.reply({
+        ...buildEvidenceMethodPrompt(`fine:evidence_method:${fineId}`, 'หลักฐานชำระค่าปรับ'),
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
     if (interaction.customId.startsWith('fine:approve:')) {
@@ -120,8 +130,18 @@ export class FineInteractionHandler {
   }
 
   private async handleSelect(interaction: StringSelectMenuInteraction): Promise<void> {
-    if (interaction.customId !== fineComponentIds.adminSelect) return;
     const guild = requireGuild(interaction.guild);
+    if (interaction.customId.startsWith('fine:evidence_method:')) {
+      await this.requireActiveMember(guild, interaction.user.id);
+      const fineId = entityId(interaction.customId, 'fine:evidence_method:');
+      const view = await this.dependencies.fines.get(guild.id, fineId);
+      if (view.member.discordUserId !== interaction.user.id) {
+        throw new AuthorizationError('ส่งหลักฐานได้เฉพาะสมาชิกที่ถูกปรับ');
+      }
+      await interaction.showModal(buildFinePaymentModal(view.fine, requireEvidenceInputMode(interaction.values[0])));
+      return;
+    }
+    if (interaction.customId !== fineComponentIds.adminSelect) return;
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const fineId = interaction.values[0];
     if (fineId === undefined) throw new ValidationError('กรุณาเลือกค่าปรับ');
@@ -136,7 +156,8 @@ export class FineInteractionHandler {
       return;
     }
     if (interaction.customId.startsWith('fine:pay_modal:')) {
-      await this.submitPayment(interaction, guild, entityId(interaction.customId, 'fine:pay_modal:'));
+      const evidence = parseEvidenceModalContext(interaction.customId, 'fine:pay_modal:');
+      await this.submitPayment(interaction, guild, entityId(evidence.context, ''), evidence.mode);
       return;
     }
     if (interaction.customId.startsWith('fine:reject_modal:')) {
@@ -183,7 +204,12 @@ export class FineInteractionHandler {
     });
   }
 
-  private async submitPayment(interaction: ModalSubmitInteraction, guild: Guild, fineId: string): Promise<void> {
+  private async submitPayment(
+    interaction: ModalSubmitInteraction,
+    guild: Guild,
+    fineId: string,
+    evidenceMode: EvidenceInputMode,
+  ): Promise<void> {
     await this.requireActiveMember(guild, interaction.user.id);
     const settings = await this.requireSettings(guild.id);
     const channel = await fetchSendableChannel(
@@ -191,9 +217,21 @@ export class FineInteractionHandler {
       settings.fineLogChannelId,
       'Channel Log ค่าปรับ',
     );
-    const uploaded = [...interaction.fields.getUploadedFiles(fineComponentIds.paymentFile, true).values()];
-    const attachment = uploaded[0];
-    if (attachment === undefined || uploaded.length !== 1) throw new ValidationError('ต้องแนบรูปหลักฐาน 1 รูป');
+    const evidenceInput = readEvidenceModalInput(
+      interaction.fields,
+      evidenceMode,
+      fineComponentIds.paymentFile,
+      fineComponentIds.paymentMediaLink,
+    );
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const [attachment] = await resolveEvidenceImages({
+      mode: evidenceMode,
+      ...evidenceInput,
+      maximumImages: 1,
+      maximumBytesPerImage: 10 * 1_024 * 1_024,
+      filenamePrefix: 'fine-proof',
+    });
+    if (attachment === undefined) throw new ValidationError('ต้องส่งรูปหลักฐาน 1 รูป');
     validateFinePaymentImage({ contentType: attachment.contentType, size: attachment.size });
     const prepared = await this.dependencies.fines.preparePayment(
       guild.id,
@@ -203,10 +241,9 @@ export class FineInteractionHandler {
       new Date(),
     );
 
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const logMessage = await channel.send({
       ...buildPreparedFineProofLog(prepared),
-      files: [toUploadFile(attachment)],
+      files: [{ attachment: attachment.attachment, name: attachment.name }],
     });
     try {
       const persistedAttachment = [...logMessage.attachments.values()][0];
@@ -332,10 +369,6 @@ function parseMoney(value: string, allowZero: boolean): number {
 
 function requireFineChannel(settings: GuildSettings): void {
   if (settings.fineChannelId === null) throw new ValidationError('กรุณาตั้งค่า Channel ค่าปรับก่อน');
-}
-
-function toUploadFile(attachment: Attachment) {
-  return { attachment: attachment.url, name: attachment.name ?? `fine-proof-${attachment.id}` };
 }
 
 async function fetchSendableChannel(client: Client, channelId: string | null, label: string): Promise<SendableChannels> {

@@ -55,12 +55,17 @@ describe('attendance Discord components', () => {
     expect(general.components).toHaveLength(4);
   });
 
-  it('requires one uploaded image for an Airdrop check-in', () => {
-    const modal = buildAttendanceProofModal(AIRDROP_ROUND_ID).toJSON();
+  it('uses the selected evidence method for an Airdrop check-in', () => {
+    const fileModal = buildAttendanceProofModal(AIRDROP_ROUND_ID, 'FILE').toJSON();
+    const linkModal = buildAttendanceProofModal(AIRDROP_ROUND_ID, 'LINK').toJSON();
 
-    expect(modal.custom_id).toBe(`attendance:proof_modal:${AIRDROP_ROUND_ID}`);
-    expect(modal.components[0]).toMatchObject({
+    expect(fileModal.custom_id).toBe(`attendance:proof_modal:FILE:${AIRDROP_ROUND_ID}`);
+    expect(fileModal.components[0]).toMatchObject({
       component: { type: 19, min_values: 1, max_values: 1, required: true },
+    });
+    expect(linkModal.custom_id).toBe(`attendance:proof_modal:LINK:${AIRDROP_ROUND_ID}`);
+    expect(linkModal.components[0]).toMatchObject({
+      component: { type: 4, custom_id: 'attendance:proof_link', required: true },
     });
   });
 

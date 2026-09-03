@@ -2,13 +2,13 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  FileUploadBuilder,
   LabelBuilder,
   ModalBuilder,
   StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js';
+import { buildEvidenceInputLabel, type EvidenceInputMode } from './evidence-images.js';
 import { MiruEmbedBuilder as EmbedBuilder, formatPanelText } from './theme.js';
 import type {
   PreparedWeeklyPayment,
@@ -27,6 +27,7 @@ export const weeklyComponentIds = {
   createRecurringFine: 'weekly:create_recurring_fine',
   paymentAmount: 'weekly:payment_amount',
   paymentFile: 'weekly:payment_file',
+  paymentMediaLink: 'weekly:payment_media_link',
   overrideMember: 'weekly:override_member',
   overrideAmount: 'weekly:override_amount',
   rejectionReason: 'weekly:rejection_reason',
@@ -147,7 +148,7 @@ export function buildWeeklyOverrideModal(collectionId: string, members: readonly
     );
 }
 
-export function buildWeeklyPaymentModal(view: WeeklyCollectionView, amount: number): ModalBuilder {
+export function buildWeeklyPaymentModal(view: WeeklyCollectionView, amount: number, evidenceMode: EvidenceInputMode): ModalBuilder {
   const amountInput = new TextInputBuilder()
     .setCustomId(weeklyComponentIds.paymentAmount)
     .setStyle(TextInputStyle.Short)
@@ -155,17 +156,18 @@ export function buildWeeklyPaymentModal(view: WeeklyCollectionView, amount: numb
     .setMinLength(1)
     .setMaxLength(15)
     .setRequired(true);
-  const file = new FileUploadBuilder()
-    .setCustomId(weeklyComponentIds.paymentFile)
-    .setMinValues(1)
-    .setMaxValues(1)
-    .setRequired(true);
   return new ModalBuilder()
-    .setCustomId(`weekly:pay_modal:${view.collection.id}`)
+    .setCustomId(`weekly:pay_modal:${evidenceMode}:${view.collection.id}`)
     .setTitle('ส่งเงินรายสัปดาห์')
     .addLabelComponents(
       new LabelBuilder().setLabel('จำนวนเงินเต็มจำนวน').setTextInputComponent(amountInput),
-      new LabelBuilder().setLabel('รูปหลักฐาน 1 รูป').setFileUploadComponent(file),
+      buildEvidenceInputLabel({
+        mode: evidenceMode,
+        fileCustomId: weeklyComponentIds.paymentFile,
+        linkCustomId: weeklyComponentIds.paymentMediaLink,
+        maximumImages: 1,
+        label: 'รูปหลักฐาน',
+      }),
     );
 }
 

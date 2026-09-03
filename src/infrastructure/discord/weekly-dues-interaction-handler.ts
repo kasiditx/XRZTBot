@@ -1,7 +1,6 @@
 import type pino from 'pino';
 import {
   MessageFlags,
-  type Attachment,
   type ButtonInteraction,
   type Client,
   type Guild,
@@ -33,6 +32,14 @@ import {
 } from './weekly-dues-components.js';
 import { buildNotice } from './theme.js';
 import { filterRoleVerifiedActiveMembers } from './role-verified-members.js';
+import {
+  buildEvidenceMethodPrompt,
+  parseEvidenceModalContext,
+  readEvidenceModalInput,
+  requireEvidenceInputMode,
+  resolveEvidenceImages,
+  type EvidenceInputMode,
+} from './evidence-images.js';
 
 export interface WeeklyDuesInteractionDependencies {
   readonly client: Client;
@@ -85,7 +92,10 @@ export class WeeklyDuesInteractionHandler {
       const view = await this.dependencies.weeklyDues.get(guild.id, entityId(interaction.customId, 'weekly:pay:'));
       const own = view.obligations.find(({ member }) => member.discordUserId === interaction.user.id);
       if (own === undefined) throw new AuthorizationError('คุณไม่มีรายการเรียกเก็บในรอบนี้');
-      await interaction.showModal(buildWeeklyPaymentModal(view, own.obligation.amount));
+      await interaction.reply({
+        ...buildEvidenceMethodPrompt(`weekly:evidence_method:${view.collection.id}`, 'หลักฐานส่งเงินรายสัปดาห์'),
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
     if (interaction.customId.startsWith('weekly:approve:')) {
@@ -117,8 +127,21 @@ export class WeeklyDuesInteractionHandler {
   }
 
   private async handleSelect(interaction: StringSelectMenuInteraction): Promise<void> {
-    if (interaction.customId !== weeklyComponentIds.adminSelect) return;
     const guild = requireGuild(interaction.guild);
+    if (interaction.customId.startsWith('weekly:evidence_method:')) {
+      await this.requireActiveMember(guild, interaction.user.id);
+      const collectionId = entityId(interaction.customId, 'weekly:evidence_method:');
+      const view = await this.dependencies.weeklyDues.get(guild.id, collectionId);
+      const own = view.obligations.find(({ member }) => member.discordUserId === interaction.user.id);
+      if (own === undefined) throw new AuthorizationError('คุณไม่มีรายการเรียกเก็บในรอบนี้');
+      await interaction.showModal(buildWeeklyPaymentModal(
+        view,
+        own.obligation.amount,
+        requireEvidenceInputMode(interaction.values[0]),
+      ));
+      return;
+    }
+    if (interaction.customId !== weeklyComponentIds.adminSelect) return;
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const collectionId = interaction.values[0];
     if (collectionId === undefined) throw new ValidationError('กรุณาเลือกรอบส่งเงิน');
@@ -132,7 +155,8 @@ export class WeeklyDuesInteractionHandler {
       return;
     }
     if (interaction.customId.startsWith('weekly:pay_modal:')) {
-      await this.submitPayment(interaction, guild, entityId(interaction.customId, 'weekly:pay_modal:'));
+      const evidence = parseEvidenceModalContext(interaction.customId, 'weekly:pay_modal:');
+      await this.submitPayment(interaction, guild, entityId(evidence.context, ''), evidence.mode);
       return;
     }
     if (interaction.customId.startsWith('weekly:reject_modal:')) {
@@ -172,7 +196,12 @@ export class WeeklyDuesInteractionHandler {
     await interaction.reply({ ...buildNotice('success', 'สร้างรอบส่งเงินแล้ว', `🗓️ **${view.collection.title}**\nสมาชิกที่ต้องส่ง: **${view.obligations.length.toString()} คน**`, 'Weekly Dues'), flags: MessageFlags.Ephemeral });
   }
 
-  private async submitPayment(interaction: ModalSubmitInteraction, guild: Guild, collectionId: string): Promise<void> {
+  private async submitPayment(
+    interaction: ModalSubmitInteraction,
+    guild: Guild,
+    collectionId: string,
+    evidenceMode: EvidenceInputMode,
+  ): Promise<void> {
     await this.requireActiveMember(guild, interaction.user.id);
     const settings = await this.requireSettings(guild.id);
     const channel = await fetchSendableChannel(
@@ -180,9 +209,21 @@ export class WeeklyDuesInteractionHandler {
       settings.weeklyDuesLogChannelId,
       'Channel Log ส่งเงินรายสัปดาห์',
     );
-    const uploaded = [...interaction.fields.getUploadedFiles(weeklyComponentIds.paymentFile, true).values()];
-    const attachment = uploaded[0];
-    if (attachment === undefined || uploaded.length !== 1) throw new ValidationError('ต้องแนบรูปหลักฐาน 1 รูป');
+    const evidenceInput = readEvidenceModalInput(
+      interaction.fields,
+      evidenceMode,
+      weeklyComponentIds.paymentFile,
+      weeklyComponentIds.paymentMediaLink,
+    );
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const [attachment] = await resolveEvidenceImages({
+      mode: evidenceMode,
+      ...evidenceInput,
+      maximumImages: 1,
+      maximumBytesPerImage: 10 * 1_024 * 1_024,
+      filenamePrefix: 'weekly-proof',
+    });
+    if (attachment === undefined) throw new ValidationError('ต้องส่งรูปหลักฐาน 1 รูป');
     validateWeeklyPaymentImage({ contentType: attachment.contentType, size: attachment.size });
     const prepared = await this.dependencies.weeklyDues.preparePayment(
       guild.id,
@@ -192,8 +233,10 @@ export class WeeklyDuesInteractionHandler {
       new Date(),
     );
 
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const logMessage = await channel.send({ ...buildPreparedWeeklyProofLog(prepared), files: [toUploadFile(attachment)] });
+    const logMessage = await channel.send({
+      ...buildPreparedWeeklyProofLog(prepared),
+      files: [{ attachment: attachment.attachment, name: attachment.name }],
+    });
     try {
       const persistedAttachment = [...logMessage.attachments.values()][0];
       if (persistedAttachment === undefined) throw new Error('Discord did not persist the weekly payment attachment');
@@ -320,10 +363,6 @@ function parseMoney(value: string, allowZero: boolean): number {
 
 function requireWeeklyChannel(settings: GuildSettings): void {
   if (settings.weeklyDuesChannelId === null) throw new ValidationError('กรุณาตั้งค่า Channel ส่งเงินรายสัปดาห์ก่อน');
-}
-
-function toUploadFile(attachment: Attachment) {
-  return { attachment: attachment.url, name: attachment.name ?? `weekly-proof-${attachment.id}` };
 }
 
 async function fetchSendableChannel(client: Client, channelId: string | null, label: string): Promise<SendableChannels> {

@@ -113,9 +113,14 @@ describe('stock Discord components', () => {
   });
 
   it('serializes selected-item modals with quantity fields instead of item-name/code fields', () => {
-    const depositModal = buildDepositModal(sessionToken, [stockItem]).toJSON();
-    expect(depositModal.custom_id).toBe(`stock:deposit_modal:${sessionToken}`);
+    const depositModal = buildDepositModal(sessionToken, [stockItem], 'FILE').toJSON();
+    const depositLinkModal = buildDepositModal(sessionToken, [stockItem], 'LINK').toJSON();
+    expect(depositModal.custom_id).toBe(`stock:deposit_modal:FILE:${sessionToken}`);
     expect(depositModal.components).toHaveLength(3);
+    expect(depositLinkModal.custom_id).toBe(`stock:deposit_modal:LINK:${sessionToken}`);
+    expect(depositLinkModal.components[2]).toMatchObject({
+      component: { type: 4, custom_id: 'stock:deposit_media_link', required: true },
+    });
 
     const withdrawalModal = buildWithdrawalModal(sessionToken, [stockItem]).toJSON();
     expect(withdrawalModal.custom_id).toBe(`stock:withdrawal_modal:${sessionToken}`);

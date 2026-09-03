@@ -45,6 +45,14 @@ import {
   stockComponentIds,
   type StockMemberAction,
 } from './stock-components.js';
+import {
+  buildEvidenceMethodPrompt,
+  parseEvidenceModalContext,
+  readEvidenceModalInput,
+  requireEvidenceInputMode,
+  resolveEvidenceImages,
+  type EvidenceInputMode,
+} from './evidence-images.js';
 
 const maximumCsvSize = 2 * 1_024 * 1_024;
 const maximumDepositImageSize = 10 * 1_024 * 1_024;
@@ -166,9 +174,14 @@ export class StockInteractionHandler {
         session.token,
         items.map((item) => item.id),
       );
-      await interaction.showModal(session.action === 'WITHDRAWAL'
-        ? buildWithdrawalModal(submission.token, items)
-        : buildDepositModal(submission.token, items));
+      if (session.action === 'WITHDRAWAL') {
+        await interaction.showModal(buildWithdrawalModal(submission.token, items));
+        return;
+      }
+      await interaction.update(buildEvidenceMethodPrompt(
+        `stock:deposit_evidence_method:${submission.token}`,
+        'หลักฐานส่งของเข้าแก๊ง',
+      ));
       return;
     }
     if (interaction.customId.startsWith('stock:view:')) {
@@ -209,6 +222,22 @@ export class StockInteractionHandler {
 
   private async handleSelect(interaction: StringSelectMenuInteraction): Promise<void> {
     const guild = requireGuild(interaction.guild);
+    if (interaction.customId.startsWith('stock:deposit_evidence_method:')) {
+      await this.requireActiveMember(guild, interaction.user.id);
+      const token = entityId(interaction.customId, 'stock:deposit_evidence_method:');
+      const session = await this.requireSelectionSession(guild, interaction.user.id, {
+        action: 'DEPOSIT',
+        token,
+        page: 1,
+      });
+      const items = await this.dependencies.inventory.getActiveItems(guild.id, [...session.itemIds]);
+      await interaction.showModal(buildDepositModal(
+        token,
+        items,
+        requireEvidenceInputMode(interaction.values[0]),
+      ));
+      return;
+    }
     if (interaction.customId.startsWith(stockComponentIds.memberSelectPrefix)) {
       const component = parseSelectionComponent(interaction.customId, stockComponentIds.memberSelectPrefix, true);
       const session = await this.requireSelectionSession(guild, interaction.user.id, component);
@@ -257,7 +286,8 @@ export class StockInteractionHandler {
       return;
     }
     if (interaction.customId.startsWith(stockComponentIds.depositModalPrefix)) {
-      await this.createDeposit(interaction, guild, entityId(interaction.customId, stockComponentIds.depositModalPrefix));
+      const evidence = parseEvidenceModalContext(interaction.customId, stockComponentIds.depositModalPrefix);
+      await this.createDeposit(interaction, guild, entityId(evidence.context, ''), evidence.mode);
       return;
     }
     if (interaction.customId.startsWith('stock:fulfill_modal:')) {
@@ -351,17 +381,24 @@ export class StockInteractionHandler {
     await interaction.reply({ ...buildNotice('success', 'ส่งคำขอเบิกของแล้ว', `จำนวน: **${view.items.length.toString()} รายการ**\nสถานะ: ⏳ รอหัวแก๊ง/รองแก๊งจ่ายของ`, 'Stock Withdrawal'), flags: MessageFlags.Ephemeral });
   }
 
-  private async createDeposit(interaction: ModalSubmitInteraction, guild: Guild, sessionToken: string): Promise<void> {
+  private async createDeposit(
+    interaction: ModalSubmitInteraction,
+    guild: Guild,
+    sessionToken: string,
+    evidenceMode: EvidenceInputMode,
+  ): Promise<void> {
     const session = await this.requireSelectionSession(guild, interaction.user.id, {
       action: 'DEPOSIT',
       token: sessionToken,
       page: 1,
     });
     const channel = await this.requireDepositLogChannel(guild.id);
-    const uploaded = [...interaction.fields.getUploadedFiles(stockComponentIds.depositFile, true).values()];
-    const attachment = uploaded[0];
-    if (attachment === undefined || uploaded.length !== 1) throw new ValidationError('ต้องแนบรูปหลักฐาน 1 รูป');
-    validateDepositImage({ contentType: attachment.contentType, size: attachment.size });
+    const evidenceInput = readEvidenceModalInput(
+      interaction.fields,
+      evidenceMode,
+      stockComponentIds.depositFile,
+      stockComponentIds.depositMediaLink,
+    );
     const items = await this.dependencies.inventory.getActiveItems(guild.id, [...session.itemIds]);
     const quantities = parseSelectedInventoryQuantities(
       interaction.fields.getTextInputValue(stockComponentIds.selectedItemQuantity),
@@ -375,7 +412,16 @@ export class StockInteractionHandler {
     );
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const upload = toDepositUploadFile(attachment, await downloadDepositImage(attachment));
+    const [attachment] = await resolveEvidenceImages({
+      mode: evidenceMode,
+      ...evidenceInput,
+      maximumImages: 1,
+      maximumBytesPerImage: maximumDepositImageSize,
+      filenamePrefix: 'deposit-proof',
+    });
+    if (attachment === undefined) throw new ValidationError('ต้องส่งรูปหลักฐาน 1 รูป');
+    validateDepositImage({ contentType: attachment.contentType, size: attachment.size });
+    const upload = { attachment: attachment.attachment, name: attachment.name };
     // Discord drops this modal upload if the initial message references it via attachment://.
     // Persist it first, then reference the persisted file from the embed to suppress the duplicate preview.
     const logMessage = await channel.send({ files: [upload] });
@@ -638,33 +684,8 @@ export class StockInteractionHandler {
   }
 }
 
-function toDepositUploadFile(attachment: Attachment, content: Buffer): { attachment: Buffer; name: string } {
-  const subtype = attachment.contentType?.slice('image/'.length).split(/[;+]/u)[0]?.toLocaleLowerCase('en') ?? '';
-  const normalizedExtension = subtype === 'jpeg' ? 'jpg' : subtype;
-  const extension = /^[a-z0-9]{1,10}$/u.test(normalizedExtension) ? normalizedExtension : 'img';
-  return {
-    attachment: content,
-    name: `deposit-${attachment.id}.${extension}`,
-  };
-}
-
 function attachmentReference(attachment: Attachment): string {
   return `attachment://${attachment.name}`;
-}
-
-async function downloadDepositImage(attachment: Attachment): Promise<Buffer> {
-  let response: Response;
-  try {
-    response = await fetch(attachment.url, { signal: AbortSignal.timeout(15_000) });
-  } catch {
-    throw new ValidationError('ดาวน์โหลดรูปหลักฐานจาก Discord ไม่สำเร็จ กรุณาลองใหม่');
-  }
-  if (!response.ok) throw new ValidationError('ดาวน์โหลดรูปหลักฐานจาก Discord ไม่สำเร็จ');
-  const content = Buffer.from(await response.arrayBuffer());
-  if (content.length < 1 || content.length > maximumDepositImageSize) {
-    throw new ValidationError('รูปหลักฐานส่งของต้องมีขนาดไม่เกิน 10 MB');
-  }
-  return content;
 }
 
 async function downloadCsv(attachment: Attachment): Promise<Buffer> {

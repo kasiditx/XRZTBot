@@ -1,9 +1,22 @@
-import { buildWeeklyAnnouncement } from '../../src/infrastructure/discord/weekly-dues-components.js';
+import { buildWeeklyAnnouncement, buildWeeklyPaymentModal } from '../../src/infrastructure/discord/weekly-dues-components.js';
 import type { WeeklyCollectionView } from '../../src/modules/weekly-dues/service.js';
 
 const now = new Date('2026-08-31T04:00:00.000Z');
 
 describe('weekly dues Discord components', () => {
+  it('builds payment modals for file upload and Discord Media Link', () => {
+    const view = weeklyView();
+    const fileModal = buildWeeklyPaymentModal(view, 100_000, 'FILE').toJSON();
+    const linkModal = buildWeeklyPaymentModal(view, 100_000, 'LINK').toJSON();
+
+    expect(fileModal.custom_id).toContain(':FILE:');
+    expect(fileModal.components[1]).toMatchObject({ component: { type: 19, required: true } });
+    expect(linkModal.custom_id).toContain(':LINK:');
+    expect(linkModal.components[1]).toMatchObject({
+      component: { type: 4, custom_id: 'weekly:payment_media_link', required: true },
+    });
+  });
+
   it('keeps the member channel announcement limited to submitting proof', () => {
     const payload = buildWeeklyAnnouncement({
       collection: {
@@ -74,3 +87,27 @@ describe('weekly dues Discord components', () => {
     expect(embed?.fields).toBeUndefined();
   });
 });
+
+function weeklyView(): WeeklyCollectionView {
+  return {
+    collection: {
+      id: '11111111-1111-4111-8111-111111111111',
+      guildId: 'guild',
+      requestId: 'request',
+      title: 'ส่งเงินประจำสัปดาห์',
+      startsOn: '2026-08-31',
+      endsOn: '2026-09-06',
+      standardAmount: 100_000,
+      overdueFineAmount: 50_000,
+      recurringFineAmount: 50_000,
+      conversionAt: now,
+      isClosed: false,
+      publicChannelId: null,
+      publicMessageId: null,
+      createdByDiscordUserId: '700000000000000001',
+      createdAt: now,
+      updatedAt: now,
+    },
+    obligations: [],
+  };
+}

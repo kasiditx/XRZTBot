@@ -2,7 +2,6 @@ import type pino from 'pino';
 import {
   DiscordAPIError,
   MessageFlags,
-  type Attachment,
   type ButtonInteraction,
   type Client,
   type Guild,
@@ -49,6 +48,14 @@ import {
 import { componentIds } from './components.js';
 import { buildNotice } from './theme.js';
 import { filterRoleVerifiedActiveMembers } from './role-verified-members.js';
+import {
+  buildEvidenceMethodPrompt,
+  parseEvidenceModalContext,
+  readEvidenceModalInput,
+  requireEvidenceInputMode,
+  resolveEvidenceImages,
+  type EvidenceInputMode,
+} from './evidence-images.js';
 
 const SUBMISSION_COOLDOWN_MS = 3_000;
 
@@ -130,11 +137,12 @@ export class ActivityInteractionHandler {
     if (interaction.customId.startsWith('activity:submit:')) {
       await this.requireActiveMember(guild, interaction.user.id);
       enforceCooldown(this.lastSubmissionAt, `${guild.id}:${interaction.user.id}`);
-      const [activity, activeMembers] = await Promise.all([
-        this.dependencies.activities.getWithScores(guild.id, entityId(interaction.customId, 'activity:submit:')),
-        this.listRoleVerifiedActiveMembers(guild),
-      ]);
-      await interaction.showModal(buildActivitySubmissionModal(activity, activeMembers));
+      const activityId = entityId(interaction.customId, 'activity:submit:');
+      await this.dependencies.activities.getWithScores(guild.id, activityId);
+      await interaction.reply({
+        ...buildEvidenceMethodPrompt(`activity:evidence_method:${activityId}`, 'ส่งหลักฐานกิจกรรม'),
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
     if (interaction.customId.startsWith('activity:cancel_confirm:')) {
@@ -174,6 +182,21 @@ export class ActivityInteractionHandler {
 
   private async handleSelect(interaction: StringSelectMenuInteraction): Promise<void> {
     const guild = requireGuild(interaction.guild);
+    if (interaction.customId.startsWith('activity:evidence_method:')) {
+      await this.requireActiveMember(guild, interaction.user.id);
+      enforceCooldown(this.lastSubmissionAt, `${guild.id}:${interaction.user.id}`);
+      const activityId = entityId(interaction.customId, 'activity:evidence_method:');
+      const [activity, activeMembers] = await Promise.all([
+        this.dependencies.activities.getWithScores(guild.id, activityId),
+        this.listRoleVerifiedActiveMembers(guild),
+      ]);
+      await interaction.showModal(buildActivitySubmissionModal(
+        activity,
+        activeMembers,
+        requireEvidenceInputMode(requiredSelectedValue(interaction)),
+      ));
+      return;
+    }
     if (interaction.customId === activityComponentIds.createMode) {
       await this.requireAdmin(guild, interaction.user.id);
       const settings = await this.requireSettings(guild.id);
@@ -227,7 +250,8 @@ export class ActivityInteractionHandler {
       return;
     }
     if (interaction.customId.startsWith('activity:submit_modal:')) {
-      await this.submitActivity(interaction, guild, entityId(interaction.customId, 'activity:submit_modal:'));
+      const evidence = parseEvidenceModalContext(interaction.customId, 'activity:submit_modal:');
+      await this.submitActivity(interaction, guild, entityId(evidence.context, ''), evidence.mode);
       return;
     }
     if (interaction.customId.startsWith('activity:participants_modal:')) {
@@ -303,14 +327,23 @@ export class ActivityInteractionHandler {
     await interaction.reply({ ...buildNotice('success', 'อัปเดตรายการคะแนนแล้ว', `**${score.name}**\nSubmission เดิมถูกคำนวณใหม่อัตโนมัติ`, 'Activities'), flags: MessageFlags.Ephemeral });
   }
 
-  private async submitActivity(interaction: ModalSubmitInteraction, guild: Guild, activityId: string): Promise<void> {
+  private async submitActivity(
+    interaction: ModalSubmitInteraction,
+    guild: Guild,
+    activityId: string,
+    evidenceMode: EvidenceInputMode,
+  ): Promise<void> {
     await this.requireActiveMember(guild, interaction.user.id);
     const cooldownKey = `${guild.id}:${interaction.user.id}`;
     enforceCooldown(this.lastSubmissionAt, cooldownKey);
     reserveCooldown(this.lastSubmissionAt, cooldownKey);
     try {
-      const uploadedFiles = [...interaction.fields.getUploadedFiles(activityComponentIds.submitFiles, true).values()];
-      validateSubmissionImages(uploadedFiles.map((file) => ({ contentType: file.contentType, size: file.size })));
+      const evidenceInput = readEvidenceModalInput(
+        interaction.fields,
+        evidenceMode,
+        activityComponentIds.submitFiles,
+        activityComponentIds.submitMediaLinks,
+      );
       const activity = await this.dependencies.activities.getWithScores(guild.id, activityId);
       const scoreItemId = activity.activity.mode === 'SCORE'
         ? interaction.fields.getStringSelectValues(activityComponentIds.submitScore)[0] ?? null
@@ -320,26 +353,36 @@ export class ActivityInteractionHandler {
       }
       const participantIds = selectedStringValuesByPrefix(interaction, activityComponentIds.submitParticipants);
       const note = interaction.fields.getTextInputValue(activityComponentIds.submitNote);
-      const settings = await this.requireSettings(guild.id);
-      const logChannel = await fetchSendableChannel(this.dependencies.client, settings.activityLogChannelId, 'Channel Log กิจกรรม');
-      const prepared = await this.dependencies.activities.prepareSubmission({
-        guildId: guild.id,
-        activityId,
-        scoreItemId,
-        submitterDiscordUserId: interaction.user.id,
-        participantDiscordUserIds: participantIds,
-        note,
-        now: new Date(),
-      });
-
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const evidenceImages = await resolveEvidenceImages({
+        mode: evidenceMode,
+        ...evidenceInput,
+        maximumImages: 5,
+        maximumBytesPerImage: 10 * 1_024 * 1_024,
+        filenamePrefix: 'activity-proof',
+      });
+      validateSubmissionImages(evidenceImages.map((image) => ({ contentType: image.contentType, size: image.size })));
+      const [settings, prepared] = await Promise.all([
+        this.requireSettings(guild.id),
+        this.dependencies.activities.prepareSubmission({
+          guildId: guild.id,
+          activityId,
+          scoreItemId,
+          submitterDiscordUserId: interaction.user.id,
+          participantDiscordUserIds: participantIds,
+          note,
+          now: new Date(),
+        }),
+      ]);
+      const logChannel = await fetchSendableChannel(this.dependencies.client, settings.activityLogChannelId, 'Channel Log กิจกรรม');
+
       const logMessage = await logChannel.send({
         ...buildPreparedSubmissionLog(prepared),
-        files: uploadedFiles.map(toUploadFile),
+        files: evidenceImages.map(({ attachment, name }) => ({ attachment, name })),
       });
       try {
         const attachmentIds = [...logMessage.attachments.keys()];
-        if (attachmentIds.length !== uploadedFiles.length) {
+        if (attachmentIds.length !== evidenceImages.length) {
           throw new Error('Discord did not persist every activity attachment');
         }
         await this.dependencies.activities.persistSubmission({
@@ -576,13 +619,6 @@ function reserveCooldown(cooldowns: Map<string, number>, key: string): void {
     }
   }, SUBMISSION_COOLDOWN_MS);
   timer.unref();
-}
-
-function toUploadFile(attachment: Attachment) {
-  return {
-    attachment: attachment.url,
-    name: attachment.name ?? `activity-${attachment.id}`,
-  };
 }
 
 async function fetchSendableChannel(client: Client, channelId: string | null, label: string): Promise<SendableChannels> {

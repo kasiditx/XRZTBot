@@ -1,8 +1,6 @@
-import { createHash } from 'node:crypto';
 import type pino from 'pino';
 import {
   MessageFlags,
-  type Attachment,
   type ButtonInteraction,
   type Client,
   type Guild,
@@ -58,6 +56,14 @@ import {
 import { componentIds } from './components.js';
 import { buildNotice } from './theme.js';
 import { filterRoleVerifiedActiveMembers } from './role-verified-members.js';
+import {
+  buildEvidenceMethodPrompt,
+  parseEvidenceModalContext,
+  readEvidenceModalInput,
+  requireEvidenceInputMode,
+  resolveEvidenceImages,
+  type EvidenceInputMode,
+} from './evidence-images.js';
 
 export interface AttendanceInteractionDependencies {
   readonly client: Client;
@@ -125,7 +131,10 @@ export class AttendanceInteractionHandler {
       const roundId = entityId(interaction.customId, 'attendance:check_in:');
       const round = await this.dependencies.attendance.getRound(guild.id, roundId);
       if (round.mode === 'AIRDROP') {
-        await interaction.showModal(buildAttendanceProofModal(roundId));
+        await interaction.reply({
+          ...buildEvidenceMethodPrompt(`attendance:proof_method:${roundId}`, 'หลักฐานเช็กชื่อ Airdrop'),
+          flags: MessageFlags.Ephemeral,
+        });
         return;
       }
       await this.dependencies.attendance.checkIn(guild.id, roundId, interaction.user.id, new Date());
@@ -184,6 +193,17 @@ export class AttendanceInteractionHandler {
 
   private async handleSelect(interaction: StringSelectMenuInteraction): Promise<void> {
     const guild = requireGuild(interaction.guild);
+    if (interaction.customId.startsWith('attendance:proof_method:')) {
+      await this.requireActiveMember(guild, interaction.user.id);
+      const roundId = entityId(interaction.customId, 'attendance:proof_method:');
+      const round = await this.dependencies.attendance.getRound(guild.id, roundId);
+      if (round.mode !== 'AIRDROP') throw new ValidationError('เช็กชื่อทั่วไปไม่ต้องแนบรูปหลักฐาน');
+      await interaction.showModal(buildAttendanceProofModal(
+        roundId,
+        requireEvidenceInputMode(interaction.values[0]),
+      ));
+      return;
+    }
     if (interaction.customId === attendanceComponentIds.createType) {
       await this.requireAdmin(guild, interaction.user.id);
       const settings = await this.requireSettings(guild.id);
@@ -233,10 +253,12 @@ export class AttendanceInteractionHandler {
       return;
     }
     if (interaction.customId.startsWith(attendanceProofModalPrefix)) {
+      const evidence = parseEvidenceModalContext(interaction.customId, attendanceProofModalPrefix);
       await this.submitAttendanceProof(
         interaction,
         guild,
-        entityId(interaction.customId, attendanceProofModalPrefix),
+        entityId(evidence.context, ''),
+        evidence.mode,
       );
       return;
     }
@@ -342,21 +364,31 @@ export class AttendanceInteractionHandler {
     interaction: ModalSubmitInteraction,
     guild: Guild,
     roundId: string,
+    evidenceMode: EvidenceInputMode,
   ): Promise<void> {
-    const uploaded = [...interaction.fields.getUploadedFiles(attendanceComponentIds.proofFile, true).values()];
-    const attachment = uploaded[0];
-    if (attachment === undefined || uploaded.length !== 1) {
-      throw new ValidationError('กรุณาแนบรูปหลักฐาน 1 รูป');
-    }
-    validateAttendanceProof({ contentType: attachment.contentType, size: attachment.size });
+    const evidenceInput = readEvidenceModalInput(
+      interaction.fields,
+      evidenceMode,
+      attendanceComponentIds.proofFile,
+      attendanceComponentIds.proofMediaLink,
+    );
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireActiveMember(guild, interaction.user.id);
-    const [round, member, settings, file] = await Promise.all([
+    const [round, member, settings, files] = await Promise.all([
       this.dependencies.attendance.getRound(guild.id, roundId),
       this.dependencies.members.findByDiscordUserId(guild.id, interaction.user.id),
       this.requireSettings(guild.id),
-      downloadAttendanceProof(attachment),
+      resolveEvidenceImages({
+        mode: evidenceMode,
+        ...evidenceInput,
+        maximumImages: 1,
+        maximumBytesPerImage: 10 * 1_024 * 1_024,
+        filenamePrefix: 'attendance-proof',
+      }),
     ]);
+    const file = files[0];
+    if (file === undefined) throw new ValidationError('ต้องส่งรูปหลักฐาน 1 รูป');
+    validateAttendanceProof({ contentType: file.contentType, size: file.size });
     if (round.mode !== 'AIRDROP') {
       throw new ValidationError('เช็กชื่อทั่วไปไม่ต้องแนบรูปหลักฐาน');
     }
@@ -371,7 +403,7 @@ export class AttendanceInteractionHandler {
 
     const proofMessage = await channel.send({
       ...buildAttendanceProofLog(round, member),
-      files: [{ attachment: file.bytes, name: attendanceProofFilename(attachment) }],
+      files: [{ attachment: file.attachment, name: file.name }],
     });
     try {
       const persistedAttachment = [...proofMessage.attachments.values()][0];
@@ -598,30 +630,6 @@ function parseMinuteOffset(value: string, label: string): number {
     throw new ValidationError(`${label}ต้องเป็นจำนวนเต็มระหว่าง 0–1440`);
   }
   return minutes;
-}
-
-async function downloadAttendanceProof(attachment: Attachment): Promise<{ bytes: Buffer; sha256: string }> {
-  const url = new URL(attachment.url);
-  const allowedHosts = new Set(['cdn.discordapp.com', 'media.discordapp.net']);
-  if (url.protocol !== 'https:' || !allowedHosts.has(url.hostname)) {
-    throw new ValidationError('แหล่งที่มาของรูปหลักฐานไม่ถูกต้อง');
-  }
-  const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
-  if (!response.ok) {
-    throw new ValidationError('ดาวน์โหลดรูปหลักฐานจาก Discord ไม่สำเร็จ กรุณาลองใหม่');
-  }
-  const bytes = Buffer.from(await response.arrayBuffer());
-  validateAttendanceProof({ contentType: attachment.contentType, size: bytes.byteLength });
-  return { bytes, sha256: createHash('sha256').update(bytes).digest('hex') };
-}
-
-function attendanceProofFilename(attachment: Attachment): string {
-  const extensionByContentType: Readonly<Record<string, string>> = {
-    'image/jpeg': 'jpg',
-    'image/png': 'png',
-    'image/webp': 'webp',
-  };
-  return `attendance-proof-${attachment.id}.${extensionByContentType[attachment.contentType ?? ''] ?? 'image'}`;
 }
 
 function requireAttendanceChannels(settings: GuildSettings): void {

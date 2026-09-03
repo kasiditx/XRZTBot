@@ -2,13 +2,13 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  FileUploadBuilder,
   LabelBuilder,
   ModalBuilder,
   StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js';
+import { buildEvidenceInputLabel, type EvidenceInputMode } from './evidence-images.js';
 import { MiruEmbedBuilder as EmbedBuilder, formatPanelText } from './theme.js';
 import type {
   Fine,
@@ -28,6 +28,7 @@ export const fineComponentIds = {
   createDueAt: 'fine:create_due_at',
   paymentAmount: 'fine:payment_amount',
   paymentFile: 'fine:payment_file',
+  paymentMediaLink: 'fine:payment_media_link',
   rejectionReason: 'fine:rejection_reason',
   cancellationReason: 'fine:cancellation_reason',
 } as const;
@@ -117,7 +118,7 @@ export function buildFineManagement(view: FineView) {
   return { embeds: announcement.embeds, components: [cancelRow] };
 }
 
-export function buildFinePaymentModal(fine: Fine): ModalBuilder {
+export function buildFinePaymentModal(fine: Fine, evidenceMode: EvidenceInputMode): ModalBuilder {
   const amount = new TextInputBuilder()
     .setCustomId(fineComponentIds.paymentAmount)
     .setStyle(TextInputStyle.Short)
@@ -125,17 +126,18 @@ export function buildFinePaymentModal(fine: Fine): ModalBuilder {
     .setMaxLength(15)
     .setValue(String(totalDue(fine)))
     .setRequired(true);
-  const file = new FileUploadBuilder()
-    .setCustomId(fineComponentIds.paymentFile)
-    .setMinValues(1)
-    .setMaxValues(1)
-    .setRequired(true);
   return new ModalBuilder()
-    .setCustomId(`fine:pay_modal:${fine.id}`)
+    .setCustomId(`fine:pay_modal:${evidenceMode}:${fine.id}`)
     .setTitle('ส่งหลักฐานชำระค่าปรับ')
     .addLabelComponents(
       new LabelBuilder().setLabel('จำนวนเงินเต็มจำนวน').setTextInputComponent(amount),
-      new LabelBuilder().setLabel('รูปหลักฐาน 1 รูป').setFileUploadComponent(file),
+      buildEvidenceInputLabel({
+        mode: evidenceMode,
+        fileCustomId: fineComponentIds.paymentFile,
+        linkCustomId: fineComponentIds.paymentMediaLink,
+        maximumImages: 1,
+        label: 'รูปหลักฐาน',
+      }),
     );
 }
 

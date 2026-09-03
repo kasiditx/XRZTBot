@@ -9,6 +9,7 @@ import {
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js';
+import { buildEvidenceInputLabel, type EvidenceInputMode } from './evidence-images.js';
 import { MiruEmbedBuilder as EmbedBuilder, formatPanelText } from './theme.js';
 import { stockDashboardLine, type InventoryBatchView, type InventoryItem, type StockDashboard } from '../../modules/inventory/service.js';
 import type { DepositRequestView, PreparedDeposit } from '../../modules/deposits/service.js';
@@ -34,6 +35,7 @@ export const stockComponentIds = {
   withdrawalReason: 'stock:withdrawal_reason',
   depositSource: 'stock:deposit_source',
   depositFile: 'stock:deposit_file',
+  depositMediaLink: 'stock:deposit_media_link',
   depositRejectionReason: 'stock:deposit_rejection_reason',
   withdrawalRejectionReason: 'stock:withdrawal_rejection_reason',
   fulfillmentItems: 'stock:fulfillment_items',
@@ -208,14 +210,13 @@ export function buildStockItemPicker(
   };
 }
 
-export function buildDepositModal(sessionToken: string, items: readonly InventoryItem[]): ModalBuilder {
-  const file = new FileUploadBuilder()
-    .setCustomId(stockComponentIds.depositFile)
-    .setMinValues(1)
-    .setMaxValues(1)
-    .setRequired(true);
+export function buildDepositModal(
+  sessionToken: string,
+  items: readonly InventoryItem[],
+  evidenceMode: EvidenceInputMode,
+): ModalBuilder {
   return new ModalBuilder()
-    .setCustomId(`${stockComponentIds.depositModalPrefix}${sessionToken}`)
+    .setCustomId(`${stockComponentIds.depositModalPrefix}${evidenceMode}:${sessionToken}`)
     .setTitle(`ส่งของเข้าแก๊ง · ${items.length.toString()} รายการ`)
     .addLabelComponents(
       new LabelBuilder().setLabel('รายการและจำนวน').setDescription('แก้เฉพาะตัวเลขหลังเครื่องหมาย =').setTextInputComponent(
@@ -235,7 +236,13 @@ export function buildDepositModal(sessionToken: string, items: readonly Inventor
           .setMaxLength(200)
           .setRequired(true),
       ),
-      new LabelBuilder().setLabel('รูปหลักฐาน 1 รูป (ไม่เกิน 10 MB)').setFileUploadComponent(file),
+      buildEvidenceInputLabel({
+        mode: evidenceMode,
+        fileCustomId: stockComponentIds.depositFile,
+        linkCustomId: stockComponentIds.depositMediaLink,
+        maximumImages: 1,
+        label: 'รูปหลักฐาน (ไม่เกิน 10 MB)',
+      }),
     );
 }
 

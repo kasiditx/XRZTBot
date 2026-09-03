@@ -24,7 +24,7 @@ describe('activity Discord components', () => {
   });
 
   it('keeps additional participants optional because the submitter is included automatically', () => {
-    const modal = buildActivitySubmissionModal(activity('EVIDENCE'), activeMembers()).toJSON();
+    const modal = buildActivitySubmissionModal(activity('EVIDENCE'), activeMembers(), 'FILE').toJSON();
 
     expect(modal.components[0]).toMatchObject({
       component: {
@@ -61,9 +61,13 @@ describe('activity Discord components', () => {
       discordUserId: String(100000000000000000n + BigInt(index)),
       inGameName: `Member ${String(index + 1)}`,
     }));
-    const modal = buildActivitySubmissionModal(activity('SCORE'), members).toJSON();
+    const modal = buildActivitySubmissionModal(activity('SCORE'), members, 'LINK').toJSON();
 
     expect(modal.components).toHaveLength(5);
+    expect(modal.custom_id).toBe('activity:submit_modal:LINK:11111111-1111-4111-8111-111111111111');
+    expect(modal.components[3]).toMatchObject({
+      component: { type: 4, custom_id: 'activity:submit_media_links', required: true },
+    });
     expect('component' in modal.components[1]! && 'options' in modal.components[1].component
       ? modal.components[1].component.options
       : []).toHaveLength(25);
