@@ -113,7 +113,10 @@ describe('member roster title controls', () => {
 
     expect(firstButton).toMatchObject({ custom_id: 'control:members', label: 'จัดตำแหน่งสมาชิก' });
     expect(memberField?.value).toContain('👥 **จัดตำแหน่งสมาชิก** — กำหนดหัวแก๊ง รองแก๊ง บัญชี สำรอง หรือสมาชิกทั่วไป');
-    expect(financeField?.value).toContain('🏦 **เงินกองกลาง** — บันทึกรายรับ–รายจ่าย ยอดตั้งต้น ย้อนรายการ และคำขอเบิกเงิน');
+    expect(memberField?.value).toContain('เปิดรอบ Airdrop/ทั่วไปแบบ Manual หรือ Auto');
+    expect(memberField?.value).toContain('รับหลักฐานแบบแนบรูปหรือ Media Link ตรวจ/ปฏิเสธ');
+    expect(financeField?.value).toContain('🏦 **เงินกองกลาง** — บันทึกรายรับ–รายจ่าย ยอดตั้งต้น ย้อนรายการ คำขอเบิก');
+    expect(financeField?.value).toContain('รับหลักฐานแบบแนบรูปหรือ Media Link และตรวจการชำระ');
   });
 
   it('lets gang leaders choose a title and then a Discord member', () => {
