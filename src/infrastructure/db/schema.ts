@@ -3,6 +3,7 @@ import {
   bigint,
   boolean,
   check,
+  date,
   foreignKey,
   index,
   integer,
@@ -79,6 +80,18 @@ export const guildSettings = pgTable('guild_settings', {
   controlPanelMessageId: text('control_panel_message_id'),
   ...auditColumns,
 });
+
+export const discordLogDayMarkers = pgTable(
+  'discord_log_day_markers',
+  {
+    guildId: text('guild_id').notNull().references(() => guildSettings.guildId, { onDelete: 'cascade' }),
+    channelId: text('channel_id').notNull(),
+    localDate: date('local_date', { mode: 'string' }).notNull(),
+    separatorMessageId: text('separator_message_id'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.guildId, table.channelId, table.localDate] })],
+);
 
 export const members = pgTable(
   'members',

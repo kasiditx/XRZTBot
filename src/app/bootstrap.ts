@@ -13,6 +13,7 @@ import { FightPositionInteractionHandler } from '../infrastructure/discord/fight
 import { registerGuildCommands } from '../infrastructure/discord/commands.js';
 import { DiscordInteractionHandler } from '../infrastructure/discord/interaction-handler.js';
 import { createDiscordJobHandlers } from '../infrastructure/discord/job-handlers.js';
+import { DailyLogPublisher, DrizzleDailyLogMarkerRepository } from '../infrastructure/discord/daily-log-publisher.js';
 import { startHealthServer } from '../infrastructure/health/server.js';
 import { createLogger } from '../infrastructure/logger.js';
 import { GuildConfigService } from '../modules/guild-config/service.js';
@@ -54,6 +55,7 @@ export async function bootstrap(): Promise<RunningApplication> {
   const depositService = new DepositService(db);
   const auditService = new AuditService(db);
   const fightPositionService = new FightPositionService(db);
+  const dailyLogs = new DailyLogPublisher(new DrizzleDailyLogMarkerRepository(db));
   const checkDatabase = async (): Promise<boolean> => {
     const result = await pool.query<{ healthy: number }>('select 1 as healthy');
     return result.rows[0]?.healthy === 1;
@@ -67,6 +69,7 @@ export async function bootstrap(): Promise<RunningApplication> {
     activities: activityService,
     guildConfig,
     members: memberService,
+    dailyLogs,
     logger,
   });
   const attendanceInteractions = new AttendanceInteractionHandler({
@@ -74,6 +77,7 @@ export async function bootstrap(): Promise<RunningApplication> {
     attendance: attendanceService,
     guildConfig,
     members: memberService,
+    dailyLogs,
     logger,
   });
   const fineInteractions = new FineInteractionHandler({
@@ -81,6 +85,7 @@ export async function bootstrap(): Promise<RunningApplication> {
     fines: fineService,
     guildConfig,
     members: memberService,
+    dailyLogs,
     logger,
   });
   const treasuryInteractions = new TreasuryInteractionHandler({
@@ -89,6 +94,7 @@ export async function bootstrap(): Promise<RunningApplication> {
     treasuryWithdrawals: treasuryWithdrawalService,
     guildConfig,
     members: memberService,
+    dailyLogs,
     logger,
   });
   const weeklyDuesInteractions = new WeeklyDuesInteractionHandler({
@@ -96,6 +102,7 @@ export async function bootstrap(): Promise<RunningApplication> {
     weeklyDues: weeklyDuesService,
     guildConfig,
     members: memberService,
+    dailyLogs,
     logger,
   });
   const stockInteractions = new StockInteractionHandler({
@@ -105,6 +112,7 @@ export async function bootstrap(): Promise<RunningApplication> {
     deposits: depositService,
     guildConfig,
     members: memberService,
+    dailyLogs,
     logger,
   });
   const fightPositionInteractions = new FightPositionInteractionHandler({
@@ -154,6 +162,7 @@ export async function bootstrap(): Promise<RunningApplication> {
       auditService,
       fightPositionService,
       guildConfig,
+      dailyLogs,
       logger,
     ),
     env.DISCORD_GUILD_ID,

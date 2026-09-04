@@ -53,6 +53,7 @@ import {
   resolveEvidenceImages,
   type EvidenceInputMode,
 } from './evidence-images.js';
+import type { DailyLogPublisher } from './daily-log-publisher.js';
 
 const maximumCsvSize = 2 * 1_024 * 1_024;
 const maximumDepositImageSize = 10 * 1_024 * 1_024;
@@ -76,6 +77,7 @@ export interface StockInteractionDependencies {
   readonly deposits: DepositService;
   readonly guildConfig: GuildConfigService;
   readonly members: MemberService;
+  readonly dailyLogs: DailyLogPublisher;
   readonly logger: pino.Logger;
 }
 
@@ -309,16 +311,25 @@ export class StockInteractionHandler {
 
   private async applyCsv(interaction: ModalSubmitInteraction, guild: Guild, kind: 'OPENING' | 'MOVEMENT'): Promise<void> {
     await this.requireCapability(guild, interaction.user.id, kind === 'OPENING' ? 'STOCK_REVERSE' : 'ROUTINE_ADMIN');
-    const channel = await this.requireStockLogChannel(guild.id);
+    const settings = await this.requireSettings(guild.id);
+    const channel = await fetchSendableChannel(
+      this.dependencies.client,
+      settings.stockLogChannelId ?? settings.stockChannelId,
+      'Channel Log Stock รวม',
+    );
     const uploads = [...interaction.fields.getUploadedFiles(stockComponentIds.csvFile, true).values()];
     const attachment = uploads[0];
     if (attachment === undefined || uploads.length !== 1) throw new ValidationError('ต้องแนบ CSV 1 ไฟล์');
     validateStockCsvAttachment({ name: attachment.name, contentType: attachment.contentType, size: attachment.size });
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const content = await downloadCsv(attachment);
-    const logMessage = await channel.send({
-      embeds: [new EmbedBuilder().setColor(0xfee75c).setTitle('⏳ กำลังประมวลผล Stock CSV').setDescription(attachment.name).setTimestamp()],
-      files: [{ attachment: content, name: attachment.name }],
+    const logMessage = await this.dependencies.dailyLogs.send(channel, {
+      guildId: guild.id,
+      timezone: settings.timezone,
+      message: {
+        embeds: [new EmbedBuilder().setColor(0xfee75c).setTitle('⏳ กำลังประมวลผล Stock CSV').setDescription(attachment.name).setTimestamp()],
+        files: [{ attachment: content, name: attachment.name }],
+      },
     });
     try {
       const persistedAttachment = [...logMessage.attachments.values()][0];
@@ -392,7 +403,12 @@ export class StockInteractionHandler {
       token: sessionToken,
       page: 1,
     });
-    const channel = await this.requireDepositLogChannel(guild.id);
+    const settings = await this.requireSettings(guild.id);
+    const channel = await fetchSendableChannel(
+      this.dependencies.client,
+      settings.stockLogChannelId ?? settings.depositLogChannelId,
+      'Channel Log Stock รวม',
+    );
     const evidenceInput = readEvidenceModalInput(
       interaction.fields,
       evidenceMode,
@@ -424,7 +440,11 @@ export class StockInteractionHandler {
     const upload = { attachment: attachment.attachment, name: attachment.name };
     // Discord drops this modal upload if the initial message references it via attachment://.
     // Persist it first, then reference the persisted file from the embed to suppress the duplicate preview.
-    const logMessage = await channel.send({ files: [upload] });
+    const logMessage = await this.dependencies.dailyLogs.send(channel, {
+      guildId: guild.id,
+      timezone: settings.timezone,
+      message: { files: [upload] },
+    });
     try {
       const persistedMessage = logMessage.attachments.size > 0
         ? logMessage

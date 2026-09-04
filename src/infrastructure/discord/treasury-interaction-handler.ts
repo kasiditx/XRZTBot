@@ -50,6 +50,7 @@ import {
   resolveEvidenceImages,
   type EvidenceInputMode,
 } from './evidence-images.js';
+import type { DailyLogPublisher } from './daily-log-publisher.js';
 
 export interface TreasuryInteractionDependencies {
   readonly client: Client;
@@ -57,6 +58,7 @@ export interface TreasuryInteractionDependencies {
   readonly treasuryWithdrawals: TreasuryWithdrawalService;
   readonly guildConfig: GuildConfigService;
   readonly members: MemberService;
+  readonly dailyLogs: DailyLogPublisher;
   readonly logger: pino.Logger;
 }
 
@@ -251,7 +253,12 @@ export class TreasuryInteractionHandler {
     evidenceMode: EvidenceInputMode,
   ): Promise<void> {
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
-    const channel = await this.requireTreasuryChannel(guild.id);
+    const settings = await this.requireSettings(guild.id);
+    const channel = await fetchSendableChannel(
+      this.dependencies.client,
+      settings.treasuryChannelId,
+      'Channel เงินกองกลาง',
+    );
     const evidenceInput = readEvidenceModalInput(
       interaction.fields,
       evidenceMode,
@@ -277,9 +284,13 @@ export class TreasuryInteractionHandler {
       interaction.user.id,
     );
 
-    const logMessage = await channel.send({
-      ...buildPreparedTreasuryEntryLog(prepared),
-      files: [{ attachment: attachment.attachment, name: attachment.name }],
+    const logMessage = await this.dependencies.dailyLogs.send(channel, {
+      guildId: guild.id,
+      timezone: settings.timezone,
+      message: {
+        ...buildPreparedTreasuryEntryLog(prepared),
+        files: [{ attachment: attachment.attachment, name: attachment.name }],
+      },
     });
     try {
       const persistedAttachment = [...logMessage.attachments.values()][0];

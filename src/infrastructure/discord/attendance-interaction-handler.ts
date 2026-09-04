@@ -66,12 +66,14 @@ import {
   resolveEvidenceImages,
   type EvidenceInputMode,
 } from './evidence-images.js';
+import type { DailyLogPublisher } from './daily-log-publisher.js';
 
 export interface AttendanceInteractionDependencies {
   readonly client: Client;
   readonly attendance: AttendanceService;
   readonly guildConfig: GuildConfigService;
   readonly members: MemberService;
+  readonly dailyLogs: DailyLogPublisher;
   readonly logger: pino.Logger;
 }
 
@@ -419,9 +421,13 @@ export class AttendanceInteractionHandler {
       'Channel รายการเช็กชื่อ',
     );
 
-    const proofMessage = await channel.send({
-      ...buildAttendanceProofLog(round, member),
-      files: [{ attachment: file.attachment, name: file.name }],
+    const proofMessage = await this.dependencies.dailyLogs.send(channel, {
+      guildId: guild.id,
+      timezone: settings.timezone,
+      message: {
+        ...buildAttendanceProofLog(round, member),
+        files: [{ attachment: file.attachment, name: file.name }],
+      },
     });
     try {
       const persistedAttachment = [...proofMessage.attachments.values()][0];
@@ -629,7 +635,12 @@ export class AttendanceInteractionHandler {
       await message.edit(buildLeaveLog(view));
       return;
     }
-    const replacement = await channel.send(buildLeaveLog(view));
+    const settings = await this.requireSettings(view.leave.guildId);
+    const replacement = await this.dependencies.dailyLogs.send(channel, {
+      guildId: view.leave.guildId,
+      timezone: settings.timezone,
+      message: buildLeaveLog(view),
+    });
     await this.dependencies.attendance.markLeavePublished(view.leave.guildId, view.leave.id, channel.id, replacement.id);
   }
 }

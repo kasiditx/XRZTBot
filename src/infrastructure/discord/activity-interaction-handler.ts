@@ -56,6 +56,7 @@ import {
   resolveEvidenceImages,
   type EvidenceInputMode,
 } from './evidence-images.js';
+import type { DailyLogPublisher } from './daily-log-publisher.js';
 
 const SUBMISSION_COOLDOWN_MS = 3_000;
 
@@ -64,6 +65,7 @@ export interface ActivityInteractionDependencies {
   readonly activities: ActivityService;
   readonly guildConfig: GuildConfigService;
   readonly members: MemberService;
+  readonly dailyLogs: DailyLogPublisher;
   readonly logger: pino.Logger;
 }
 
@@ -376,9 +378,13 @@ export class ActivityInteractionHandler {
       ]);
       const logChannel = await fetchSendableChannel(this.dependencies.client, settings.activityLogChannelId, 'Channel Log กิจกรรม');
 
-      const logMessage = await logChannel.send({
-        ...buildPreparedSubmissionLog(prepared),
-        files: evidenceImages.map(({ attachment, name }) => ({ attachment, name })),
+      const logMessage = await this.dependencies.dailyLogs.send(logChannel, {
+        guildId: guild.id,
+        timezone: settings.timezone,
+        message: {
+          ...buildPreparedSubmissionLog(prepared),
+          files: evidenceImages.map(({ attachment, name }) => ({ attachment, name })),
+        },
       });
       try {
         const attachmentIds = [...logMessage.attachments.keys()];

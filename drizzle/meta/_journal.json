@@ -169,6 +169,13 @@
       "when": 1788484900371,
       "tag": "0023_nappy_steel_serpent",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1788497029943,
+      "tag": "0024_bouncy_tyrannus",
+      "breakpoints": true
     }
   ]
 }

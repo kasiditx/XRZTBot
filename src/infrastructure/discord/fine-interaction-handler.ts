@@ -46,12 +46,14 @@ import {
   resolveEvidenceImages,
   type EvidenceInputMode,
 } from './evidence-images.js';
+import type { DailyLogPublisher } from './daily-log-publisher.js';
 
 export interface FineInteractionDependencies {
   readonly client: Client;
   readonly fines: FineService;
   readonly guildConfig: GuildConfigService;
   readonly members: MemberService;
+  readonly dailyLogs: DailyLogPublisher;
   readonly logger: pino.Logger;
 }
 
@@ -241,9 +243,13 @@ export class FineInteractionHandler {
       new Date(),
     );
 
-    const logMessage = await channel.send({
-      ...buildPreparedFineProofLog(prepared),
-      files: [{ attachment: attachment.attachment, name: attachment.name }],
+    const logMessage = await this.dependencies.dailyLogs.send(channel, {
+      guildId: guild.id,
+      timezone: settings.timezone,
+      message: {
+        ...buildPreparedFineProofLog(prepared),
+        files: [{ attachment: attachment.attachment, name: attachment.name }],
+      },
     });
     try {
       const persistedAttachment = [...logMessage.attachments.values()][0];

@@ -34,6 +34,7 @@ import { buildControlPanel, buildMemberRegistrationRequest, buildMemberRoster } 
 import { buildAuditLogMessage } from './audit-components.js';
 import { syncFightPositionSummary } from './fight-position-publisher.js';
 import { buildMiruEmbed } from './theme.js';
+import type { DailyLogPublisher } from './daily-log-publisher.js';
 
 const memberRoleSyncSchema = z.object({
   discordUserId: z.string().regex(/^\d+$/),
@@ -79,6 +80,7 @@ export function createDiscordJobHandlers(
   audits: AuditService,
   fightPositions: FightPositionService,
   guildConfig: GuildConfigService,
+  dailyLogs: DailyLogPublisher,
   logger: pino.Logger,
 ): ReadonlyMap<string, JobHandler> {
   return new Map<string, JobHandler>([
@@ -100,11 +102,16 @@ export function createDiscordJobHandlers(
         }
 
         const settings = await guildConfig.get(job.guildId);
-        const channel = await fetchSendableChannel(client, settings?.auditChannelId ?? null, 'Channel Audit');
-        const message = await channel.send({
-          ...buildAuditLogMessage(audit),
-          nonce: nonceFor(audit.id, 'audit'),
-          enforceNonce: true,
+        if (settings === null) throw new ValidationError('ไม่พบการตั้งค่า Server');
+        const channel = await fetchSendableChannel(client, settings.auditChannelId, 'Channel Audit');
+        const message = await dailyLogs.send(channel, {
+          guildId: job.guildId,
+          timezone: settings.timezone,
+          message: {
+            ...buildAuditLogMessage(audit),
+            nonce: nonceFor(audit.id, 'audit'),
+            enforceNonce: true,
+          },
         });
         await audits.markPublished(job.guildId, audit.id, channel.id, message.id);
         await moveControlPanelToChannelBottom(client, guildConfig, job.guildId, logger);
@@ -366,11 +373,16 @@ export function createDiscordJobHandlers(
           }
         }
         const settings = await guildConfig.get(job.guildId);
-        const channel = await fetchSendableChannel(client, settings?.leaveLogChannelId ?? null, 'Channel Log แจ้งลา');
-        const message = await channel.send({
-          ...buildLeaveLog(view),
-          nonce: nonceFor(leaveId, 'leave'),
-          enforceNonce: true,
+        if (settings === null) throw new ValidationError('ไม่พบการตั้งค่า Server');
+        const channel = await fetchSendableChannel(client, settings.leaveLogChannelId, 'Channel Log แจ้งลา');
+        const message = await dailyLogs.send(channel, {
+          guildId: job.guildId,
+          timezone: settings.timezone,
+          message: {
+            ...buildLeaveLog(view),
+            nonce: nonceFor(leaveId, 'leave'),
+            enforceNonce: true,
+          },
         });
         await attendance.markLeavePublished(job.guildId, leaveId, channel.id, message.id);
       },
@@ -419,14 +431,19 @@ export function createDiscordJobHandlers(
           return;
         }
         const settings = await guildConfig.get(job.guildId);
-        const channel = await fetchSendableChannel(client, settings?.treasuryChannelId ?? null, 'Channel เงินกองกลาง');
+        if (settings === null) throw new ValidationError('ไม่พบการตั้งค่า Server');
+        const channel = await fetchSendableChannel(client, settings.treasuryChannelId, 'Channel เงินกองกลาง');
         const evidence = await treasury.getEvidenceLocation(entry);
         const files = evidence === null ? [] : [await resolveEvidenceFile(client, evidence)];
-        const message = await channel.send({
-          ...buildTreasuryEntryLog(entry),
-          files,
-          nonce: nonceFor(entryId, 'treasury'),
-          enforceNonce: true,
+        const message = await dailyLogs.send(channel, {
+          guildId: job.guildId,
+          timezone: settings.timezone,
+          message: {
+            ...buildTreasuryEntryLog(entry),
+            files,
+            nonce: nonceFor(entryId, 'treasury'),
+            enforceNonce: true,
+          },
         });
         await treasury.markPublished(job.guildId, entryId, channel.id, message.id);
         await refreshTreasuryDashboard(client, treasury, guildConfig, job.guildId, logger);
@@ -444,19 +461,31 @@ export function createDiscordJobHandlers(
         const { requestId } = treasuryWithdrawalJobSchema.parse(job.payload);
         const view = await treasuryWithdrawals.get(job.guildId, requestId);
         if (view.request.publicChannelId !== null && view.request.publicMessageId !== null) {
-          await refreshTreasuryWithdrawal(client, treasuryWithdrawals, job.guildId, requestId);
+          await refreshTreasuryWithdrawal(
+            client,
+            treasuryWithdrawals,
+            guildConfig,
+            dailyLogs,
+            job.guildId,
+            requestId,
+          );
           return;
         }
         const settings = await guildConfig.get(job.guildId);
+        if (settings === null) throw new ValidationError('ไม่พบการตั้งค่า Server');
         const channel = await fetchSendableChannel(
           client,
-          settings?.treasuryWithdrawalLogChannelId ?? null,
+          settings.treasuryWithdrawalLogChannelId,
           'Channel Log เบิกเงินแก๊ง',
         );
-        const message = await channel.send({
-          ...buildTreasuryWithdrawalRequestLog(view),
-          nonce: nonceFor(requestId, 'treasury-withdrawal'),
-          enforceNonce: true,
+        const message = await dailyLogs.send(channel, {
+          guildId: job.guildId,
+          timezone: settings.timezone,
+          message: {
+            ...buildTreasuryWithdrawalRequestLog(view),
+            nonce: nonceFor(requestId, 'treasury-withdrawal'),
+            enforceNonce: true,
+          },
         });
         await treasuryWithdrawals.markPublished(job.guildId, requestId, channel.id, message.id);
       },
@@ -465,7 +494,14 @@ export function createDiscordJobHandlers(
       'TREASURY_WITHDRAWAL_REFRESH',
       async (job) => {
         const { requestId } = treasuryWithdrawalJobSchema.parse(job.payload);
-        await refreshTreasuryWithdrawal(client, treasuryWithdrawals, job.guildId, requestId);
+        await refreshTreasuryWithdrawal(
+          client,
+          treasuryWithdrawals,
+          guildConfig,
+          dailyLogs,
+          job.guildId,
+          requestId,
+        );
       },
     ],
     [
@@ -509,15 +545,20 @@ export function createDiscordJobHandlers(
         const batch = await inventory.getBatch(job.guildId, batchId);
         if (batch.batch.publicChannelId !== null && batch.batch.publicMessageId !== null) return;
         const settings = await guildConfig.get(job.guildId);
+        if (settings === null) throw new ValidationError('ไม่พบการตั้งค่า Server');
         const channel = await fetchSendableChannel(
           client,
-          settings?.stockLogChannelId ?? settings?.stockChannelId ?? null,
+          settings.stockLogChannelId ?? settings.stockChannelId,
           'Channel Log Stock รวม',
         );
-        const message = await channel.send({
-          ...buildBatchLog(batch),
-          nonce: nonceFor(batchId, 'stock-batch'),
-          enforceNonce: true,
+        const message = await dailyLogs.send(channel, {
+          guildId: job.guildId,
+          timezone: settings.timezone,
+          message: {
+            ...buildBatchLog(batch),
+            nonce: nonceFor(batchId, 'stock-batch'),
+            enforceNonce: true,
+          },
         });
         await inventory.markBatchPublished(job.guildId, batchId, channel.id, message.id);
         await refreshStockDashboard(client, inventory, guildConfig, job.guildId, logger);
@@ -546,19 +587,24 @@ export function createDiscordJobHandlers(
         const { requestId } = withdrawalJobSchema.parse(job.payload);
         const view = await withdrawals.get(job.guildId, requestId);
         if (view.request.publicChannelId !== null && view.request.publicMessageId !== null) {
-          await refreshWithdrawal(client, withdrawals, job.guildId, requestId);
+          await refreshWithdrawal(client, withdrawals, guildConfig, dailyLogs, job.guildId, requestId);
           return;
         }
         const settings = await guildConfig.get(job.guildId);
+        if (settings === null) throw new ValidationError('ไม่พบการตั้งค่า Server');
         const channel = await fetchSendableChannel(
           client,
-          settings?.stockLogChannelId ?? settings?.withdrawalLogChannelId ?? null,
+          settings.stockLogChannelId ?? settings.withdrawalLogChannelId,
           'Channel Log Stock รวม',
         );
-        const message = await channel.send({
-          ...buildWithdrawalLog(view),
-          nonce: nonceFor(requestId, 'withdrawal'),
-          enforceNonce: true,
+        const message = await dailyLogs.send(channel, {
+          guildId: job.guildId,
+          timezone: settings.timezone,
+          message: {
+            ...buildWithdrawalLog(view),
+            nonce: nonceFor(requestId, 'withdrawal'),
+            enforceNonce: true,
+          },
         });
         await withdrawals.markPublished(job.guildId, requestId, channel.id, message.id);
       },
@@ -567,7 +613,7 @@ export function createDiscordJobHandlers(
       'WITHDRAWAL_REFRESH',
       async (job) => {
         const { requestId } = withdrawalJobSchema.parse(job.payload);
-        await refreshWithdrawal(client, withdrawals, job.guildId, requestId);
+        await refreshWithdrawal(client, withdrawals, guildConfig, dailyLogs, job.guildId, requestId);
       },
     ],
     [
@@ -662,6 +708,8 @@ async function refreshMemberRoster(
 async function refreshWithdrawal(
   client: Client,
   withdrawals: WithdrawalService,
+  guildConfig: GuildConfigService,
+  dailyLogs: DailyLogPublisher,
   guildId: string,
   requestId: string,
 ): Promise<void> {
@@ -673,13 +721,21 @@ async function refreshWithdrawal(
     await message.edit(buildWithdrawalLog(view));
     return;
   }
-  const replacement = await channel.send(buildWithdrawalLog(view));
+  const settings = await guildConfig.get(guildId);
+  if (settings === null) throw new ValidationError('ไม่พบการตั้งค่า Server');
+  const replacement = await dailyLogs.send(channel, {
+    guildId,
+    timezone: settings.timezone,
+    message: buildWithdrawalLog(view),
+  });
   await withdrawals.markPublished(guildId, requestId, channel.id, replacement.id);
 }
 
 async function refreshTreasuryWithdrawal(
   client: Client,
   withdrawals: TreasuryWithdrawalService,
+  guildConfig: GuildConfigService,
+  dailyLogs: DailyLogPublisher,
   guildId: string,
   requestId: string,
 ): Promise<void> {
@@ -695,7 +751,13 @@ async function refreshTreasuryWithdrawal(
     await message.edit(buildTreasuryWithdrawalRequestLog(view));
     return;
   }
-  const replacement = await channel.send(buildTreasuryWithdrawalRequestLog(view));
+  const settings = await guildConfig.get(guildId);
+  if (settings === null) throw new ValidationError('ไม่พบการตั้งค่า Server');
+  const replacement = await dailyLogs.send(channel, {
+    guildId,
+    timezone: settings.timezone,
+    message: buildTreasuryWithdrawalRequestLog(view),
+  });
   await withdrawals.markPublished(guildId, requestId, channel.id, replacement.id);
 }
 
