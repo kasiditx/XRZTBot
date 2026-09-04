@@ -162,6 +162,13 @@
       "when": 1788417924460,
       "tag": "0022_right_junta",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1788484900371,
+      "tag": "0023_nappy_steel_serpent",
+      "breakpoints": true
     }
   ]
 }

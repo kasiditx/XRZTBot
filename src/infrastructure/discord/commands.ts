@@ -44,6 +44,7 @@ const adminCommand = new SlashCommandBuilder()
             { name: 'กิจกรรม', value: 'activityChannelId' },
             { name: 'Log กิจกรรม', value: 'activityLogChannelId' },
             { name: 'เช็กชื่อ', value: 'attendanceChannelId' },
+            { name: 'รายการเช็กชื่อ (หลักฐาน Airdrop)', value: 'attendanceLogChannelId' },
             { name: 'แจ้งลา', value: 'leaveChannelId' },
             { name: 'Log แจ้งลา', value: 'leaveLogChannelId' },
             { name: 'ค่าปรับ', value: 'fineChannelId' },

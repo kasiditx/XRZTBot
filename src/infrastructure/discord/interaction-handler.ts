@@ -56,6 +56,7 @@ const channelFields: readonly ConfigurableChannel[] = [
   'activityChannelId',
   'activityLogChannelId',
   'attendanceChannelId',
+  'attendanceLogChannelId',
   'leaveChannelId',
   'leaveLogChannelId',
   'fineChannelId',

@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm';
 import { ConflictError, ValidationError } from '../../src/domain/errors.js';
 import { createDatabase, type Database } from '../../src/infrastructure/db/client.js';
 import {
+  attendanceProofs,
   attendanceRecords,
   guildSettings,
   members,
@@ -201,6 +202,104 @@ describeWithDatabase('AttendanceService PostgreSQL integration', () => {
       alpha,
       { ...proof, attachmentId: 'proof-attachment-2', messageId: 'proof-message-2' },
       new Date('2026-08-29T15:52:00.000Z'),
+    )).rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it('rejects the latest proof, marks the member absent, and accepts a fresh replacement while the round is open', async () => {
+    const eventAt = new Date('2026-09-01T14:00:00.000Z');
+    const reviewRound = await service.createRound({
+      guildId,
+      requestId: 'airdrop-proof-review',
+      title: 'Airdrop proof review',
+      mode: 'AIRDROP',
+      eventAt,
+      ...buildAirdropRoundTimes(eventAt, timezone, 10, 10),
+      actorDiscordUserId: alpha,
+      now: new Date('2026-09-01T13:51:00.000Z'),
+    });
+    const firstProof = {
+      attachmentId: 'review-attachment-1',
+      channelId: 'review-channel',
+      messageId: '300000000000000001',
+      sha256: 'b'.repeat(64),
+    } as const;
+    await service.checkInWithProof(
+      guildId,
+      reviewRound.id,
+      beta,
+      firstProof,
+      new Date('2026-09-01T13:52:00.000Z'),
+    );
+
+    const rejected = await service.rejectProof(
+      guildId,
+      reviewRound.id,
+      firstProof.messageId,
+      'รูปไม่เห็นรายชื่อในวอ',
+      alpha,
+      new Date('2026-09-01T13:53:00.000Z'),
+    );
+    expect(rejected.proof).toMatchObject({ status: 'REJECTED', rejectionReason: 'รูปไม่เห็นรายชื่อในวอ' });
+    expect(rejected.record).toMatchObject({ result: 'ABSENT', checkedInAt: null });
+
+    const replacementProof = {
+      attachmentId: 'review-attachment-2',
+      channelId: 'review-channel',
+      messageId: '300000000000000002',
+      sha256: 'c'.repeat(64),
+    } as const;
+    const replacement = await service.checkInWithProof(
+      guildId,
+      reviewRound.id,
+      beta,
+      replacementProof,
+      new Date('2026-09-01T13:54:00.000Z'),
+    );
+    expect(replacement).toMatchObject({
+      result: 'PRESENT',
+      proofMessageId: replacementProof.messageId,
+      correctedByDiscordUserId: null,
+      correctionReason: null,
+    });
+    await expect(service.rejectProof(
+      guildId,
+      reviewRound.id,
+      firstProof.messageId,
+      'พยายามกดปุ่มเก่า',
+      alpha,
+      new Date('2026-09-01T13:55:00.000Z'),
+    )).rejects.toBeInstanceOf(ConflictError);
+
+    const proofHistory = await db
+      .select({ status: attendanceProofs.status, sha256: attendanceProofs.sha256 })
+      .from(attendanceProofs)
+      .where(eq(attendanceProofs.roundId, reviewRound.id));
+    expect(proofHistory).toEqual(expect.arrayContaining([
+      { status: 'REJECTED', sha256: firstProof.sha256 },
+      { status: 'PENDING', sha256: replacementProof.sha256 },
+    ]));
+
+    const laterEventAt = new Date('2026-09-01T16:00:00.000Z');
+    const laterRound = await service.createRound({
+      guildId,
+      requestId: 'airdrop-rejected-proof-reuse',
+      title: 'Airdrop rejected proof reuse',
+      mode: 'AIRDROP',
+      eventAt: laterEventAt,
+      ...buildAirdropRoundTimes(laterEventAt, timezone, 10, 10),
+      actorDiscordUserId: alpha,
+      now: new Date('2026-09-01T15:51:00.000Z'),
+    });
+    await expect(service.checkInWithProof(
+      guildId,
+      laterRound.id,
+      charlie,
+      {
+        ...firstProof,
+        attachmentId: 'review-attachment-reused',
+        messageId: '300000000000000003',
+      },
+      new Date('2026-09-01T15:52:00.000Z'),
     )).rejects.toBeInstanceOf(ConflictError);
   });
 

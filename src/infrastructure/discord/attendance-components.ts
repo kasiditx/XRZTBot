@@ -40,6 +40,7 @@ export const attendanceComponentIds = {
   recurringAfterMinutes: 'attendance:recurring_after_minutes',
   proofFile: 'attendance:proof_file',
   proofMediaLink: 'attendance:proof_link',
+  proofRejectionReason: 'attendance:proof_rejection_reason',
   leaveSubmit: 'leave:submit',
   leaveStartsOn: 'leave:starts_on',
   leaveEndsOn: 'leave:ends_on',
@@ -52,6 +53,7 @@ export const attendanceComponentIds = {
 export const attendanceCreateModalPrefix = 'attendance:create_modal:';
 export const attendanceRecurringModalPrefix = 'attendance:recurring_modal:';
 export const attendanceProofModalPrefix = 'attendance:proof_modal:';
+export const attendanceProofRejectModalPrefix = 'attendance:proof_reject_modal:';
 export const leaveSubmitModalId = 'leave:submit_modal';
 export const leaveEditModalPrefix = 'leave:edit_modal:';
 
@@ -198,18 +200,54 @@ export function buildAttendanceManagement(view: AttendanceRoundView) {
 export function buildAttendanceProofLog(
   round: AttendanceRound,
   member: { readonly discordUserId: string; readonly inGameName: string },
+  review?: {
+    readonly status: 'PENDING' | 'REJECTED';
+    readonly rejectionReason: string | null;
+    readonly decidedByDiscordUserId: string | null;
+    readonly decidedAt: Date | null;
+  },
 ) {
+  const isRejected = review?.status === 'REJECTED';
+  const embed = new EmbedBuilder()
+    .setColor(isRejected ? 0xed4245 : 0x57f287)
+    .setTitle(isRejected ? '❌ ปฏิเสธหลักฐานเช็กชื่อ Airdrop' : '📸 หลักฐานเช็กชื่อ Airdrop')
+    .addFields(
+      { name: 'รายการ', value: round.title },
+      { name: 'สมาชิก', value: `<@${member.discordUserId}> (${member.inGameName})` },
+      { name: 'ข้อกำหนด', value: 'รูปต้องเห็นตัวละครของตัวเองและรายชื่อในวอ' },
+    )
+    .setTimestamp(review?.decidedAt ?? undefined);
+  if (isRejected && review.rejectionReason !== null && review.decidedByDiscordUserId !== null) {
+    embed.addFields(
+      { name: 'เหตุผลที่ปฏิเสธ', value: review.rejectionReason },
+      { name: 'ตรวจโดย', value: `<@${review.decidedByDiscordUserId}>` },
+    );
+  }
   return {
-    embeds: [new EmbedBuilder()
-      .setColor(0x57f287)
-      .setTitle('📸 หลักฐานเช็กชื่อ Airdrop')
-      .addFields(
-        { name: 'รายการ', value: round.title },
-        { name: 'สมาชิก', value: `<@${member.discordUserId}> (${member.inGameName})` },
-        { name: 'ข้อกำหนด', value: 'รูปต้องเห็นตัวละครของตัวเองและรายชื่อในวอ' },
-      )
-      .setTimestamp()],
+    embeds: [embed],
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`attendance:proof_reject:${round.id}`)
+        .setLabel('ปฏิเสธ')
+        .setStyle(ButtonStyle.Danger)
+        .setDisabled(isRejected),
+    )],
   };
+}
+
+export function buildAttendanceProofRejectionModal(roundId: string, proofMessageId: string): ModalBuilder {
+  return new ModalBuilder()
+    .setCustomId(`${attendanceProofRejectModalPrefix}${roundId}:${proofMessageId}`)
+    .setTitle('ปฏิเสธหลักฐานเช็กชื่อ')
+    .addComponents(inputRow(
+      attendanceComponentIds.proofRejectionReason,
+      'เหตุผลที่ปฏิเสธ',
+      undefined,
+      2,
+      500,
+      undefined,
+      TextInputStyle.Paragraph,
+    ));
 }
 
 export function buildCorrectionModal(roundId: string, members: readonly MemberSelectionOption[]): ModalBuilder {

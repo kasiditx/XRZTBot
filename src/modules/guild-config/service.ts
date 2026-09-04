@@ -10,6 +10,7 @@ export type ConfigurableChannel =
   | 'activityChannelId'
   | 'activityLogChannelId'
   | 'attendanceChannelId'
+  | 'attendanceLogChannelId'
   | 'leaveChannelId'
   | 'leaveLogChannelId'
   | 'fineChannelId'

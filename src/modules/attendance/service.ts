@@ -4,6 +4,7 @@ import { and, asc, desc, eq, gte, lte, ne } from 'drizzle-orm';
 import { AuthorizationError, ConflictError, NotFoundError, ValidationError } from '../../domain/errors.js';
 import type { Database } from '../../infrastructure/db/client.js';
 import {
+  attendanceProofs,
   attendanceRecords,
   attendanceRounds,
   attendanceSchedules,
@@ -23,6 +24,7 @@ import {
 } from './rules.js';
 
 export type AttendanceRound = typeof attendanceRounds.$inferSelect;
+export type AttendanceProof = typeof attendanceProofs.$inferSelect;
 export type AttendanceRecord = typeof attendanceRecords.$inferSelect;
 export type AttendanceSchedule = typeof attendanceSchedules.$inferSelect;
 export type Leave = typeof leaves.$inferSelect;
@@ -52,6 +54,16 @@ export interface AttendanceRoundView {
   readonly absent: readonly MemberAttendanceView[];
   readonly pending: readonly MemberAttendanceView[];
   readonly activeLeaves: readonly LeaveView[];
+}
+
+export interface AttendanceProofView {
+  readonly proof: AttendanceProof;
+  readonly record: AttendanceRecord;
+  readonly round: AttendanceRound;
+  readonly member: {
+    readonly discordUserId: string;
+    readonly inGameName: string;
+  };
 }
 
 export interface CreateRoundInput extends AttendanceRoundTimes {
@@ -286,12 +298,29 @@ export class AttendanceService {
           throw new ConflictError('คุณเช็กชื่อในรอบนี้แล้ว');
         }
         const [reusedProof] = await tx
-          .select({ roundId: attendanceRecords.roundId })
-          .from(attendanceRecords)
-          .where(eq(attendanceRecords.proofSha256, proof.sha256))
+          .select({ id: attendanceProofs.id })
+          .from(attendanceProofs)
+          .where(eq(attendanceProofs.sha256, proof.sha256))
           .limit(1);
         if (reusedProof !== undefined) {
           throw new ConflictError('รูปหลักฐานนี้ถูกใช้เช็กชื่อแล้ว กรุณาแนบรูปใหม่จากรอบปัจจุบัน');
+        }
+
+        const [proofRecord] = await tx
+          .insert(attendanceProofs)
+          .values({
+            guildId,
+            roundId,
+            memberId: member.id,
+            attachmentId: proof.attachmentId,
+            logChannelId: proof.channelId,
+            logMessageId: proof.messageId,
+            sha256: proof.sha256,
+            submittedAt: now,
+          })
+          .returning();
+        if (proofRecord === undefined) {
+          throw new Error('Attendance proof creation did not return a row');
         }
 
         const [record] = await tx
@@ -316,6 +345,8 @@ export class AttendanceService {
               proofChannelId: proof.channelId,
               proofMessageId: proof.messageId,
               proofSha256: proof.sha256,
+              correctedByDiscordUserId: null,
+              correctionReason: null,
               updatedAt: now,
             },
           })
@@ -328,11 +359,122 @@ export class AttendanceService {
         return record;
       });
     } catch (error: unknown) {
-      if (isConstraintViolation(error, 'attendance_records_proof_sha256_uq')) {
+      if (
+        isConstraintViolation(error, 'attendance_records_proof_sha256_uq')
+        || isConstraintViolation(error, 'attendance_proofs_sha256_uq')
+      ) {
         throw new ConflictError('รูปหลักฐานนี้ถูกใช้เช็กชื่อแล้ว กรุณาแนบรูปใหม่จากรอบปัจจุบัน');
       }
       throw error;
     }
+  }
+
+  public async rejectProof(
+    guildId: string,
+    roundId: string,
+    proofMessageId: string,
+    reason: string,
+    actorDiscordUserId: string,
+    now: Date,
+  ): Promise<AttendanceProofView> {
+    const rejectionReason = requireText(reason, 'เหตุผลที่ปฏิเสธ', 2, 500);
+    return this.db.transaction(async (tx) => {
+      const round = await lockRound(tx, guildId, roundId);
+      if (round.status === 'CANCELLED') {
+        throw new ConflictError('รอบเช็กชื่อนี้ถูกยกเลิกแล้ว');
+      }
+      const [context] = await tx
+        .select({
+          proof: attendanceProofs,
+          discordUserId: members.discordUserId,
+          inGameName: members.inGameName,
+        })
+        .from(attendanceProofs)
+        .innerJoin(members, eq(attendanceProofs.memberId, members.id))
+        .where(and(
+          eq(attendanceProofs.guildId, guildId),
+          eq(attendanceProofs.roundId, roundId),
+          eq(attendanceProofs.logMessageId, proofMessageId),
+        ))
+        .limit(1)
+        .for('update');
+      if (context === undefined) {
+        throw new NotFoundError('ไม่พบหลักฐานเช็กชื่อนี้');
+      }
+      if (context.proof.status !== 'PENDING') {
+        throw new ConflictError('หลักฐานเช็กชื่อนี้ถูกดำเนินการแล้ว');
+      }
+      const [beforeRecord] = await tx
+        .select()
+        .from(attendanceRecords)
+        .where(and(
+          eq(attendanceRecords.roundId, roundId),
+          eq(attendanceRecords.memberId, context.proof.memberId),
+        ))
+        .limit(1)
+        .for('update');
+      if (
+        beforeRecord === undefined
+        || beforeRecord.checkedInAt === null
+        || beforeRecord.proofMessageId !== proofMessageId
+      ) {
+        throw new ConflictError('หลักฐานนี้ไม่ใช่หลักฐานล่าสุดของสมาชิกแล้ว');
+      }
+
+      const [proof] = await tx
+        .update(attendanceProofs)
+        .set({
+          status: 'REJECTED',
+          decidedAt: now,
+          decidedByDiscordUserId: actorDiscordUserId,
+          rejectionReason,
+          updatedAt: now,
+        })
+        .where(eq(attendanceProofs.id, context.proof.id))
+        .returning();
+      if (proof === undefined) {
+        throw new Error('Attendance proof rejection did not return a row');
+      }
+      const [record] = await tx
+        .update(attendanceRecords)
+        .set({
+          result: 'ABSENT',
+          checkedInAt: null,
+          leaveId: null,
+          correctedByDiscordUserId: actorDiscordUserId,
+          correctionReason: rejectionReason,
+          updatedAt: now,
+        })
+        .where(and(
+          eq(attendanceRecords.roundId, roundId),
+          eq(attendanceRecords.memberId, context.proof.memberId),
+        ))
+        .returning();
+      if (record === undefined) {
+        throw new Error('Attendance record rejection did not return a row');
+      }
+      await writeAttendanceAudit(
+        tx,
+        guildId,
+        actorDiscordUserId,
+        'ATTENDANCE_PROOF_REJECTED',
+        'ATTENDANCE_PROOF',
+        proof.id,
+        { proof: context.proof, record: beforeRecord },
+        { proof, record },
+        rejectionReason,
+      );
+      await queueRoundRefresh(tx, guildId, roundId, now);
+      return {
+        proof,
+        record,
+        round,
+        member: {
+          discordUserId: context.discordUserId,
+          inGameName: context.inGameName,
+        },
+      };
+    });
   }
 
   public async closeRound(guildId: string, roundId: string, now: Date): Promise<AttendanceRound> {

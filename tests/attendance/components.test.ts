@@ -1,7 +1,9 @@
 import {
   buildAttendanceAnnouncement,
   buildAttendanceModeSelector,
+  buildAttendanceProofLog,
   buildAttendanceProofModal,
+  buildAttendanceProofRejectionModal,
   buildCreateRoundModal,
   buildRecurringScheduleModal,
 } from '../../src/infrastructure/discord/attendance-components.js';
@@ -77,9 +79,46 @@ describe('attendance Discord components', () => {
     expect(airdrop.components[0]?.toJSON().components[0]).toMatchObject({ label: 'แนบรูปเช็กชื่อ' });
     expect(general.components[0]?.toJSON().components[0]).toMatchObject({ label: 'เช็กชื่อ' });
   });
+
+  it('lets Admin reject an Airdrop proof with a required reason', () => {
+    const round = roundView('AIRDROP').round;
+    const pending = buildAttendanceProofLog(round, {
+      discordUserId: '200000000000000001',
+      inGameName: 'Alpha',
+    });
+    const action = pending.components[0]?.toJSON().components[0];
+
+    expect(action).toMatchObject({
+      custom_id: `attendance:proof_reject:${AIRDROP_ROUND_ID}`,
+      label: 'ปฏิเสธ',
+      disabled: false,
+    });
+
+    const modal = buildAttendanceProofRejectionModal(AIRDROP_ROUND_ID, PROOF_MESSAGE_ID).toJSON();
+    expect(modal.custom_id).toBe(`attendance:proof_reject_modal:${AIRDROP_ROUND_ID}:${PROOF_MESSAGE_ID}`);
+    expect(modal.components[0]).toMatchObject({
+      components: [{ custom_id: 'attendance:proof_rejection_reason', required: true, min_length: 2 }],
+    });
+
+    const rejected = buildAttendanceProofLog(round, {
+      discordUserId: '200000000000000001',
+      inGameName: 'Alpha',
+    }, {
+      status: 'REJECTED',
+      rejectionReason: 'รูปไม่เห็นรายชื่อในวอ',
+      decidedByDiscordUserId: '100000000000000001',
+      decidedAt: new Date('2026-08-27T14:05:00.000Z'),
+    });
+    const rejectedEmbed = rejected.embeds[0]?.toJSON();
+    expect(rejectedEmbed?.title).toContain('ปฏิเสธหลักฐานเช็กชื่อ Airdrop');
+    expect(rejectedEmbed?.fields?.find((field) => field.name.includes('เหตุผลที่ปฏิเสธ'))?.value)
+      .toContain('รูปไม่เห็นรายชื่อในวอ');
+    expect(rejected.components[0]?.toJSON().components[0]).toMatchObject({ disabled: true });
+  });
 });
 
 const AIRDROP_ROUND_ID = '11111111-1111-4111-8111-111111111111';
+const PROOF_MESSAGE_ID = '300000000000000001';
 
 function roundView(mode: 'AIRDROP' | 'GENERAL'): AttendanceRoundView {
   const now = new Date('2026-08-27T14:00:00.000Z');

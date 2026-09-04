@@ -30,6 +30,7 @@ export const activityModeEnum = pgEnum('activity_mode', ['SCORE', 'EVIDENCE', 'A
 export const attendanceModeEnum = pgEnum('attendance_mode', ['AIRDROP', 'GENERAL']);
 export const attendanceRoundStatusEnum = pgEnum('attendance_round_status', ['SCHEDULED', 'OPEN', 'CLOSED', 'CANCELLED']);
 export const attendanceResultEnum = pgEnum('attendance_result', ['PENDING', 'PRESENT', 'LEAVE', 'EMERGENCY_LEAVE', 'ABSENT']);
+export const attendanceProofStatusEnum = pgEnum('attendance_proof_status', ['PENDING', 'REJECTED']);
 export const leaveStatusEnum = pgEnum('leave_status', ['ACTIVE', 'CANCELLED']);
 export const fineStatusEnum = pgEnum('fine_status', ['UNPAID', 'PENDING_VERIFICATION', 'PAID', 'CANCELLED']);
 export const treasuryEntryTypeEnum = pgEnum('treasury_entry_type', ['OPENING_BALANCE', 'INCOME', 'EXPENSE', 'REVERSAL']);
@@ -53,6 +54,7 @@ export const guildSettings = pgTable('guild_settings', {
   activityChannelId: text('activity_channel_id'),
   activityLogChannelId: text('activity_log_channel_id'),
   attendanceChannelId: text('attendance_channel_id'),
+  attendanceLogChannelId: text('attendance_log_channel_id'),
   leaveChannelId: text('leave_channel_id'),
   leaveLogChannelId: text('leave_log_channel_id'),
   leavePanelMessageId: text('leave_panel_message_id'),
@@ -414,6 +416,45 @@ export const attendanceRecords = pgTable(
       AND ${table.proofChannelId} IS NOT NULL
       AND ${table.proofMessageId} IS NOT NULL
       AND ${table.proofSha256} IS NOT NULL
+    )`),
+  ],
+);
+
+export const attendanceProofs = pgTable(
+  'attendance_proofs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    guildId: text('guild_id').notNull().references(() => guildSettings.guildId, { onDelete: 'cascade' }),
+    roundId: uuid('round_id').notNull().references(() => attendanceRounds.id, { onDelete: 'cascade' }),
+    memberId: uuid('member_id').notNull().references(() => members.id, { onDelete: 'restrict' }),
+    attachmentId: text('attachment_id').notNull(),
+    logChannelId: text('log_channel_id').notNull(),
+    logMessageId: text('log_message_id').notNull(),
+    sha256: text('sha256').notNull(),
+    status: attendanceProofStatusEnum('status').notNull().default('PENDING'),
+    submittedAt: timestamp('submitted_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    decidedAt: timestamp('decided_at', { withTimezone: true, mode: 'date' }),
+    decidedByDiscordUserId: text('decided_by_discord_user_id'),
+    rejectionReason: text('rejection_reason'),
+    ...auditColumns,
+  },
+  (table) => [
+    uniqueIndex('attendance_proofs_log_message_uq').on(table.logMessageId),
+    uniqueIndex('attendance_proofs_sha256_uq').on(table.sha256),
+    uniqueIndex('attendance_proofs_one_pending_uq')
+      .on(table.roundId, table.memberId)
+      .where(sql`${table.status} = 'PENDING'`),
+    check('attendance_proofs_sha256_format', sql`length(${table.sha256}) = 64`),
+    check('attendance_proofs_status_fields', sql`(
+      ${table.status} = 'PENDING'
+      AND ${table.decidedAt} IS NULL
+      AND ${table.decidedByDiscordUserId} IS NULL
+      AND ${table.rejectionReason} IS NULL
+    ) OR (
+      ${table.status} = 'REJECTED'
+      AND ${table.decidedAt} IS NOT NULL
+      AND ${table.decidedByDiscordUserId} IS NOT NULL
+      AND length(trim(${table.rejectionReason})) BETWEEN 2 AND 500
     )`),
   ],
 );

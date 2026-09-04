@@ -36,12 +36,14 @@ import {
   attendanceComponentIds,
   attendanceCreateModalPrefix,
   attendanceProofModalPrefix,
+  attendanceProofRejectModalPrefix,
   attendanceRecurringModalPrefix,
   buildAttendanceAdminPanel,
   buildAttendanceManagement,
   buildAttendanceModeSelector,
   buildAttendanceProofLog,
   buildAttendanceProofModal,
+  buildAttendanceProofRejectionModal,
   buildCorrectionModal,
   buildCreateRoundModal,
   buildLeaveCancelConfirmation,
@@ -158,6 +160,12 @@ export class AttendanceInteractionHandler {
       await interaction.showModal(buildCorrectionModal(roundId, members));
       return;
     }
+    if (interaction.customId.startsWith('attendance:proof_reject:')) {
+      await this.requireAdmin(guild, interaction.user.id);
+      const roundId = entityId(interaction.customId, 'attendance:proof_reject:');
+      await interaction.showModal(buildAttendanceProofRejectionModal(roundId, interaction.message.id));
+      return;
+    }
     if (interaction.customId.startsWith('leave:edit:')) {
       const leaveId = entityId(interaction.customId, 'leave:edit:');
       const view = await this.requireLeaveActor(guild, interaction.user.id, leaveId);
@@ -209,6 +217,7 @@ export class AttendanceInteractionHandler {
       const settings = await this.requireSettings(guild.id);
       requireAttendanceChannels(settings);
       const mode = requireAttendanceMode(interaction.values[0]);
+      requireAttendanceProofChannel(settings, mode);
       const now = new Date();
       const eventAt = new Date(now.getTime() + 10 * 60 * 1_000);
       const closesAt = new Date(now.getTime() + 60 * 60 * 1_000);
@@ -222,8 +231,10 @@ export class AttendanceInteractionHandler {
     }
     if (interaction.customId === attendanceComponentIds.recurringType) {
       await this.requireAdmin(guild, interaction.user.id);
-      await this.requireSettings(guild.id);
-      await interaction.showModal(buildRecurringScheduleModal(requireAttendanceMode(interaction.values[0])));
+      const settings = await this.requireSettings(guild.id);
+      const mode = requireAttendanceMode(interaction.values[0]);
+      requireAttendanceProofChannel(settings, mode);
+      await interaction.showModal(buildRecurringScheduleModal(mode));
       return;
     }
     if (interaction.customId !== attendanceComponentIds.adminRoundSelect) return;
@@ -262,6 +273,11 @@ export class AttendanceInteractionHandler {
       );
       return;
     }
+    if (interaction.customId.startsWith(attendanceProofRejectModalPrefix)) {
+      const context = parseAttendanceProofReviewContext(interaction.customId);
+      await this.rejectAttendanceProof(interaction, guild, context.roundId, context.proofMessageId);
+      return;
+    }
     if (interaction.customId === leaveSubmitModalId) {
       await this.submitLeave(interaction, guild);
       return;
@@ -279,6 +295,7 @@ export class AttendanceInteractionHandler {
     await this.requireAdmin(guild, interaction.user.id);
     const settings = await this.requireSettings(guild.id);
     requireAttendanceChannels(settings);
+    requireAttendanceProofChannel(settings, mode);
     const now = new Date();
     const eventAt = mode === 'AIRDROP'
       ? parseDateTimeInput(
@@ -331,6 +348,7 @@ export class AttendanceInteractionHandler {
     await this.requireAdmin(guild, interaction.user.id);
     const settings = await this.requireSettings(guild.id);
     requireAttendanceChannels(settings);
+    requireAttendanceProofChannel(settings, mode);
     const common = {
       guildId: guild.id,
       requestId: interaction.id,
@@ -397,8 +415,8 @@ export class AttendanceInteractionHandler {
     }
     const channel = await fetchSendableChannel(
       this.dependencies.client,
-      round.announcementChannelId ?? settings.attendanceChannelId,
-      'Channel เช็กชื่อ',
+      settings.attendanceLogChannelId,
+      'Channel รายการเช็กชื่อ',
     );
 
     const proofMessage = await channel.send({
@@ -434,6 +452,39 @@ export class AttendanceInteractionHandler {
       'บันทึกรูปหลักฐานแล้ว ระบบนับผลเป็นมาในรอบนี้',
       'Attendance',
     ));
+  }
+
+  private async rejectAttendanceProof(
+    interaction: ModalSubmitInteraction,
+    guild: Guild,
+    roundId: string,
+    proofMessageId: string,
+  ): Promise<void> {
+    await this.requireAdmin(guild, interaction.user.id);
+    const view = await this.dependencies.attendance.rejectProof(
+      guild.id,
+      roundId,
+      proofMessageId,
+      interaction.fields.getTextInputValue(attendanceComponentIds.proofRejectionReason),
+      interaction.user.id,
+      new Date(),
+    );
+    const channel = await fetchSendableChannel(
+      this.dependencies.client,
+      view.proof.logChannelId,
+      'Channel รายการเช็กชื่อ',
+    );
+    const message = await channel.messages.fetch(view.proof.logMessageId);
+    await message.edit(buildAttendanceProofLog(view.round, view.member, view.proof));
+    await interaction.reply({
+      ...buildNotice(
+        'warning',
+        'ปฏิเสธหลักฐานเช็กชื่อแล้ว',
+        'ระบบเปลี่ยนผลเป็นขาด หากรอบยังเปิด สมาชิกสามารถส่งรูปหลักฐานใหม่ได้',
+        'Attendance',
+      ),
+      flags: MessageFlags.Ephemeral,
+    });
   }
 
   private async publishLeavePanel(interaction: ButtonInteraction, guild: Guild): Promise<void> {
@@ -604,6 +655,23 @@ function entityId(customId: string, prefix: string): string {
   return id;
 }
 
+function parseAttendanceProofReviewContext(customId: string): {
+  readonly roundId: string;
+  readonly proofMessageId: string;
+} {
+  const context = customId.slice(attendanceProofRejectModalPrefix.length);
+  const separatorIndex = context.indexOf(':');
+  if (separatorIndex < 0) {
+    throw new ValidationError('รหัสหลักฐานเช็กชื่อไม่ถูกต้อง');
+  }
+  const roundId = entityId(context.slice(0, separatorIndex), '');
+  const proofMessageId = context.slice(separatorIndex + 1);
+  if (!/^\d{17,20}$/u.test(proofMessageId)) {
+    throw new ValidationError('รหัสข้อความหลักฐานเช็กชื่อไม่ถูกต้อง');
+  }
+  return { roundId, proofMessageId };
+}
+
 function parseWeekdays(value: string): number[] {
   const values = value.split(',').map((item) => Number(item.trim()));
   if (values.some((item) => !Number.isInteger(item) || item < 1 || item > 7)) {
@@ -635,6 +703,12 @@ function parseMinuteOffset(value: string, label: string): number {
 function requireAttendanceChannels(settings: GuildSettings): void {
   if (settings.attendanceChannelId === null || settings.leaveChannelId === null) {
     throw new ValidationError('กรุณาตั้งค่า Channel เช็กชื่อและ Channel แจ้งลาก่อน');
+  }
+}
+
+function requireAttendanceProofChannel(settings: GuildSettings, mode: AttendanceMode): void {
+  if (mode === 'AIRDROP' && settings.attendanceLogChannelId === null) {
+    throw new ValidationError('กรุณาตั้งค่า Channel รายการเช็กชื่อก่อนสร้างรอบ Airdrop');
   }
 }
 
