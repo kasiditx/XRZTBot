@@ -1,4 +1,4 @@
-# MiruBot
+# XRZTBot
 
 Discord bot สำหรับบริหารจัดการแก๊ง โดยใช้ Discord เป็นหน้าจอหลักและ PostgreSQL เป็นแหล่งข้อมูลจริง ไม่มีการเชื่อมต่อ FiveM
 
