@@ -8,3 +8,29 @@ coverage/
 .DS_Store
 .serena/
 .neon
+
+# Local AI agent and Codex workspace files
+/.agents/
+/.codex/
+/.claude/
+/.code-review-graph/
+/skills-lock.json
+/AGENTS.md
+/CLAUDE.md
+/CONTEXT.md
+
+# Local requirements, plans, notes, and generated working documents
+/requirements/
+/req/
+/plans/
+/notes/
+/REQUIREMENT.md
+/REQUIREMENTS.md
+/REQ.md
+/PLAN.md
+/NOTES.md
+/TODO.md
+
+# Keep local documentation out of Git, except CSV templates/examples
+/docs/*
+!/docs/*.csv
