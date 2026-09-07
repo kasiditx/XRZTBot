@@ -40,6 +40,8 @@ import {
   attendanceProofRejectModalPrefix,
   attendanceRecurringModalPrefix,
   buildAttendanceAdminPanel,
+  buildAttendanceAnnouncement,
+  buildAttendanceCancellationModal,
   buildAttendanceManagement,
   buildAttendanceModeSelector,
   buildAttendanceProofLog,
@@ -145,6 +147,12 @@ export class AttendanceInteractionHandler {
       await interaction.reply({ ...buildNotice('success', 'เช็กชื่อสำเร็จ', 'รายชื่อผู้มาเข้าร่วมจะอัปเดตอัตโนมัติ', 'Attendance'), flags: MessageFlags.Ephemeral });
       return;
     }
+    if (interaction.customId.startsWith('attendance:cancel:')) {
+      await this.requireAdmin(guild, interaction.user.id);
+      const roundId = entityId(interaction.customId, 'attendance:cancel:');
+      await interaction.showModal(buildAttendanceCancellationModal(roundId));
+      return;
+    }
     if (interaction.customId.startsWith('attendance:correct:')) {
       await this.requireAdmin(guild, interaction.user.id);
       const roundId = entityId(interaction.customId, 'attendance:correct:');
@@ -239,6 +247,10 @@ export class AttendanceInteractionHandler {
 
   private async handleModal(interaction: ModalSubmitInteraction): Promise<void> {
     const guild = requireGuild(interaction.guild);
+    if (interaction.customId.startsWith('attendance:cancel_modal:')) {
+      await this.cancelRound(interaction, guild, entityId(interaction.customId, 'attendance:cancel_modal:'));
+      return;
+    }
     if (interaction.customId.startsWith('leave:cancel_modal:')) {
       requireCancellationConfirmation(interaction);
       const isAdmin = await this.requireMemberOrAdmin(guild, interaction.user.id);
@@ -578,6 +590,30 @@ export class AttendanceInteractionHandler {
     await interaction.reply({ ...buildNotice('success', 'แก้ผลย้อนหลังแล้ว', 'ผลเช็กชื่อและ Audit log ได้รับการบันทึกเรียบร้อย', 'Attendance'), flags: MessageFlags.Ephemeral });
   }
 
+  private async cancelRound(
+    interaction: ModalSubmitInteraction,
+    guild: Guild,
+    roundId: string,
+  ): Promise<void> {
+    requireCancellationConfirmation(interaction);
+    await this.requireAdmin(guild, interaction.user.id);
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const round = await this.dependencies.attendance.cancelRound(
+      guild.id,
+      roundId,
+      interaction.user.id,
+      interaction.fields.getTextInputValue('cancellation:reason'),
+      new Date(),
+    );
+    await this.refreshRound(guild.id, round.id);
+    await interaction.editReply(buildNotice(
+      'success',
+      'ยกเลิกรอบเช็กชื่อแล้ว',
+      'ปิดการเช็กชื่อและงานอัตโนมัติของรอบนี้แล้ว โดยเก็บผลเดิมไว้เป็นประวัติ',
+      'Attendance',
+    ));
+  }
+
   private async requireLeaveActor(guild: Guild, discordUserId: string, leaveId: string) {
     const [view, isAdmin] = await Promise.all([
       this.dependencies.attendance.getLeave(guild.id, leaveId),
@@ -644,6 +680,18 @@ export class AttendanceInteractionHandler {
       message: buildLeaveLog(view),
     });
     await this.dependencies.attendance.markLeavePublished(view.leave.guildId, view.leave.id, channel.id, replacement.id);
+  }
+
+  private async refreshRound(guildId: string, roundId: string): Promise<void> {
+    const view = await this.dependencies.attendance.getRoundView(guildId, roundId);
+    if (view.round.announcementChannelId === null || view.round.announcementMessageId === null) return;
+    const channel = await fetchSendableChannel(
+      this.dependencies.client,
+      view.round.announcementChannelId,
+      'Channel เช็กชื่อ',
+    );
+    const message = await channel.messages.fetch(view.round.announcementMessageId).catch(() => null);
+    if (message !== null) await message.edit(buildAttendanceAnnouncement(view));
   }
 }
 

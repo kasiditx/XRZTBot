@@ -201,7 +201,7 @@ export class AttendanceService {
     return this.db
       .select()
       .from(attendanceRounds)
-      .where(and(eq(attendanceRounds.guildId, guildId), ne(attendanceRounds.status, 'CANCELLED')))
+      .where(eq(attendanceRounds.guildId, guildId))
       .orderBy(desc(attendanceRounds.opensAt))
       .limit(limit);
   }
@@ -513,6 +513,55 @@ export class AttendanceService {
     });
   }
 
+  public async cancelRound(
+    guildId: string,
+    roundId: string,
+    actorDiscordUserId: string,
+    reason: string,
+    now: Date,
+  ): Promise<AttendanceRound> {
+    const cancellationReason = requireText(reason, 'เหตุผลที่ยกเลิก', 2, 500);
+    return this.db.transaction(async (tx) => {
+      const round = await lockRound(tx, guildId, roundId);
+      if (round.status === 'CANCELLED') return round;
+
+      const proofs = await tx
+        .select({ id: attendanceProofs.id })
+        .from(attendanceProofs)
+        .where(and(eq(attendanceProofs.guildId, guildId), eq(attendanceProofs.roundId, roundId)));
+      const [cancelled] = await tx
+        .update(attendanceRounds)
+        .set({
+          status: 'CANCELLED',
+          cancelledAt: now,
+          cancelledByDiscordUserId: actorDiscordUserId,
+          cancellationReason,
+          updatedAt: now,
+        })
+        .where(eq(attendanceRounds.id, roundId))
+        .returning();
+      if (cancelled === undefined) {
+        throw new Error('Attendance cancellation did not return a row');
+      }
+      await queueRoundRefresh(tx, guildId, roundId, now);
+      for (const proof of proofs) {
+        await queueProofRefresh(tx, guildId, proof.id, now);
+      }
+      await writeAttendanceAudit(
+        tx,
+        guildId,
+        actorDiscordUserId,
+        'ATTENDANCE_ROUND_CANCELLED',
+        'ATTENDANCE_ROUND',
+        roundId,
+        round,
+        cancelled,
+        cancellationReason,
+      );
+      return cancelled;
+    });
+  }
+
   public async submitLeave(input: SubmitLeaveInput): Promise<LeaveView> {
     const reason = requireText(input.reason, 'เหตุผลการลา', 2, 500);
     validateLeaveDates(input.startsOn, input.endsOn);
@@ -684,7 +733,7 @@ export class AttendanceService {
       .innerJoin(members, eq(attendanceRecords.memberId, members.id))
       .where(eq(attendanceRecords.roundId, roundId))
       .orderBy(asc(members.inGameName));
-    const leaveRows = round.status === 'CLOSED'
+    const leaveRows = round.status === 'CLOSED' || round.status === 'CANCELLED'
       ? []
       : await this.db
           .select({ leave: leaves, discordUserId: members.discordUserId, inGameName: members.inGameName })
@@ -735,6 +784,9 @@ export class AttendanceService {
     const normalizedReason = requireText(reason, 'เหตุผลการแก้ไข', 2, 500);
     return this.db.transaction(async (tx) => {
       const round = await lockRound(tx, guildId, roundId);
+      if (round.status === 'CANCELLED') {
+        throw new ConflictError('รอบเช็กชื่อนี้ถูกยกเลิกแล้ว');
+      }
       if (round.status !== 'CLOSED' && now < round.closesAt) {
         throw new ConflictError('แก้ผลย้อนหลังได้เมื่อรอบเช็กชื่อปิดแล้วเท่านั้น');
       }
@@ -790,6 +842,35 @@ export class AttendanceService {
       .update(attendanceRounds)
       .set({ announcementChannelId: channelId, announcementMessageId: messageId, updatedAt: new Date() })
       .where(and(eq(attendanceRounds.guildId, guildId), eq(attendanceRounds.id, roundId)));
+  }
+
+  public async getProof(guildId: string, proofId: string): Promise<AttendanceProofView> {
+    const [row] = await this.db
+      .select({
+        proof: attendanceProofs,
+        record: attendanceRecords,
+        round: attendanceRounds,
+        discordUserId: members.discordUserId,
+        inGameName: members.inGameName,
+      })
+      .from(attendanceProofs)
+      .innerJoin(attendanceRounds, eq(attendanceProofs.roundId, attendanceRounds.id))
+      .innerJoin(members, eq(attendanceProofs.memberId, members.id))
+      .innerJoin(attendanceRecords, and(
+        eq(attendanceProofs.roundId, attendanceRecords.roundId),
+        eq(attendanceProofs.memberId, attendanceRecords.memberId),
+      ))
+      .where(and(eq(attendanceProofs.guildId, guildId), eq(attendanceProofs.id, proofId)))
+      .limit(1);
+    if (row === undefined) {
+      throw new NotFoundError('ไม่พบหลักฐานเช็กชื่อนี้');
+    }
+    return {
+      proof: row.proof,
+      record: row.record,
+      round: row.round,
+      member: { discordUserId: row.discordUserId, inGameName: row.inGameName },
+    };
   }
 
   public async markLeavePublished(guildId: string, leaveId: string, channelId: string, messageId: string): Promise<void> {
@@ -1191,6 +1272,16 @@ async function queueRoundRefresh(tx: Transaction, guildId: string, roundId: stri
     jobType: 'ATTENDANCE_REFRESH',
     deduplicationKey: `attendance:${roundId}:refresh:${randomUUID()}`,
     payload: { roundId },
+    runAt,
+  });
+}
+
+async function queueProofRefresh(tx: Transaction, guildId: string, proofId: string, runAt: Date): Promise<void> {
+  await tx.insert(scheduledJobs).values({
+    guildId,
+    jobType: 'ATTENDANCE_PROOF_REFRESH',
+    deduplicationKey: `attendance-proof:${proofId}:refresh:${randomUUID()}`,
+    payload: { proofId },
     runAt,
   });
 }

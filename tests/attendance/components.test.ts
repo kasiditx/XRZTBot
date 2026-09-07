@@ -1,5 +1,6 @@
 import {
   buildAttendanceAnnouncement,
+  buildAttendanceCancellationModal,
   buildAttendanceModeSelector,
   buildAttendanceProofLog,
   buildAttendanceProofModal,
@@ -80,6 +81,59 @@ describe('attendance Discord components', () => {
     expect(general.components[0]?.toJSON().components[0]).toMatchObject({ label: 'เช็กชื่อ' });
   });
 
+  it('adds round cancellation with a required reason and confirmation', () => {
+    const payload = buildAttendanceAnnouncement(roundView('GENERAL'));
+    const buttons = payload.components[0]?.toJSON().components;
+    const modal = buildAttendanceCancellationModal(AIRDROP_ROUND_ID).toJSON();
+
+    expect(buttons?.[1]).toMatchObject({
+      custom_id: `attendance:cancel:${AIRDROP_ROUND_ID}`,
+      label: 'ยกเลิกรอบ',
+      disabled: false,
+    });
+    expect(modal.custom_id).toBe(`attendance:cancel_modal:${AIRDROP_ROUND_ID}`);
+    expect(modal.components).toHaveLength(2);
+    expect(modal.components[0]).toMatchObject({
+      components: [{ custom_id: 'cancellation:reason', required: true }],
+    });
+    expect(modal.components[1]).toMatchObject({
+      components: [{ custom_id: 'cancellation:confirm', required: true }],
+    });
+  });
+
+  it('shows a cancelled round without counting its preserved member results', () => {
+    const view = roundView('GENERAL');
+    const cancelledAt = new Date('2026-08-27T14:05:00.000Z');
+    const payload = buildAttendanceAnnouncement({
+      ...view,
+      round: {
+        ...view.round,
+        status: 'CANCELLED',
+        cancelledAt,
+        cancelledByDiscordUserId: '100000000000000001',
+        cancellationReason: 'เปิดรอบผิดเวลา',
+        updatedAt: cancelledAt,
+      },
+      present: [{
+        memberId: 'member-1',
+        discordUserId: '200000000000000001',
+        inGameName: 'Alpha',
+        checkedInAt: new Date('2026-08-27T14:01:00.000Z'),
+        proofChannelId: null,
+        proofMessageId: null,
+        result: 'PRESENT',
+      }],
+    });
+    const embed = payload.embeds[0]?.toJSON();
+    const buttons = payload.components[0]?.toJSON().components;
+
+    expect(embed?.color).toBe(0xed4245);
+    expect(embed?.footer?.text).toContain('ไม่นำผลไปนับ');
+    expect(embed?.description).toContain('เปิดรอบผิดเวลา');
+    expect(embed?.description).not.toContain('Alpha');
+    expect(buttons?.every((button) => 'disabled' in button && button.disabled === true)).toBe(true);
+  });
+
   it('lets Admin reject an Airdrop proof with a required reason', () => {
     const round = roundView('AIRDROP').round;
     const pending = buildAttendanceProofLog(round, {
@@ -138,6 +192,9 @@ function roundView(mode: 'AIRDROP' | 'GENERAL'): AttendanceRoundView {
       sourceScheduleId: null,
       announcementChannelId: null,
       announcementMessageId: null,
+      cancelledAt: null,
+      cancelledByDiscordUserId: null,
+      cancellationReason: null,
       createdByDiscordUserId: '100000000000000001',
       createdAt: now,
       updatedAt: now,

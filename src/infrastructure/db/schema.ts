@@ -321,6 +321,9 @@ export const attendanceRounds = pgTable(
     sourceScheduleId: uuid('source_schedule_id'),
     announcementChannelId: text('announcement_channel_id'),
     announcementMessageId: text('announcement_message_id'),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true, mode: 'date' }),
+    cancelledByDiscordUserId: text('cancelled_by_discord_user_id'),
+    cancellationReason: text('cancellation_reason'),
     createdByDiscordUserId: text('created_by_discord_user_id').notNull(),
     ...auditColumns,
   },
@@ -331,6 +334,17 @@ export const attendanceRounds = pgTable(
     check('attendance_rounds_event_in_window', sql`${table.eventAt} IS NULL OR (${table.eventAt} >= ${table.opensAt} AND ${table.eventAt} <= ${table.closesAt})`),
     check('attendance_rounds_valid_window', sql`${table.closesAt} > ${table.opensAt}`),
     check('attendance_rounds_date_format', sql`${table.attendanceDate} ~ '^\\d{4}-\\d{2}-\\d{2}$'`),
+    check('attendance_rounds_cancellation_complete', sql`(
+      ${table.status} <> 'CANCELLED'
+      AND ${table.cancelledAt} IS NULL
+      AND ${table.cancelledByDiscordUserId} IS NULL
+      AND ${table.cancellationReason} IS NULL
+    ) OR (
+      ${table.status} = 'CANCELLED'
+      AND ${table.cancelledAt} IS NOT NULL
+      AND ${table.cancelledByDiscordUserId} IS NOT NULL
+      AND length(trim(${table.cancellationReason})) > 0
+    )`),
   ],
 );
 

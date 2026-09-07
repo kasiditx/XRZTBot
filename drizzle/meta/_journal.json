@@ -183,6 +183,13 @@
       "when": 1788756180553,
       "tag": "0025_fancy_red_hulk",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1788757109638,
+      "tag": "0026_busy_maximus",
+      "breakpoints": true
     }
   ]
 }

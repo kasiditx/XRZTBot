@@ -23,7 +23,7 @@ import {
   buildParticipationSummaryEmbeds,
   buildSubmissionLog,
 } from './activity-components.js';
-import { buildAttendanceAnnouncement, buildLeaveLog } from './attendance-components.js';
+import { buildAttendanceAnnouncement, buildAttendanceProofLog, buildLeaveLog } from './attendance-components.js';
 import { buildFineAnnouncement, buildFineProofLog } from './fine-components.js';
 import {
   buildTreasuryDashboard,
@@ -58,6 +58,7 @@ const activityJobSchema = z.object({
 });
 
 const attendanceJobSchema = z.object({ roundId: z.string().uuid() });
+const attendanceProofJobSchema = z.object({ proofId: z.string().uuid() });
 const attendanceScheduleJobSchema = z.object({ scheduleId: z.string().uuid() });
 const leaveJobSchema = z.object({ leaveId: z.string().uuid() });
 const fineJobSchema = z.object({ fineId: z.string().uuid() });
@@ -96,6 +97,16 @@ export function createDiscordJobHandlers(
         const channel = await fetchSendableChannel(client, view.submission.logChannelId, 'Channel Log กิจกรรม');
         const message = await channel.messages.fetch(view.submission.logMessageId);
         await message.edit(buildSubmissionLog(view));
+      },
+    ],
+    [
+      'ATTENDANCE_PROOF_REFRESH',
+      async (job) => {
+        const { proofId } = attendanceProofJobSchema.parse(job.payload);
+        const view = await attendance.getProof(job.guildId, proofId);
+        const channel = await fetchSendableChannel(client, view.proof.logChannelId, 'Channel รายการเช็กชื่อ');
+        const message = await channel.messages.fetch(view.proof.logMessageId);
+        await message.edit(buildAttendanceProofLog(view.round, view.member, view.proof));
       },
     ],
     [

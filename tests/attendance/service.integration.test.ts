@@ -328,6 +328,97 @@ describeWithDatabase('AttendanceService PostgreSQL integration', () => {
     )).rejects.toBeInstanceOf(ConflictError);
   });
 
+  it('cancels a round idempotently, preserves history, and disables later lifecycle changes', async () => {
+    const eventAt = new Date('2026-09-03T14:00:00.000Z');
+    const cancelledRound = await service.createRound({
+      guildId,
+      requestId: 'airdrop-round-cancel',
+      title: 'Airdrop ที่เปิดผิดเวลา',
+      mode: 'AIRDROP',
+      eventAt,
+      ...buildAirdropRoundTimes(eventAt, timezone, 10, 10),
+      actorDiscordUserId: alpha,
+      now: new Date('2026-09-03T13:51:00.000Z'),
+    });
+    await service.checkInWithProof(
+      guildId,
+      cancelledRound.id,
+      alpha,
+      {
+        attachmentId: 'cancelled-proof-attachment',
+        channelId: 'cancelled-proof-channel',
+        messageId: '300000000000000004',
+        sha256: 'd'.repeat(64),
+      },
+      new Date('2026-09-03T13:52:00.000Z'),
+    );
+
+    const cancelledAt = new Date('2026-09-03T13:53:00.000Z');
+    const cancelled = await service.cancelRound(
+      guildId,
+      cancelledRound.id,
+      alpha,
+      'เปิดรอบผิดเวลา',
+      cancelledAt,
+    );
+    const duplicate = await service.cancelRound(
+      guildId,
+      cancelledRound.id,
+      alpha,
+      'เปิดรอบผิดเวลา',
+      cancelledAt,
+    );
+
+    expect(cancelled).toMatchObject({
+      status: 'CANCELLED',
+      cancelledAt,
+      cancelledByDiscordUserId: alpha,
+      cancellationReason: 'เปิดรอบผิดเวลา',
+    });
+    expect(duplicate.cancelledAt).toEqual(cancelledAt);
+    const preserved = await service.getRoundView(guildId, cancelledRound.id);
+    expect(preserved.present.map((member) => member.inGameName)).toEqual(['Alpha']);
+    const [proof] = await db.select().from(attendanceProofs).where(eq(attendanceProofs.roundId, cancelledRound.id));
+    expect(proof).toBeDefined();
+    expect((await service.getProof(guildId, proof!.id)).round.status).toBe('CANCELLED');
+    await expect(service.checkInWithProof(
+      guildId,
+      cancelledRound.id,
+      beta,
+      {
+        attachmentId: 'cancelled-proof-late',
+        channelId: 'cancelled-proof-channel',
+        messageId: '300000000000000005',
+        sha256: 'e'.repeat(64),
+      },
+      new Date('2026-09-03T13:54:00.000Z'),
+    )).rejects.toBeInstanceOf(ConflictError);
+    expect((await service.openRound(guildId, cancelledRound.id, cancelledAt)).status).toBe('CANCELLED');
+    expect((await service.closeRound(
+      guildId,
+      cancelledRound.id,
+      new Date('2026-09-03T14:11:00.000Z'),
+    )).status).toBe('CANCELLED');
+    await expect(service.correctAttendance(
+      guildId,
+      cancelledRound.id,
+      beta,
+      'PRESENT',
+      'พยายามแก้รอบที่ยกเลิก',
+      alpha,
+      new Date('2026-09-03T14:12:00.000Z'),
+    )).rejects.toBeInstanceOf(ConflictError);
+
+    const jobs = await db.select().from(scheduledJobs).where(and(
+      eq(scheduledJobs.guildId, guildId),
+      eq(scheduledJobs.jobType, 'ATTENDANCE_PROOF_REFRESH'),
+    ));
+    expect(jobs.some((job) => (job.payload as { proofId?: string }).proofId === proof!.id)).toBe(true);
+    expect((await service.listRounds(guildId, 100)).some((candidate) => (
+      candidate.id === cancelledRound.id && candidate.status === 'CANCELLED'
+    ))).toBe(true);
+  });
+
   it('materializes every configured Airdrop time on the same weekday', async () => {
     const common = {
       guildId,
@@ -359,5 +450,22 @@ describeWithDatabase('AttendanceService PostgreSQL integration', () => {
     expect(midnightRound).toMatchObject({ mode: 'AIRDROP' });
     expect(midnightRound?.opensAt.toISOString()).toBe('2026-08-30T16:50:00.000Z');
     expect(midnightRound?.closesAt.toISOString()).toBe('2026-08-30T17:10:00.000Z');
+  });
+
+  it('allows Admin to cancel a closed daily round without deleting its historical records', async () => {
+    const before = await service.getRoundView(guildId, round.id);
+    const cancelled = await service.cancelRound(
+      guildId,
+      round.id,
+      alpha,
+      'ยกเลิกผลย้อนหลังทั้งรอบ',
+      new Date('2026-09-04T00:00:00.000Z'),
+    );
+    const after = await service.getRoundView(guildId, round.id);
+
+    expect(cancelled.status).toBe('CANCELLED');
+    expect(after.present).toEqual(before.present);
+    expect(after.leave).toEqual(before.leave);
+    expect(after.absent).toEqual(before.absent);
   });
 });

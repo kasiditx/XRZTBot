@@ -3,7 +3,7 @@ import 'dotenv/config';
 import { and, asc, eq, gt, isNotNull } from 'drizzle-orm';
 import { REST, Routes } from 'discord.js';
 import { createDatabase } from '../dist/infrastructure/db/client.js';
-import { activitySubmissions, depositRequests, finePaymentProofs, fines, guildSettings, leaves, treasuryWithdrawalRequests, weeklyCollections, weeklyPaymentProofs, withdrawalRequests } from '../dist/infrastructure/db/schema.js';
+import { activitySubmissions, attendanceProofs, attendanceRounds, depositRequests, finePaymentProofs, fines, guildSettings, leaves, treasuryWithdrawalRequests, weeklyCollections, weeklyPaymentProofs, withdrawalRequests } from '../dist/infrastructure/db/schema.js';
 import { ActivityService } from '../dist/modules/activities/service.js';
 import { AttendanceService } from '../dist/modules/attendance/service.js';
 import { DepositService } from '../dist/modules/deposits/service.js';
@@ -12,7 +12,7 @@ import { TreasuryWithdrawalService } from '../dist/modules/treasury-withdrawals/
 import { WeeklyDuesService } from '../dist/modules/weekly-dues/service.js';
 import { WithdrawalService } from '../dist/modules/withdrawals/service.js';
 import { buildSubmissionLog } from '../dist/infrastructure/discord/activity-components.js';
-import { buildLeaveLog } from '../dist/infrastructure/discord/attendance-components.js';
+import { buildAttendanceAnnouncement, buildAttendanceProofLog, buildLeaveLog } from '../dist/infrastructure/discord/attendance-components.js';
 import { buildFineAnnouncement, buildFineProofLog } from '../dist/infrastructure/discord/fine-components.js';
 import { buildDepositLog, buildWithdrawalLog } from '../dist/infrastructure/discord/stock-components.js';
 import { buildTreasuryWithdrawalRequestLog } from '../dist/infrastructure/discord/treasury-components.js';
@@ -33,6 +33,8 @@ const weekly = new WeeklyDuesService(db);
 const withdrawals = new WithdrawalService(db);
 const targets = [
   ['activity', activitySubmissions, 'logChannelId', 'logMessageId', (id) => activities.getSubmission(guildId, id), buildSubmissionLog],
+  ['attendance-round', attendanceRounds, 'announcementChannelId', 'announcementMessageId', (id) => attendance.getRoundView(guildId, id), buildAttendanceAnnouncement],
+  ['attendance-proof', attendanceProofs, 'logChannelId', 'logMessageId', (id) => attendance.getProof(guildId, id), (view) => buildAttendanceProofLog(view.round, view.member, view.proof)],
   ['leave', leaves, 'publicChannelId', 'publicMessageId', (id) => attendance.getLeave(guildId, id), buildLeaveLog],
   ['fine', fines, 'publicChannelId', 'publicMessageId', (id) => fineService.get(guildId, id), buildFineAnnouncement],
   ['fine-proof', finePaymentProofs, 'logChannelId', 'logMessageId', (id) => fineService.getProof(guildId, id), buildFineProofLog],

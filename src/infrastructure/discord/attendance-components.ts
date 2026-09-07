@@ -9,6 +9,7 @@ import {
   TextInputStyle,
 } from 'discord.js';
 import { buildEvidenceInputLabel, type EvidenceInputMode } from './evidence-images.js';
+import { buildReasonedCancellationModal } from './cancellation-confirmation.js';
 import { MiruEmbedBuilder as EmbedBuilder, formatPanelText } from './theme.js';
 import type {
   AttendanceRound,
@@ -167,12 +168,13 @@ export function buildAttendanceProofModal(roundId: string, evidenceMode: Evidenc
 export function buildAttendanceAnnouncement(view: AttendanceRoundView) {
   const { round } = view;
   const isOpen = round.status === 'OPEN';
+  const isCancelled = round.status === 'CANCELLED';
   const embeds = buildAttendanceDescriptions(view).map((description, index) => new EmbedBuilder()
-    .setColor(round.status === 'CLOSED' ? 0x747f8d : isOpen ? 0x57f287 : 0xfee75c)
-    .setTitle(`✅ ${round.title}${index === 0 ? '' : ' (ต่อ)'}`)
+    .setColor(isCancelled ? 0xed4245 : round.status === 'CLOSED' ? 0x747f8d : isOpen ? 0x57f287 : 0xfee75c)
+    .setTitle(`${isCancelled ? '❌' : '✅'} ${round.title}${index === 0 ? '' : ' (ต่อ)'}`)
     .setDescription(description)
-    .setFooter({ text: round.status === 'CLOSED' ? 'สรุปผลรอบนี้แล้ว' : `สถานะ: ${thaiRoundStatus(round.status)} · รายชื่ออัปเดตอัตโนมัติ` })
-    .setTimestamp());
+    .setFooter({ text: isCancelled ? 'ยกเลิกรอบแล้ว · ไม่นำผลไปนับ' : round.status === 'CLOSED' ? 'สรุปผลรอบนี้แล้ว' : `สถานะ: ${thaiRoundStatus(round.status)} · รายชื่ออัปเดตอัตโนมัติ` })
+    .setTimestamp(round.updatedAt));
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
@@ -181,6 +183,7 @@ export function buildAttendanceAnnouncement(view: AttendanceRoundView) {
       .setEmoji('✅')
       .setStyle(ButtonStyle.Success)
       .setDisabled(!isOpen),
+    buildAttendanceCancellationButton(round.id, isCancelled),
   );
   return { embeds, components: [row] };
 }
@@ -193,8 +196,16 @@ export function buildAttendanceManagement(view: AttendanceRoundView) {
       .setLabel('แก้ผลย้อนหลัง')
       .setStyle(ButtonStyle.Danger)
       .setDisabled(view.round.status !== 'CLOSED'),
+    buildAttendanceCancellationButton(view.round.id, view.round.status === 'CANCELLED'),
   );
   return { embeds: message.embeds, components: [correction] };
+}
+
+export function buildAttendanceCancellationModal(roundId: string): ModalBuilder {
+  return buildReasonedCancellationModal(
+    `attendance:cancel_modal:${roundId}`,
+    'ยกเลิกรอบเช็กชื่อ',
+  );
 }
 
 export function buildAttendanceProofLog(
@@ -208,15 +219,19 @@ export function buildAttendanceProofLog(
   },
 ) {
   const isRejected = review?.status === 'REJECTED';
+  const isCancelled = round.status === 'CANCELLED';
   const embed = new EmbedBuilder()
-    .setColor(isRejected ? 0xed4245 : 0x57f287)
-    .setTitle(isRejected ? '❌ ปฏิเสธหลักฐานเช็กชื่อ Airdrop' : '📸 หลักฐานเช็กชื่อ Airdrop')
+    .setColor(isRejected || isCancelled ? 0xed4245 : 0x57f287)
+    .setTitle(isCancelled ? '❌ ยกเลิกรอบเช็กชื่อ Airdrop' : isRejected ? '❌ ปฏิเสธหลักฐานเช็กชื่อ Airdrop' : '📸 หลักฐานเช็กชื่อ Airdrop')
     .addFields(
       { name: 'รายการ', value: round.title },
       { name: 'สมาชิก', value: `<@${member.discordUserId}> (${member.inGameName})` },
       { name: 'ข้อกำหนด', value: 'รูปต้องเห็นตัวละครของตัวเองและรายชื่อในวอ' },
     )
-    .setTimestamp(review?.decidedAt ?? undefined);
+    .setTimestamp(round.cancelledAt ?? review?.decidedAt ?? undefined);
+  if (isCancelled) {
+    embed.addFields({ name: 'เหตุผลที่ยกเลิกรอบ', value: round.cancellationReason ?? '—' });
+  }
   if (isRejected && review.rejectionReason !== null && review.decidedByDiscordUserId !== null) {
     embed.addFields(
       { name: 'เหตุผลที่ปฏิเสธ', value: review.rejectionReason },
@@ -228,9 +243,9 @@ export function buildAttendanceProofLog(
     components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(`attendance:proof_reject:${round.id}`)
-        .setLabel('ปฏิเสธ')
+        .setLabel(isCancelled ? 'ยกเลิกรอบแล้ว' : 'ปฏิเสธ')
         .setStyle(ButtonStyle.Danger)
-        .setDisabled(isRejected),
+        .setDisabled(isRejected || isCancelled),
     )],
   };
 }
@@ -389,13 +404,29 @@ function formatLeaveMembers(view: AttendanceRoundView): string {
 function buildAttendanceDescriptions(view: AttendanceRoundView): string[] {
   const { round } = view;
   const isClosed = round.status === 'CLOSED';
-  const lines = [
+  const roundDetails = [
     `**รูปแบบ:** ${round.mode === 'AIRDROP' ? 'รอบ Airdrop' : 'เช็กชื่อทั่วไป'}`,
     `**วันที่:** ${round.attendanceDate}`,
     ...(round.eventAt === null ? [] : [`**เวลา Airdrop:** ${discordTimestamp(round.eventAt, 'F')}`]),
     `**เปิด:** ${discordTimestamp(round.opensAt, 'F')}`,
     `**ปิด:** ${discordTimestamp(round.closesAt, 'F')}`,
     ...(round.mode === 'AIRDROP' ? ['', '📸 แนบรูปที่เห็นตัวละครของตัวเองและรายชื่อในวอ รูปที่ใช้ในรอบอื่นแล้วจะส่งซ้ำไม่ได้'] : []),
+  ];
+  if (round.status === 'CANCELLED') {
+    const cancelledBy = round.cancelledByDiscordUserId === null
+      ? 'ไม่ทราบผู้ยกเลิก'
+      : `<@${round.cancelledByDiscordUserId}>`;
+    return splitDiscordDescription([
+      ...roundDetails,
+      '',
+      `**ยกเลิกรอบโดย:** ${cancelledBy}`,
+      `**เหตุผล:** ${round.cancellationReason ?? '—'}`,
+      '',
+      '**ผลของรอบนี้ถูกยกเลิกและไม่นำไปนับ**',
+    ], '**รายละเอียด (ต่อ)**');
+  }
+  const lines = [
+    ...roundDetails,
     '',
     `**มา ${String(view.present.length)} คน**`,
     formatAttendanceMembers(view.present, true, round.guildId),
@@ -438,9 +469,19 @@ function thaiRoundStatus(status: AttendanceRound['status']): string {
 }
 
 function attendanceButtonLabel(round: AttendanceRound): string {
+  if (round.status === 'CANCELLED') return 'ยกเลิกแล้ว';
   if (round.status === 'CLOSED') return 'ปิดแล้ว';
   if (round.status !== 'OPEN') return 'ยังไม่เปิด';
   return round.mode === 'AIRDROP' ? 'แนบรูปเช็กชื่อ' : 'เช็กชื่อ';
+}
+
+function buildAttendanceCancellationButton(roundId: string, disabled: boolean): ButtonBuilder {
+  return new ButtonBuilder()
+    .setCustomId(`attendance:cancel:${roundId}`)
+    .setLabel(disabled ? 'ยกเลิกแล้ว' : 'ยกเลิกรอบ')
+    .setEmoji('🗑️')
+    .setStyle(ButtonStyle.Danger)
+    .setDisabled(disabled);
 }
 
 function discordTimestamp(value: Date, style: 'F' | 't'): string {
