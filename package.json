@@ -19,7 +19,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
-    "ops:migrate-finance-logs": "npm run build && node scripts/migrate-finance-logs.mjs"
+    "ops:migrate-finance-logs": "npm run build && node scripts/migrate-finance-logs.mjs",
+    "ops:refresh-review-logs": "npm run build && node scripts/refresh-review-logs.mjs"
   },
   "dependencies": {
     "@neon/config": "^1.2.0",

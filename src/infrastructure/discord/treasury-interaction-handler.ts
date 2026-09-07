@@ -1,4 +1,5 @@
 import type pino from 'pino';
+import { cancellationConfirmationRow, requireCancellationConfirmation } from './cancellation-confirmation.js';
 import {
   MessageFlags,
   type ButtonInteraction,
@@ -143,7 +144,7 @@ export class TreasuryInteractionHandler {
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
       await interaction.showModal(buildTreasuryWithdrawalRejectionModal(
         entityId(interaction.customId, 'treasury:withdrawal_reject:'),
-      ));
+      ).addComponents(cancellationConfirmationRow()));
       return;
     }
     if (interaction.customId.startsWith('treasury:withdrawal_cancel:')) {
@@ -234,16 +235,19 @@ export class TreasuryInteractionHandler {
     guild: Guild,
     requestId: string,
   ): Promise<void> {
+    requireCancellationConfirmation(interaction);
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const view = await this.dependencies.treasuryWithdrawals.reject(
       guild.id,
       requestId,
       interaction.user.id,
       interaction.fields.getTextInputValue(treasuryComponentIds.withdrawalRejectionReason),
       new Date(),
+      hasCapability(await this.resolveCurrentAuthority(guild, interaction.user.id), 'FINANCIAL_REVERSE'),
     );
     await this.updateWithdrawalRequestLog(view);
-    await interaction.reply({ ...buildNotice('warning', 'ปฏิเสธคำขอเบิกเงินแล้ว', 'ระบบอัปเดตสถานะคำขอและ Log เรียบร้อย', 'Treasury Withdrawal'), flags: MessageFlags.Ephemeral });
+    await interaction.editReply(buildNotice('warning', 'ปฏิเสธ/ยกเลิกคำขอเบิกเงินแล้ว', 'ระบบอัปเดตสถานะคำขอและยอดเงินเรียบร้อย', 'Treasury Withdrawal'));
   }
 
   private async persistManualEntry(

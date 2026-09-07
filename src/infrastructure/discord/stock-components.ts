@@ -274,7 +274,7 @@ export function buildDepositLog(view: DepositRequestView, attachmentUrl?: string
   if (attachmentUrl !== undefined) embed.setImage(attachmentUrl);
   return {
     embeds: [embed],
-    components: depositActions(view.request.id, view.request.status !== 'PENDING'),
+    components: depositActions(view.request.id, view.request.status !== 'PENDING', view.request.status === 'APPROVED'),
   };
 }
 
@@ -380,9 +380,9 @@ export function buildWithdrawalLog(view: WithdrawalRequestView) {
     .setDisabled(request.status === 'FULFILLED' || request.status === 'CANCELLED');
   const rejectionButton = new ButtonBuilder()
     .setCustomId(`stock:withdrawal_reject:${request.id}`)
-    .setLabel(request.status === 'CANCELLED' ? 'ปฏิเสธแล้ว' : 'ปฏิเสธ')
+    .setLabel(request.status === 'PENDING' ? 'ปฏิเสธ' : 'ยกเลิก/คืนยอด Stock')
     .setStyle(ButtonStyle.Danger)
-    .setDisabled(request.status !== 'PENDING');
+    .setDisabled(request.status === 'CANCELLED');
   return {
     embeds: [summaryEmbed, itemsEmbed],
     components: [new ActionRowBuilder<ButtonBuilder>().addComponents(fulfillmentButton, rejectionButton)],
@@ -534,10 +534,10 @@ function depositItemFields(items: readonly DepositRequestView['items'][number][]
   return fields;
 }
 
-function depositActions(requestId: string, disabled: boolean): ActionRowBuilder<ButtonBuilder>[] {
+function depositActions(requestId: string, disabled: boolean, approved = false): ActionRowBuilder<ButtonBuilder>[] {
   return [new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(`stock:deposit_approve:${requestId}`).setLabel('อนุมัติรับเข้า Stock').setStyle(ButtonStyle.Success).setDisabled(disabled),
-    new ButtonBuilder().setCustomId(`stock:deposit_reject:${requestId}`).setLabel('ปฏิเสธ').setStyle(ButtonStyle.Danger).setDisabled(disabled),
+    new ButtonBuilder().setCustomId(`stock:deposit_reject:${requestId}`).setLabel(approved ? 'ยกเลิก/หักยอด Stock' : 'ปฏิเสธ').setStyle(ButtonStyle.Danger).setDisabled(disabled && !approved),
   )];
 }
 

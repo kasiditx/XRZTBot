@@ -615,7 +615,9 @@ export class AttendanceService {
     isAdmin: boolean,
     timezone: string,
     now: Date,
+    reason = 'ยกเลิกใบลา',
   ): Promise<LeaveView> {
+    const cancellationReason = requireText(reason, 'เหตุผลที่ยกเลิก', 2, 500);
     await this.db.transaction(async (tx) => {
       const context = await lockLeaveContext(tx, guildId, leaveId);
       requireLeaveOwnerOrAdmin(context.discordUserId, actorDiscordUserId, isAdmin);
@@ -631,12 +633,23 @@ export class AttendanceService {
         .set({ status: 'CANCELLED', cancelledAt: now, updatedAt: now })
         .where(eq(leaves.id, leaveId))
         .returning();
-      await writeAttendanceAudit(tx, guildId, actorDiscordUserId, 'LEAVE_CANCELLED', 'LEAVE', leaveId, context.leave, updated ?? null);
+      await writeAttendanceAudit(tx, guildId, actorDiscordUserId, 'LEAVE_CANCELLED', 'LEAVE', leaveId, context.leave, updated ?? null, cancellationReason);
+      await tx.insert(scheduledJobs).values({
+        guildId, jobType: 'LEAVE_PUBLISH', deduplicationKey: `leave:${leaveId}:cancel`,
+        payload: { leaveId }, runAt: now,
+      }).onConflictDoNothing();
       const affected = await findRoundsInDateRange(tx, guildId, context.leave.startsOn, context.leave.endsOn);
-      for (const round of affected) {
-        if (round.status !== 'CLOSED') {
-          await queueRoundRefresh(tx, guildId, round.id, now);
+      for (const round of affected.sort((left, right) => left.id.localeCompare(right.id))) {
+        const currentRound = await lockRound(tx, guildId, round.id);
+        if (currentRound.status === 'CLOSED' && isAdmin) {
+          const [record] = await tx.select().from(attendanceRecords).where(and(
+            eq(attendanceRecords.roundId, round.id), eq(attendanceRecords.memberId, context.leave.memberId),
+          )).limit(1).for('update');
+          if (record?.leaveId === leaveId && record.correctionReason === null) {
+            await recalculateClosedRecordForNewLeave(tx, currentRound, context.leave.memberId, now);
+          }
         }
+        await queueRoundRefresh(tx, guildId, round.id, now);
       }
     });
     return this.getLeave(guildId, leaveId);
@@ -1047,7 +1060,9 @@ async function lockLeaveContext(tx: Transaction, guildId: string, leaveId: strin
     .innerJoin(members, eq(leaves.memberId, members.id))
     .where(and(eq(leaves.guildId, guildId), eq(leaves.id, leaveId)))
     .limit(1)
-    .for('update');
+    // A closing round may reference this leave while we wait for its round lock.
+    // Non-key updates must not block PostgreSQL's foreign-key key-share lock.
+    .for('no key update', { of: leaves });
   if (context === undefined) {
     throw new NotFoundError('ไม่พบใบลา');
   }

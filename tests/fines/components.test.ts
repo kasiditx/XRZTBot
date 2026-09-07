@@ -53,6 +53,9 @@ describe('fine Discord components', () => {
       expect.objectContaining({ name: '⌗・สถานะ', value: '> ชำระแล้ว' }),
     ]));
     expect(button).toEqual(expect.objectContaining({ label: 'ชำระแล้ว', disabled: true }));
+    expect(payload.components[0]?.toJSON().components[1]).toMatchObject({
+      custom_id: 'fine:cancel:00000000-0000-4000-8000-000000000001', disabled: false,
+    });
   });
 });
 

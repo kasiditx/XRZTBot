@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type pino from 'pino';
+import { cancellationConfirmationRow, requireCancellationConfirmation } from './cancellation-confirmation.js';
 import {
   MessageFlags,
   type Attachment,
@@ -204,7 +205,7 @@ export class StockInteractionHandler {
     }
     if (interaction.customId.startsWith('stock:withdrawal_reject:')) {
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
-      await interaction.showModal(buildWithdrawalRejectionModal(entityId(interaction.customId, 'stock:withdrawal_reject:')));
+      await interaction.showModal(buildWithdrawalRejectionModal(entityId(interaction.customId, 'stock:withdrawal_reject:')).addComponents(cancellationConfirmationRow()));
       return;
     }
     if (interaction.customId.startsWith('stock:deposit_approve:')) {
@@ -213,7 +214,7 @@ export class StockInteractionHandler {
     }
     if (interaction.customId.startsWith('stock:deposit_reject:')) {
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
-      await interaction.showModal(buildDepositRejectionModal(entityId(interaction.customId, 'stock:deposit_reject:')));
+      await interaction.showModal(buildDepositRejectionModal(entityId(interaction.customId, 'stock:deposit_reject:')).addComponents(cancellationConfirmationRow()));
       return;
     }
     if (interaction.customId.startsWith('stock:reverse:')) {
@@ -487,16 +488,19 @@ export class StockInteractionHandler {
   }
 
   private async rejectDeposit(interaction: ModalSubmitInteraction, guild: Guild, requestId: string): Promise<void> {
+    requireCancellationConfirmation(interaction);
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const view = await this.dependencies.deposits.reject(
       guild.id,
       requestId,
       interaction.user.id,
       interaction.fields.getTextInputValue(stockComponentIds.depositRejectionReason),
       new Date(),
+      hasCapability(await this.resolveCurrentAuthority(guild, interaction.user.id), 'STOCK_REVERSE'),
     );
     await this.updateDepositLog(view);
-    await interaction.reply({ ...buildNotice('warning', 'ปฏิเสธรายการส่งของแล้ว', 'ยอด Stock ไม่ถูกเปลี่ยนแปลง', 'Stock Deposit'), flags: MessageFlags.Ephemeral });
+    await interaction.editReply(buildNotice('warning', 'ปฏิเสธ/ยกเลิกรายการส่งของแล้ว', 'หากรับเข้าแล้ว ระบบย้อนยอด Stock พร้อมบันทึกประวัติ', 'Stock Deposit'));
   }
 
   private async fulfillWithdrawal(interaction: ModalSubmitInteraction, guild: Guild, requestId: string): Promise<void> {
@@ -521,19 +525,19 @@ export class StockInteractionHandler {
   }
 
   private async rejectWithdrawal(interaction: ModalSubmitInteraction, guild: Guild, requestId: string): Promise<void> {
+    requireCancellationConfirmation(interaction);
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const view = await this.dependencies.withdrawals.reject({
       guildId: guild.id,
       withdrawalRequestId: requestId,
       actorDiscordUserId: interaction.user.id,
       reason: interaction.fields.getTextInputValue(stockComponentIds.withdrawalRejectionReason),
       now: new Date(),
+      allowReversal: hasCapability(await this.resolveCurrentAuthority(guild, interaction.user.id), 'STOCK_REVERSE'),
     });
     await this.updateWithdrawalLog(view);
-    await interaction.reply({
-      ...buildNotice('warning', 'ปฏิเสธคำขอเบิกของแล้ว', 'ยอด Stock ไม่ถูกเปลี่ยนแปลง', 'Stock Withdrawal'),
-      flags: MessageFlags.Ephemeral,
-    });
+    await interaction.editReply(buildNotice('warning', 'ปฏิเสธ/ยกเลิกคำขอเบิกของแล้ว', 'หากจ่ายแล้ว ระบบคืนยอด Stock ตามจำนวนที่จ่ายจริงพร้อมบันทึกประวัติ', 'Stock Withdrawal'));
   }
 
   private async reverseBatch(interaction: ModalSubmitInteraction, guild: Guild, batchId: string): Promise<void> {

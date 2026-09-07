@@ -337,7 +337,7 @@ export function buildLeaveLog(view: LeaveView) {
 
 export function buildLeaveCancelConfirmation(leaveId: string) {
   return {
-    content: formatPanelText('⚠️', 'ยืนยันยกเลิกใบลา', 'ผลรอบที่ปิดและสรุปไปแล้วจะไม่ถูกเปลี่ยนอัตโนมัติ', 'ตรวจสอบข้อมูลก่อนกดยืนยัน'),
+    content: formatPanelText('⚠️', 'ยืนยันยกเลิกใบลา', 'เมื่อ Admin ยกเลิก ระบบคำนวณผลที่ผูกกับใบลานี้ใหม่ โดยเก็บผลที่แก้ด้วยมือไว้', 'ตรวจสอบข้อมูลก่อนกดยืนยัน'),
     components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId(`leave:cancel_confirm:${leaveId}`).setLabel('ยืนยันยกเลิก').setStyle(ButtonStyle.Danger),
     )],

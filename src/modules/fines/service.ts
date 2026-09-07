@@ -9,7 +9,7 @@ import {
   scheduledJobs,
 } from '../../infrastructure/db/schema.js';
 import { writeAudit } from '../audit/service.js';
-import { appendTreasuryEntryWithTransaction } from '../treasury/service.js';
+import { appendTreasuryEntryWithTransaction, reverseSourcedTreasuryEntry } from '../treasury/service.js';
 import { calculateFineAccrual, validateFullFinePayment } from './rules.js';
 
 export type Fine = typeof fines.$inferSelect;
@@ -265,11 +265,16 @@ export class FineService {
     actorDiscordUserId: string,
     reason: string,
     now: Date,
+    allowReversal = false,
   ): Promise<FinePaymentProofView> {
     const rejectionReason = requireText(reason, 'เหตุผลที่ปฏิเสธ', 2, 500);
     await this.db.transaction(async (tx) => {
       const context = await lockProofContext(tx, guildId, proofId);
-      if (context.proof.status !== 'PENDING' || context.fine.status !== 'PENDING_VERIFICATION') {
+      if (context.proof.status === 'REJECTED') return;
+      if (context.proof.status === 'APPROVED' && context.fine.status === 'PAID') {
+        if (!allowReversal) throw new AuthorizationError('ย้อนยอดเงินได้เฉพาะหัวแก๊ง/Dev');
+        await reverseSourcedTreasuryEntry(tx, guildId, 'FINE_PAYMENT', proofId, rejectionReason, actorDiscordUserId, now);
+      } else if (context.proof.status !== 'PENDING' || context.fine.status !== 'PENDING_VERIFICATION') {
         throw new ConflictError('หลักฐานนี้ถูกดำเนินการแล้ว');
       }
       await tx
@@ -284,11 +289,12 @@ export class FineService {
         .where(eq(finePaymentProofs.id, proofId));
       const [unpaid] = await tx
         .update(fines)
-        .set({ status: 'UNPAID', updatedAt: now })
+        .set({ status: 'UNPAID', paidAt: null, updatedAt: now })
         .where(eq(fines.id, context.fine.id))
         .returning();
       if (unpaid === undefined) throw new Error('Fine rejection did not return a row');
       await accrueFineWithTransaction(tx, unpaid, now, actorDiscordUserId);
+      await queueFineProofRefresh(tx, guildId, proofId, now);
       await queueFineRefresh(tx, guildId, context.fine.id, now);
       await writeFineAudit(tx, guildId, actorDiscordUserId, 'FINE_PAYMENT_REJECTED', 'FINE_PAYMENT_PROOF', proofId, context.proof, { status: 'REJECTED', rejectionReason }, rejectionReason);
     });
@@ -318,12 +324,22 @@ export class FineService {
     await this.db.transaction(async (tx) => {
       const fine = await lockFine(tx, guildId, fineId);
       if (fine.status === 'CANCELLED') return;
-      if (fine.status !== 'UNPAID') {
-        throw new ConflictError('ยกเลิกได้เฉพาะค่าปรับที่ยังไม่มีหลักฐานรอตรวจและยังไม่ชำระ');
+      const proofs = await tx.select().from(finePaymentProofs)
+        .where(and(eq(finePaymentProofs.guildId, guildId), eq(finePaymentProofs.fineId, fineId))).for('update');
+      for (const proof of proofs) {
+        await queueFineProofRefresh(tx, guildId, proof.id, now);
+        if (proof.status === 'REJECTED') continue;
+        if (proof.status === 'APPROVED') {
+          await reverseSourcedTreasuryEntry(tx, guildId, 'FINE_PAYMENT', proof.id, cancellationReason, actorDiscordUserId, now);
+        }
+        await tx.update(finePaymentProofs).set({
+          status: 'REJECTED', rejectionReason: cancellationReason,
+          decidedAt: now, decidedByDiscordUserId: actorDiscordUserId, updatedAt: now,
+        }).where(eq(finePaymentProofs.id, proof.id));
       }
       const [cancelled] = await tx
         .update(fines)
-        .set({ status: 'CANCELLED', updatedAt: now })
+        .set({ status: 'CANCELLED', paidAt: null, updatedAt: now })
         .where(eq(fines.id, fineId))
         .returning();
       await queueFineRefresh(tx, guildId, fineId, now);
@@ -442,6 +458,11 @@ async function lockFine(tx: Transaction, guildId: string, fineId: string): Promi
 }
 
 async function lockProofContext(tx: Transaction, guildId: string, proofId: string) {
+  const [reference] = await tx.select({ fineId: finePaymentProofs.fineId }).from(finePaymentProofs)
+    .where(and(eq(finePaymentProofs.guildId, guildId), eq(finePaymentProofs.id, proofId))).limit(1);
+  if (reference === undefined) throw new NotFoundError('ไม่พบหลักฐานชำระค่าปรับ');
+  // Use the same lock order as cancellation and proof submission.
+  const fine = await lockFine(tx, guildId, reference.fineId);
   const [proof] = await tx
     .select()
     .from(finePaymentProofs)
@@ -449,7 +470,6 @@ async function lockProofContext(tx: Transaction, guildId: string, proofId: strin
     .limit(1)
     .for('update');
   if (proof === undefined) throw new NotFoundError('ไม่พบหลักฐานชำระค่าปรับ');
-  const fine = await lockFine(tx, guildId, proof.fineId);
   return { proof, fine };
 }
 
@@ -515,6 +535,14 @@ async function queueFineRefresh(tx: Transaction, guildId: string, fineId: string
     deduplicationKey: `fine:${fineId}:refresh:${randomUUID()}`,
     payload: { fineId },
     runAt,
+  });
+}
+
+async function queueFineProofRefresh(tx: Transaction, guildId: string, proofId: string, runAt: Date): Promise<void> {
+  await tx.insert(scheduledJobs).values({
+    guildId, jobType: 'FINE_PROOF_REFRESH',
+    deduplicationKey: `fine-proof:${proofId}:refresh:${randomUUID()}`,
+    payload: { proofId }, runAt,
   });
 }
 

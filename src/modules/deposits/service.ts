@@ -8,10 +8,12 @@ import {
   inventoryBatches,
   inventoryItems,
   members,
+  scheduledJobs,
 } from '../../infrastructure/db/schema.js';
 import {
   applyInventoryDeltasWithTransaction,
   lockInventoryGuild,
+  reverseSourceInventoryBatches,
   queueStockRefresh,
   writeInventoryAudit,
   type InventoryItem,
@@ -217,13 +219,19 @@ export class DepositService {
     actorDiscordUserId: string,
     reason: string,
     now: Date,
+    allowReversal = false,
   ): Promise<DepositRequestView> {
     const rejectionReason = requireText(reason, 'เหตุผลที่ปฏิเสธ', 2, 500);
     await this.db.transaction(async (tx) => {
       await lockInventoryGuild(tx, guildId);
       const request = await lockRequest(tx, guildId, requestId);
       if (request.status === 'REJECTED') return;
-      if (request.status !== 'PENDING') throw new ConflictError('คำขอนี้ถูกดำเนินการแล้ว');
+      if (request.status === 'APPROVED') {
+        if (!allowReversal) throw new AuthorizationError('ย้อนยอด Stock ได้เฉพาะหัวแก๊ง/Dev');
+        await reverseSourceInventoryBatches(tx, guildId, 'DEPOSIT', request.id, rejectionReason, actorDiscordUserId, now);
+      } else if (request.status !== 'PENDING') {
+        throw new ConflictError('คำขอนี้ถูกดำเนินการแล้ว');
+      }
       await tx
         .update(depositRequests)
         .set({
@@ -235,6 +243,10 @@ export class DepositService {
         })
         .where(eq(depositRequests.id, request.id));
       await writeInventoryAudit(tx, guildId, actorDiscordUserId, 'DEPOSIT_REJECTED', 'DEPOSIT_REQUEST', request.id, request, { status: 'REJECTED', rejectionReason }, rejectionReason);
+      await tx.insert(scheduledJobs).values({
+        guildId, jobType: 'DEPOSIT_REFRESH', deduplicationKey: `deposit:${requestId}:reject`,
+        payload: { requestId }, runAt: now,
+      }).onConflictDoNothing();
     });
     return this.get(guildId, requestId);
   }

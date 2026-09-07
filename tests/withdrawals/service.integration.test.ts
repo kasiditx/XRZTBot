@@ -179,4 +179,20 @@ describeWithDatabase('WithdrawalService PostgreSQL integration', () => {
     expect(jobs.some((job) => job.jobType === 'STOCK_REFRESH')).toBe(true);
     expect(jobs.some((job) => job.jobType === 'STOCK_BATCH_PUBLISH')).toBe(true);
   });
+
+  it.each([false, true])('restores all fulfillment batches once (fully fulfilled: %s)', async (complete) => {
+    const [before] = await db.select().from(inventoryItems).where(and(eq(inventoryItems.guildId, guildId), eq(inventoryItems.itemCode, 'MR-001')));
+    const request = await service.create({ guildId, clientRequestId: `reverse-${String(complete)}`,
+      requesterDiscordUserId: memberUserId, reason: 'ทดสอบคืนของ', items: [{ itemCode: 'MR-001', quantity: 2 }], now: new Date() });
+    await service.fulfill({ guildId, clientRequestId: `reverse-first-${String(complete)}`, withdrawalRequestId: request.request.id,
+      items: [{ itemCode: 'MR-001', quantity: 1 }], partialReason: 'จ่ายบางส่วน', actorDiscordUserId: admin, now: new Date() });
+    if (complete) await service.fulfill({ guildId, clientRequestId: 'reverse-second', withdrawalRequestId: request.request.id,
+      items: [{ itemCode: 'MR-001', quantity: 1 }], partialReason: '', actorDiscordUserId: admin, now: new Date() });
+    const input = { guildId, withdrawalRequestId: request.request.id, actorDiscordUserId: admin, reason: 'คืนของแล้ว', now: new Date() };
+    await expect(service.reject(input)).rejects.toBeInstanceOf(AuthorizationError);
+    await Promise.all([1, 2].map(() => service.reject({ ...input, allowReversal: true })));
+    expect((await service.get(guildId, request.request.id)).request.status).toBe('CANCELLED');
+    const [after] = await db.select().from(inventoryItems).where(eq(inventoryItems.id, before!.id));
+    expect(after?.quantity).toBe(before?.quantity);
+  });
 });

@@ -156,6 +156,13 @@ describe('stock Discord components', () => {
     ]);
   });
 
+  it.each(['PARTIALLY_FULFILLED', 'FULFILLED'] as const)('keeps the reversal action available after %s', (status) => {
+    const payload = buildWithdrawalLog({ ...withdrawalView, request: { ...withdrawalView.request, status } });
+    expect(payload.components[0]?.toJSON().components).toEqual(expect.arrayContaining([
+      expect.objectContaining({ custom_id: `stock:withdrawal_reject:${sessionToken}`, disabled: false }),
+    ]));
+  });
+
   it('builds a required-reason modal and renders rejected withdrawal metadata', () => {
     const modal = buildWithdrawalRejectionModal(sessionToken).toJSON();
     expect(modal.custom_id).toBe(`stock:withdrawal_reject_modal:${sessionToken}`);

@@ -14,6 +14,7 @@ import {
 import {
   applyInventoryDeltasWithTransaction,
   lockInventoryGuild,
+  reverseSourceInventoryBatches,
   queueStockBatchPublish,
   queueStockRefresh,
   writeInventoryAudit,
@@ -61,6 +62,7 @@ export interface FulfillWithdrawalInput {
 }
 
 export interface RejectWithdrawalInput {
+  readonly allowReversal?: boolean;
   readonly guildId: string;
   readonly withdrawalRequestId: string;
   readonly actorDiscordUserId: string;
@@ -299,7 +301,8 @@ export class WithdrawalService {
       if (request === undefined) throw new NotFoundError('ไม่พบคำขอเบิกของ');
       if (request.status === 'CANCELLED') return;
       if (request.status !== 'PENDING') {
-        throw new ConflictError('ปฏิเสธได้เฉพาะคำขอที่ยังรอจ่ายและยังไม่เคยจ่ายของ');
+        if (input.allowReversal !== true) throw new AuthorizationError('ย้อนยอด Stock ได้เฉพาะหัวแก๊ง/Dev');
+        await reverseSourceInventoryBatches(tx, input.guildId, 'WITHDRAWAL', request.id, rejectionReason, input.actorDiscordUserId, input.now);
       }
 
       await tx

@@ -176,6 +176,9 @@ describeWithDatabase('ActivityService PostgreSQL integration', () => {
     );
     expect(cancelled.submission.isCancelled).toBe(true);
     expect(await service.buildLeaderboard(guildId, created.activity.id)).toEqual([]);
+    const refresh = await db.select().from(scheduledJobs).where(eq(scheduledJobs.deduplicationKey,
+      `activity:${created.activity.id}:cancel:${submission.submission.id}`));
+    expect(refresh[0]?.jobType).toBe('ACTIVITY_CLOSE');
   });
 
   it('supports evidence activities without fake zero-point score items', async () => {

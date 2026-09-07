@@ -13,7 +13,7 @@ import {
 } from '../../infrastructure/db/schema.js';
 import { writeAudit as persistAudit } from '../audit/service.js';
 import { createSourcedFineWithTransaction } from '../fines/service.js';
-import { appendTreasuryEntryWithTransaction } from '../treasury/service.js';
+import { appendTreasuryEntryWithTransaction, reverseSourcedTreasuryEntry } from '../treasury/service.js';
 import { buildWeeklyOverdueFine } from './rules.js';
 
 export type WeeklyCollection = typeof weeklyCollections.$inferSelect;
@@ -339,11 +339,16 @@ export class WeeklyDuesService {
     actorDiscordUserId: string,
     reason: string,
     now: Date,
+    allowReversal = false,
   ): Promise<WeeklyPaymentProofView> {
     const rejectionReason = requireText(reason, 'เหตุผลที่ปฏิเสธ', 2, 500);
     await this.db.transaction(async (tx) => {
       const context = await lockProofContext(tx, guildId, proofId);
-      if (context.proof.status !== 'PENDING' || context.obligation.status !== 'PENDING_VERIFICATION') {
+      if (context.proof.status === 'REJECTED') return;
+      if (context.proof.status === 'APPROVED' && context.obligation.status === 'PAID') {
+        if (!allowReversal) throw new AuthorizationError('ย้อนยอดเงินได้เฉพาะหัวแก๊ง/Dev');
+        await reverseSourcedTreasuryEntry(tx, guildId, 'WEEKLY_PAYMENT', proofId, rejectionReason, actorDiscordUserId, now);
+      } else if (context.proof.status !== 'PENDING' || context.obligation.status !== 'PENDING_VERIFICATION') {
         throw new ConflictError('หลักฐานนี้ถูกดำเนินการแล้ว');
       }
       await tx
@@ -361,6 +366,10 @@ export class WeeklyDuesService {
       }
       await queueWeeklyRefresh(tx, guildId, context.collection.id, now);
       await writeAudit(tx, guildId, actorDiscordUserId, 'WEEKLY_PAYMENT_REJECTED', 'WEEKLY_PAYMENT_PROOF', proofId, context.proof, { status: 'REJECTED', rejectionReason }, rejectionReason);
+      await tx.insert(scheduledJobs).values({
+        guildId, jobType: 'WEEKLY_PROOF_REFRESH', deduplicationKey: `weekly-proof:${proofId}:reject`,
+        payload: { proofId }, runAt: now,
+      }).onConflictDoNothing();
     });
     return this.getProof(guildId, proofId);
   }

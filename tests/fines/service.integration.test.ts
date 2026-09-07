@@ -135,7 +135,7 @@ describeWithDatabase('FineService PostgreSQL integration', () => {
     expect(proofs.map((item) => item.status).sort()).toEqual(['APPROVED', 'REJECTED']);
   });
 
-  it('cancels only an unpaid fine with an audit reason', async () => {
+  it('cancels an unpaid fine with an audit reason', async () => {
     const cancellable = await service.create({
       guildId,
       requestId: 'fine-create-cancel',
@@ -149,5 +149,27 @@ describeWithDatabase('FineService PostgreSQL integration', () => {
     });
     const cancelled = await service.cancelFine(guildId, cancellable.fine.id, alpha, 'Admin เลือกสมาชิกผิด', new Date('2026-08-27T16:01:00.000Z'));
     expect(cancelled.fine.status).toBe('CANCELLED');
+  });
+
+  it('reverses approved payment once, reopens debt, and can cancel a replacement payment with the whole fine', async () => {
+    const [proof] = await db.select().from(finePaymentProofs).where(and(
+      eq(finePaymentProofs.fineId, created.fine.id), eq(finePaymentProofs.status, 'APPROVED'),
+    ));
+    const now = new Date('2026-08-30T16:05:00.000Z');
+    await expect(service.rejectPayment(guildId, proof!.id, beta, 'รูปผิด', now)).rejects.toBeInstanceOf(AuthorizationError);
+    const results = await Promise.all([1, 2].map(() => service.rejectPayment(guildId, proof!.id, beta, 'คืนเงินแล้ว', now, true)));
+    expect(results[0]?.fine).toMatchObject({ status: 'UNPAID', paidAt: null });
+    const prepared = await service.preparePayment(guildId, created.fine.id, alpha, 250_000, now);
+    const replacement = await service.persistPayment({ prepared, requestId: 'fine-replacement-after-reversal', submittedByDiscordUserId: alpha,
+      attachmentId: 'replacement', logChannelId: 'fine-channel', logMessageId: 'replacement-message', now });
+    await service.approvePayment(guildId, replacement.proof.id, beta, now);
+    await service.rejectPayment(guildId, proof!.id, beta, 'retry old proof', now, true);
+    expect((await service.get(guildId, created.fine.id)).fine.status).toBe('PAID');
+    await service.cancelFine(guildId, created.fine.id, beta, 'ยกเลิกค่าปรับทั้งรายการ', now);
+    expect((await service.getProof(guildId, replacement.proof.id)).proof.status).toBe('REJECTED');
+    expect((await service.get(guildId, created.fine.id)).fine.status).toBe('CANCELLED');
+    const entries = await db.select().from(treasuryEntries).where(eq(treasuryEntries.guildId, guildId));
+    expect(entries.reduce((sum, entry) => sum + entry.amount, 0)).toBe(0);
+    expect(entries.filter((entry) => entry.entryType === 'REVERSAL')).toHaveLength(2);
   });
 });

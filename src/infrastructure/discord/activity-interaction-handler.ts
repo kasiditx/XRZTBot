@@ -1,4 +1,5 @@
 import type pino from 'pino';
+import { buildReasonedCancellationModal, requireCancellationConfirmation } from './cancellation-confirmation.js';
 import {
   DiscordAPIError,
   MessageFlags,
@@ -33,7 +34,6 @@ import {
   buildActivityManagement,
   buildActivitySubmissionModal,
   buildActivityTypeSelector,
-  buildCancelConfirmation,
   buildChangeSubmissionScoreModal,
   buildCreateActivityModal,
   buildLeaderboardEmbeds,
@@ -149,16 +149,14 @@ export class ActivityInteractionHandler {
     }
     if (interaction.customId.startsWith('activity:cancel_confirm:')) {
       const submissionId = entityId(interaction.customId, 'activity:cancel_confirm:');
-      const isAdmin = await this.requireMemberOrAdmin(guild, interaction.user.id);
-      const view = await this.dependencies.activities.cancelSubmission(guild.id, submissionId, interaction.user.id, isAdmin, new Date());
-      await this.updateSubmissionLog(view);
-      await interaction.update({ ...buildNotice('success', 'ยกเลิกรายการแล้ว', 'รายการนี้จะไม่ถูกนำไปคำนวณในผลสรุป', 'Activities'), components: [] });
+      await this.assertSubmissionActor(guild, interaction.user.id, submissionId);
+      await interaction.showModal(buildReasonedCancellationModal(`activity:cancel_modal:${submissionId}`, 'ยกเลิกผลงานและคำนวณผลใหม่'));
       return;
     }
     if (interaction.customId.startsWith('activity:cancel:')) {
       const submissionId = entityId(interaction.customId, 'activity:cancel:');
       await this.assertSubmissionActor(guild, interaction.user.id, submissionId);
-      await interaction.reply({ ...buildCancelConfirmation(submissionId), flags: MessageFlags.Ephemeral });
+      await interaction.showModal(buildReasonedCancellationModal(`activity:cancel_modal:${submissionId}`, 'ยกเลิกผลงานและคำนวณผลใหม่'));
       return;
     }
     if (interaction.customId.startsWith('activity:participants:')) {
@@ -235,6 +233,17 @@ export class ActivityInteractionHandler {
 
   private async handleModal(interaction: ModalSubmitInteraction): Promise<void> {
     const guild = requireGuild(interaction.guild);
+    if (interaction.customId.startsWith('activity:cancel_modal:')) {
+      requireCancellationConfirmation(interaction);
+      const isAdmin = await this.requireMemberOrAdmin(guild, interaction.user.id);
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const view = await this.dependencies.activities.cancelSubmission(guild.id,
+        entityId(interaction.customId, 'activity:cancel_modal:'), interaction.user.id, isAdmin, new Date(),
+        interaction.fields.getTextInputValue('cancellation:reason'));
+      await this.updateSubmissionLog(view);
+      await interaction.editReply(buildNotice('success', 'ยกเลิกรายการแล้ว', 'นำผลงานออกจากผลสรุป และอัปเดตสรุปที่ปิดไปแล้ว', 'Activities'));
+      return;
+    }
     if (interaction.customId.startsWith(activityCreateModalPrefix)) {
       await this.createActivity(
         interaction,

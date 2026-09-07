@@ -9,6 +9,7 @@ import {
 import { writeAudit } from '../audit/service.js';
 import {
   appendTreasuryEntryWithTransaction,
+  reverseSourcedTreasuryEntry,
   type TreasuryTransaction,
 } from '../treasury/service.js';
 
@@ -163,11 +164,18 @@ export class TreasuryWithdrawalService {
     actorDiscordUserId: string,
     reason: string,
     now: Date,
+    allowReversal = false,
   ): Promise<TreasuryWithdrawalRequestView> {
     const rejectionReason = requireText(reason, 'เหตุผลปฏิเสธ', 2, 500);
     await this.db.transaction(async (tx) => {
       const request = await lockRequest(tx, guildId, requestId);
-      requirePending(request);
+      if (request.status === 'REJECTED') return;
+      if (request.status === 'APPROVED') {
+        if (!allowReversal) throw new AuthorizationError('ย้อนยอดเงินได้เฉพาะหัวแก๊ง/Dev');
+        await reverseSourcedTreasuryEntry(tx, guildId, 'TREASURY_WITHDRAWAL_REQUEST', request.id, rejectionReason, actorDiscordUserId, now);
+      } else {
+        requirePending(request);
+      }
       const [updated] = await tx
         .update(treasuryWithdrawalRequests)
         .set({

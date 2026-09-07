@@ -1,4 +1,5 @@
 import type pino from 'pino';
+import { cancellationConfirmationRow, requireCancellationConfirmation } from './cancellation-confirmation.js';
 import {
   MessageFlags,
   type ButtonInteraction,
@@ -108,7 +109,7 @@ export class WeeklyDuesInteractionHandler {
     }
     if (interaction.customId.startsWith('weekly:reject:')) {
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
-      await interaction.showModal(buildWeeklyRejectionModal(entityId(interaction.customId, 'weekly:reject:')));
+      await interaction.showModal(buildWeeklyRejectionModal(entityId(interaction.customId, 'weekly:reject:')).addComponents(cancellationConfirmationRow()));
       return;
     }
     if (interaction.customId.startsWith('weekly:override:')) {
@@ -265,16 +266,19 @@ export class WeeklyDuesInteractionHandler {
   }
 
   private async rejectPayment(interaction: ModalSubmitInteraction, guild: Guild, proofId: string): Promise<void> {
+    requireCancellationConfirmation(interaction);
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const view = await this.dependencies.weeklyDues.rejectPayment(
       guild.id,
       proofId,
       interaction.user.id,
       interaction.fields.getTextInputValue(weeklyComponentIds.rejectionReason),
       new Date(),
+      hasCapability(await this.resolveCurrentAuthority(guild, interaction.user.id), 'FINANCIAL_REVERSE'),
     );
     await this.updateProofLog(view);
-    await interaction.reply({ ...buildNotice('warning', 'ปฏิเสธหลักฐานแล้ว', 'หากพ้นกำหนด ระบบจะสร้างค่าปรับตามเงื่อนไขทันที', 'Weekly Dues'), flags: MessageFlags.Ephemeral });
+    await interaction.editReply(buildNotice('warning', 'ปฏิเสธ/ยกเลิกการชำระแล้ว', 'หากพ้นกำหนด ระบบจะสร้างค่าปรับตามเงื่อนไขทันที', 'Weekly Dues'));
   }
 
   private async overrideAmount(interaction: ModalSubmitInteraction, guild: Guild, collectionId: string): Promise<void> {

@@ -103,7 +103,9 @@ export function buildFineAnnouncement(view: FineView) {
     .setEmoji('📸')
     .setStyle(ButtonStyle.Primary)
     .setDisabled(fine.status !== 'UNPAID');
-  return { embeds: [embed], components: [new ActionRowBuilder<ButtonBuilder>().addComponents(button)] };
+  const cancel = new ButtonBuilder().setCustomId(`fine:cancel:${fine.id}`)
+    .setLabel('ยกเลิกค่าปรับ').setStyle(ButtonStyle.Danger).setDisabled(fine.status === 'CANCELLED');
+  return { embeds: [embed], components: [new ActionRowBuilder<ButtonBuilder>().addComponents(button, cancel)] };
 }
 
 export function buildFineManagement(view: FineView) {
@@ -113,7 +115,7 @@ export function buildFineManagement(view: FineView) {
       .setCustomId(`fine:cancel:${view.fine.id}`)
       .setLabel('ยกเลิกค่าปรับ')
       .setStyle(ButtonStyle.Danger)
-      .setDisabled(view.fine.status !== 'UNPAID'),
+      .setDisabled(view.fine.status === 'CANCELLED'),
   );
   return { embeds: announcement.embeds, components: [cancelRow] };
 }
@@ -167,7 +169,11 @@ export function buildFineProofLog(view: FinePaymentProofView) {
     )
     .setTimestamp(proof.updatedAt);
   if (proof.rejectionReason !== null) embed.addFields({ name: 'เหตุผลที่ปฏิเสธ', value: proof.rejectionReason });
-  return { embeds: [embed], components: proofActionRows(proof.id, proof.status !== 'PENDING') };
+  const actions = proofActionRows(proof.id, proof.status !== 'PENDING', proof.status === 'APPROVED');
+  if (fine.status !== 'CANCELLED') actions.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`fine:cancel:${fine.id}`).setLabel('ยกเลิกค่าปรับทั้งรายการ').setStyle(ButtonStyle.Danger),
+  ));
+  return { embeds: [embed], components: actions };
 }
 
 export function buildFineRejectionModal(proofId: string): ModalBuilder {
@@ -184,10 +190,10 @@ export function buildFineCancellationModal(fineId: string): ModalBuilder {
     .addComponents(inputRow(fineComponentIds.cancellationReason, 'เหตุผลที่ยกเลิก', 2, 500, TextInputStyle.Paragraph));
 }
 
-function proofActionRows(proofId: string, disabled: boolean): ActionRowBuilder<ButtonBuilder>[] {
+function proofActionRows(proofId: string, disabled: boolean, approved = false): ActionRowBuilder<ButtonBuilder>[] {
   return [new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(`fine:approve:${proofId}`).setLabel('อนุมัติ').setStyle(ButtonStyle.Success).setDisabled(disabled),
-    new ButtonBuilder().setCustomId(`fine:reject:${proofId}`).setLabel('ปฏิเสธ').setStyle(ButtonStyle.Danger).setDisabled(disabled),
+    new ButtonBuilder().setCustomId(`fine:reject:${proofId}`).setLabel(approved ? 'ยกเลิกการชำระ/คืนยอด' : 'ปฏิเสธ').setStyle(ButtonStyle.Danger).setDisabled(disabled && !approved),
   )];
 }
 

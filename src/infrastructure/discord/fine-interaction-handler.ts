@@ -1,4 +1,5 @@
 import type pino from 'pino';
+import { cancellationConfirmationRow, requireCancellationConfirmation } from './cancellation-confirmation.js';
 import {
   MessageFlags,
   type ButtonInteraction,
@@ -121,13 +122,13 @@ export class FineInteractionHandler {
     if (interaction.customId.startsWith('fine:reject:')) {
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
       const proofId = entityId(interaction.customId, 'fine:reject:');
-      await interaction.showModal(buildFineRejectionModal(proofId));
+      await interaction.showModal(buildFineRejectionModal(proofId).addComponents(cancellationConfirmationRow()));
       return;
     }
     if (interaction.customId.startsWith('fine:cancel:')) {
       await this.requireCapability(guild, interaction.user.id, 'FINANCIAL_REVERSE');
       const fineId = entityId(interaction.customId, 'fine:cancel:');
-      await interaction.showModal(buildFineCancellationModal(fineId));
+      await interaction.showModal(buildFineCancellationModal(fineId).addComponents(cancellationConfirmationRow()));
     }
   }
 
@@ -273,20 +274,25 @@ export class FineInteractionHandler {
   }
 
   private async rejectPayment(interaction: ModalSubmitInteraction, guild: Guild, proofId: string): Promise<void> {
+    requireCancellationConfirmation(interaction);
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const view = await this.dependencies.fines.rejectPayment(
       guild.id,
       proofId,
       interaction.user.id,
       interaction.fields.getTextInputValue(fineComponentIds.rejectionReason),
       new Date(),
+      hasCapability(await this.resolveCurrentAuthority(guild, interaction.user.id), 'FINANCIAL_REVERSE'),
     );
     await this.updateProofLog(view);
-    await interaction.reply({ ...buildNotice('warning', 'ปฏิเสธหลักฐานแล้ว', 'ระบบคำนวณค่าปรับค้างชำระตามเวลาจริงเรียบร้อย', 'Fines'), flags: MessageFlags.Ephemeral });
+    await interaction.editReply(buildNotice('warning', 'ปฏิเสธ/ยกเลิกการชำระแล้ว', 'ระบบคำนวณค่าปรับค้างชำระตามเวลาจริงเรียบร้อย', 'Fines'));
   }
 
   private async cancelFine(interaction: ModalSubmitInteraction, guild: Guild, fineId: string): Promise<void> {
+    requireCancellationConfirmation(interaction);
     await this.requireCapability(guild, interaction.user.id, 'FINANCIAL_REVERSE');
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const view = await this.dependencies.fines.cancelFine(
       guild.id,
       fineId,
@@ -295,7 +301,7 @@ export class FineInteractionHandler {
       new Date(),
     );
     await this.refreshFine(view.fine.guildId, view.fine.id);
-    await interaction.reply({ ...buildNotice('success', 'ยกเลิกค่าปรับแล้ว', 'รายการถูกยกเลิกและบันทึกใน Audit log เรียบร้อย', 'Fines'), flags: MessageFlags.Ephemeral });
+    await interaction.editReply(buildNotice('success', 'ยกเลิกค่าปรับแล้ว', 'รายการถูกยกเลิกและบันทึกใน Audit log เรียบร้อย', 'Fines'));
   }
 
   private async updateProofLog(view: FinePaymentProofView): Promise<void> {

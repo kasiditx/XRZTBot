@@ -10,6 +10,7 @@ import type { TreasuryWithdrawalService } from '../../modules/treasury-withdrawa
 import type { WeeklyDuesService } from '../../modules/weekly-dues/service.js';
 import type { InventoryService } from '../../modules/inventory/service.js';
 import type { WithdrawalService } from '../../modules/withdrawals/service.js';
+import type { DepositService } from '../../modules/deposits/service.js';
 import type { GuildConfigService } from '../../modules/guild-config/service.js';
 import type { MemberService } from '../../modules/members/service.js';
 import type { AuditService } from '../../modules/audit/service.js';
@@ -20,16 +21,17 @@ import {
   buildAnnouncementSummaryEmbed,
   buildLeaderboardEmbeds,
   buildParticipationSummaryEmbeds,
+  buildSubmissionLog,
 } from './activity-components.js';
 import { buildAttendanceAnnouncement, buildLeaveLog } from './attendance-components.js';
-import { buildFineAnnouncement } from './fine-components.js';
+import { buildFineAnnouncement, buildFineProofLog } from './fine-components.js';
 import {
   buildTreasuryDashboard,
   buildTreasuryEntryLog,
   buildTreasuryWithdrawalRequestLog,
 } from './treasury-components.js';
-import { buildWeeklyAnnouncement } from './weekly-dues-components.js';
-import { buildBatchLog, buildStockDashboard, buildWithdrawalLog } from './stock-components.js';
+import { buildWeeklyAnnouncement, buildWeeklyProofLog } from './weekly-dues-components.js';
+import { buildBatchLog, buildDepositLog, buildStockDashboard, buildWithdrawalLog } from './stock-components.js';
 import { buildControlPanel, buildMemberRegistrationRequest, buildMemberRoster } from './components.js';
 import { buildAuditLogMessage } from './audit-components.js';
 import { syncFightPositionSummary } from './fight-position-publisher.js';
@@ -82,8 +84,41 @@ export function createDiscordJobHandlers(
   guildConfig: GuildConfigService,
   dailyLogs: DailyLogPublisher,
   logger: pino.Logger,
+  deposits: DepositService,
 ): ReadonlyMap<string, JobHandler> {
   return new Map<string, JobHandler>([
+    [
+      'ACTIVITY_SUBMISSION_REFRESH',
+      async (job) => {
+        const { submissionId } = z.object({ submissionId: z.string().uuid() }).parse(job.payload);
+        const view = await activities.getSubmission(job.guildId, submissionId);
+        if (view.submission.logMessageId === null) return;
+        const channel = await fetchSendableChannel(client, view.submission.logChannelId, 'Channel Log กิจกรรม');
+        const message = await channel.messages.fetch(view.submission.logMessageId);
+        await message.edit(buildSubmissionLog(view));
+      },
+    ],
+    [
+      'WEEKLY_PROOF_REFRESH',
+      async (job) => {
+        const { proofId } = z.object({ proofId: z.string().uuid() }).parse(job.payload);
+        const view = await weeklyDues.getProof(job.guildId, proofId);
+        const channel = await fetchSendableChannel(client, view.proof.logChannelId, 'Channel Log เงินรายสัปดาห์');
+        const message = await channel.messages.fetch(view.proof.logMessageId);
+        await message.edit(buildWeeklyProofLog(view));
+      },
+    ],
+    [
+      'DEPOSIT_REFRESH',
+      async (job) => {
+        const { requestId } = withdrawalJobSchema.parse(job.payload);
+        const view = await deposits.get(job.guildId, requestId);
+        if (view.request.publicChannelId === null || view.request.publicMessageId === null) return;
+        const channel = await fetchSendableChannel(client, view.request.publicChannelId, 'Channel Log ส่งของ');
+        const message = await channel.messages.fetch(view.request.publicMessageId);
+        await message.edit(buildDepositLog(view));
+      },
+    ],
     [
       'AUDIT_PUBLISH',
       async (job) => {
@@ -419,6 +454,16 @@ export function createDiscordJobHandlers(
       async (job) => {
         const { fineId } = fineJobSchema.parse(job.payload);
         await refreshFine(client, fines, job.guildId, fineId);
+      },
+    ],
+    [
+      'FINE_PROOF_REFRESH',
+      async (job) => {
+        const { proofId } = z.object({ proofId: z.string().uuid() }).parse(job.payload);
+        const view = await fines.getProof(job.guildId, proofId);
+        const channel = await fetchSendableChannel(client, view.proof.logChannelId, 'Channel Log ค่าปรับ');
+        const message = await channel.messages.fetch(view.proof.logMessageId);
+        await message.edit(buildFineProofLog(view));
       },
     ],
     [

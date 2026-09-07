@@ -130,6 +130,12 @@ export function buildTreasuryWithdrawalRequestLog(view: TreasuryWithdrawalReques
     embed.addFields({ name: 'เหตุผลปฏิเสธ', value: escapeMarkdown(view.request.rejectionReason) });
   }
   if (view.request.status !== 'PENDING') {
+    if (view.request.status === 'APPROVED') {
+      return { embeds: [embed], components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId(`treasury:withdrawal_reject:${view.request.id}`)
+          .setLabel('ยกเลิก/คืนยอดเงินแก๊ง').setStyle(ButtonStyle.Danger),
+      )] };
+    }
     return { embeds: [embed], components: [] };
   }
 

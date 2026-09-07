@@ -195,7 +195,7 @@ export function buildWeeklyProofLog(view: WeeklyPaymentProofView) {
     )
     .setTimestamp(view.proof.updatedAt);
   if (view.proof.rejectionReason !== null) embed.addFields({ name: 'เหตุผลที่ปฏิเสธ', value: view.proof.rejectionReason });
-  return { embeds: [embed], components: proofActions(view.proof.id, view.proof.status !== 'PENDING') };
+  return { embeds: [embed], components: proofActions(view.proof.id, view.proof.status !== 'PENDING', view.proof.status === 'APPROVED') };
 }
 
 export function buildWeeklyRejectionModal(proofId: string): ModalBuilder {
@@ -213,10 +213,10 @@ export function buildWeeklyRejectionModal(proofId: string): ModalBuilder {
     ));
 }
 
-function proofActions(proofId: string, disabled: boolean): ActionRowBuilder<ButtonBuilder>[] {
+function proofActions(proofId: string, disabled: boolean, approved = false): ActionRowBuilder<ButtonBuilder>[] {
   return [new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(`weekly:approve:${proofId}`).setLabel('อนุมัติ').setStyle(ButtonStyle.Success).setDisabled(disabled),
-    new ButtonBuilder().setCustomId(`weekly:reject:${proofId}`).setLabel('ปฏิเสธ').setStyle(ButtonStyle.Danger).setDisabled(disabled),
+    new ButtonBuilder().setCustomId(`weekly:reject:${proofId}`).setLabel(approved ? 'ยกเลิกการชำระ/คืนยอด' : 'ปฏิเสธ').setStyle(ButtonStyle.Danger).setDisabled(disabled && !approved),
   )];
 }
 

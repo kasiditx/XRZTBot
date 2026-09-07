@@ -1,5 +1,5 @@
 import { and, eq } from 'drizzle-orm';
-import { ConflictError } from '../../src/domain/errors.js';
+import { AuthorizationError, ConflictError, ValidationError } from '../../src/domain/errors.js';
 import { createDatabase, type Database } from '../../src/infrastructure/db/client.js';
 import {
   fines,
@@ -8,8 +8,10 @@ import {
   scheduledJobs,
   treasuryEntries,
   weeklyObligations,
+  weeklyPaymentProofs,
 } from '../../src/infrastructure/db/schema.js';
 import { FineService } from '../../src/modules/fines/service.js';
+import { appendTreasuryEntryWithTransaction, TreasuryService } from '../../src/modules/treasury/service.js';
 import { WeeklyDuesService, type PreparedWeeklyPayment } from '../../src/modules/weekly-dues/service.js';
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -134,6 +136,27 @@ describeWithDatabase('WeeklyDuesService PostgreSQL integration', () => {
       'TREASURY_PUBLISH',
       'TREASURY_REFRESH',
     ])));
+  });
+
+  it('reverses an approved overdue payment once and converts the reopened obligation to a fine', async () => {
+    const [proof] = await db.select().from(weeklyPaymentProofs).where(and(eq(weeklyPaymentProofs.guildId, guildId), eq(weeklyPaymentProofs.status, 'APPROVED')));
+    const now = new Date('2026-09-01T00:00:00.000Z');
+    await expect(service.rejectPayment(guildId, proof!.id, actor, 'รายการผิด', now)).rejects.toBeInstanceOf(AuthorizationError);
+    const expense = await db.transaction((tx) => appendTreasuryEntryWithTransaction(tx, {
+      guildId, entryType: 'EXPENSE', amount: -100_000, description: 'ใช้เงินไปแล้ว',
+      sourceType: 'MANUAL', sourceId: 'reversal-insufficient-balance-test', createdByDiscordUserId: actor, now,
+    }));
+    await expect(service.rejectPayment(guildId, proof!.id, actor, 'คืนเงินแล้ว', now, true)).rejects.toBeInstanceOf(ValidationError);
+    expect((await service.getProof(guildId, proof!.id)).proof.status).toBe('APPROVED');
+    await new TreasuryService(db).reverseEntry(guildId, 'restore-test-funds', expense.id, 'คืนเงินทดสอบ', actor, now);
+    await Promise.all([1, 2].map(() => service.rejectPayment(guildId, proof!.id, actor, 'คืนเงินแล้ว', now, true)));
+    const [obligation] = await db.select().from(weeklyObligations).where(eq(weeklyObligations.id, proof!.obligationId));
+    expect(obligation?.status).toBe('CONVERTED_TO_FINE');
+    expect(obligation?.convertedFineId).not.toBeNull();
+    const entries = await db.select().from(treasuryEntries).where(eq(treasuryEntries.guildId, guildId));
+    expect(entries.reduce((sum, entry) => sum + entry.amount, 0)).toBe(0);
+    const [source] = entries.filter((entry) => entry.sourceType === 'WEEKLY_PAYMENT' && entry.sourceId === proof!.id);
+    expect(entries.filter((entry) => entry.reversalOfEntryId === source!.id)).toHaveLength(1);
   });
 });
 

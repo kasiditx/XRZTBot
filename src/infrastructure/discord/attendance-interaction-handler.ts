@@ -1,4 +1,5 @@
 import type pino from 'pino';
+import { buildReasonedCancellationModal, requireCancellationConfirmation } from './cancellation-confirmation.js';
 import {
   MessageFlags,
   type ButtonInteraction,
@@ -46,7 +47,6 @@ import {
   buildAttendanceProofRejectionModal,
   buildCorrectionModal,
   buildCreateRoundModal,
-  buildLeaveCancelConfirmation,
   buildLeaveEditModal,
   buildLeaveLog,
   buildLeaveModal,
@@ -180,24 +180,14 @@ export class AttendanceInteractionHandler {
     }
     if (interaction.customId.startsWith('leave:cancel_confirm:')) {
       const leaveId = entityId(interaction.customId, 'leave:cancel_confirm:');
-      const isAdmin = await this.requireMemberOrAdmin(guild, interaction.user.id);
-      const settings = await this.requireSettings(guild.id);
-      const view = await this.dependencies.attendance.cancelLeave(
-        guild.id,
-        leaveId,
-        interaction.user.id,
-        isAdmin,
-        settings.timezone,
-        new Date(),
-      );
-      await this.updateLeaveLog(view);
-      await interaction.update({ ...buildNotice('success', 'ยกเลิกใบลาแล้ว', 'ระบบอัปเดตสถานะใบลาเรียบร้อย', 'Leave'), components: [] });
+      await this.requireLeaveActor(guild, interaction.user.id, leaveId);
+      await interaction.showModal(buildReasonedCancellationModal(`leave:cancel_modal:${leaveId}`, 'ยกเลิกใบลาและคำนวณผลที่เกี่ยวข้อง'));
       return;
     }
     if (interaction.customId.startsWith('leave:cancel:')) {
       const leaveId = entityId(interaction.customId, 'leave:cancel:');
       await this.requireLeaveActor(guild, interaction.user.id, leaveId);
-      await interaction.reply({ ...buildLeaveCancelConfirmation(leaveId), flags: MessageFlags.Ephemeral });
+      await interaction.showModal(buildReasonedCancellationModal(`leave:cancel_modal:${leaveId}`, 'ยกเลิกใบลาและคำนวณผลที่เกี่ยวข้อง'));
     }
   }
 
@@ -249,6 +239,18 @@ export class AttendanceInteractionHandler {
 
   private async handleModal(interaction: ModalSubmitInteraction): Promise<void> {
     const guild = requireGuild(interaction.guild);
+    if (interaction.customId.startsWith('leave:cancel_modal:')) {
+      requireCancellationConfirmation(interaction);
+      const isAdmin = await this.requireMemberOrAdmin(guild, interaction.user.id);
+      const settings = await this.requireSettings(guild.id);
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const view = await this.dependencies.attendance.cancelLeave(guild.id,
+        entityId(interaction.customId, 'leave:cancel_modal:'), interaction.user.id, isAdmin, settings.timezone, new Date(),
+        interaction.fields.getTextInputValue('cancellation:reason'));
+      await this.updateLeaveLog(view);
+      await interaction.editReply(buildNotice('success', 'ยกเลิกใบลาแล้ว', 'อัปเดตผลที่อ้างอิงใบลานี้ โดยเก็บผลแก้ไขด้วยมือไว้', 'Leave'));
+      return;
+    }
     if (interaction.customId.startsWith(attendanceCreateModalPrefix)) {
       await this.createRound(
         interaction,

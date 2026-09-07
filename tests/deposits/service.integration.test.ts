@@ -137,6 +137,25 @@ describeWithDatabase('DepositService PostgreSQL integration', () => {
     ));
     expect(jobs.length).toBeGreaterThanOrEqual(2);
   });
+
+  it('rolls back a multi-item reversal if stock is insufficient, then reverses exactly once', async () => {
+    const [approved] = await db.select().from(depositRequests).where(and(
+      eq(depositRequests.guildId, guildId), eq(depositRequests.status, 'APPROVED'),
+    ));
+    await expect(service.reject(guildId, approved!.id, adminUserId, 'รายการผิด', new Date()))
+      .rejects.toBeInstanceOf(AuthorizationError);
+    await db.update(inventoryItems).set({ quantity: 0 }).where(and(eq(inventoryItems.guildId, guildId), eq(inventoryItems.itemCode, 'MR-002')));
+    await expect(service.reject(guildId, approved!.id, adminUserId, 'ย้อนยอด', new Date(), true))
+      .rejects.toThrow(/stock .* ไม่พอ/);
+    expect(await stockQuantity(db, guildId, 'MR-001')).toBe(12);
+    expect((await service.get(guildId, approved!.id)).request.status).toBe('APPROVED');
+    await db.update(inventoryItems).set({ quantity: 6 }).where(and(eq(inventoryItems.guildId, guildId), eq(inventoryItems.itemCode, 'MR-002')));
+    await Promise.all([1, 2].map(() => service.reject(guildId, approved!.id, adminUserId, 'ย้อนยอด', new Date(), true)));
+    expect(await stockQuantity(db, guildId, 'MR-001')).toBe(10);
+    expect(await stockQuantity(db, guildId, 'MR-002')).toBe(5);
+    const reversals = await db.select().from(inventoryBatches).where(and(eq(inventoryBatches.guildId, guildId), eq(inventoryBatches.sourceType, 'REVERSAL')));
+    expect(reversals).toHaveLength(1);
+  });
 });
 
 async function stockQuantity(db: Database, guildId: string, itemCode: string): Promise<number | undefined> {

@@ -35,7 +35,10 @@ describe('treasury withdrawal Discord components', () => {
       'treasury:withdrawal_reject:11111111-1111-4111-8111-111111111111',
       'treasury:withdrawal_cancel:11111111-1111-4111-8111-111111111111',
     ]);
-    expect(approved.components).toEqual([]);
+    expect(approved.components[0]?.toJSON().components).toEqual([
+      expect.objectContaining({ custom_id: 'treasury:withdrawal_reject:11111111-1111-4111-8111-111111111111', style: 4 }),
+    ]);
+    expect(buildTreasuryWithdrawalRequestLog(view('REJECTED')).components).toEqual([]);
   });
 });
 

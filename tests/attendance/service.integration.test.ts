@@ -5,6 +5,7 @@ import {
   attendanceProofs,
   attendanceRecords,
   guildSettings,
+  leaves,
   members,
   scheduledJobs,
 } from '../../src/infrastructure/db/schema.js';
@@ -125,6 +126,30 @@ describeWithDatabase('AttendanceService PostgreSQL integration', () => {
       .innerJoin(members, eq(attendanceRecords.memberId, members.id))
       .where(and(eq(attendanceRecords.roundId, round.id), eq(members.discordUserId, charlie)));
     expect(record).toEqual({ result: 'LEAVE', reason: 'Admin ตรวจหลักฐานแล้ว' });
+  });
+
+  it('recalculates a closed result after admin cancels leave and preserves manual corrections', async () => {
+    const rows = await db.select().from(leaves).where(eq(leaves.guildId, guildId));
+    for (const leave of rows) await service.cancelLeave(guildId, leave.id, alpha, true, timezone, new Date('2026-08-28T00:00:00.000Z'), 'ตรวจพบใบลาผิด');
+    const view = await service.getRoundView(guildId, round.id);
+    expect(view.present.map((member) => member.inGameName)).toEqual(['Alpha']);
+    expect(view.absent.map((member) => member.inGameName)).toEqual(['Beta']);
+    expect(view.leave.map((member) => member.inGameName)).toEqual(['Charlie']);
+  });
+
+  it('keeps results consistent when round closing races with leave cancellation', async () => {
+    const now = new Date('2026-09-10T12:00:00.000Z');
+    const concurrentRound = await service.createRound({ guildId, requestId: 'concurrent-leave-round', title: 'รอบทดสอบพร้อมกัน', mode: 'GENERAL',
+      ...buildAttendanceRoundTimes('2026-09-10', '19:00', '21:30', timezone), actorDiscordUserId: alpha, now });
+    const leave = await service.submitLeave({ guildId, requestId: 'concurrent-leave', discordUserId: beta,
+      startsOn: '2026-09-10', endsOn: '2026-09-10', reason: 'ติดธุระ', timezone, now: new Date('2026-09-10T10:00:00.000Z') });
+    await Promise.all([
+      service.closeRound(guildId, concurrentRound.id, new Date('2026-09-10T15:00:00.000Z')),
+      service.cancelLeave(guildId, leave.leave.id, alpha, true, timezone, new Date('2026-09-10T15:00:00.000Z'), 'ใบลาผิด'),
+    ]);
+    const view = await service.getRoundView(guildId, concurrentRound.id);
+    expect(view.leave).toEqual([]);
+    expect(view.absent.map((member) => member.inGameName)).toContain('Beta');
   });
 
   it('materializes recurring rounds and a next-day durable tick idempotently', async () => {

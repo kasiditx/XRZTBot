@@ -439,7 +439,9 @@ export class ActivityService {
     actorDiscordUserId: string,
     isAdmin: boolean,
     now: Date,
+    reason = 'ยกเลิกรายการ',
   ): Promise<SubmissionView> {
+    const cancellationReason = requireShortText(reason, 'เหตุผลที่ยกเลิก', 2, 500);
     await this.db.transaction(async (tx) => {
       const context = await lockSubmissionContext(tx, guildId, submissionId);
       requireSubmissionMutationAccess(context.activity, context.submitterDiscordUserId, actorDiscordUserId, isAdmin, now);
@@ -456,7 +458,17 @@ export class ActivityService {
         })
         .where(eq(activitySubmissions.id, submissionId))
         .returning();
-      await writeActivityAudit(tx, guildId, actorDiscordUserId, 'ACTIVITY_SUBMISSION_CANCELLED', 'ACTIVITY_SUBMISSION', submissionId, context.submission, updated ?? null);
+      await writeAudit(tx, { guildId, actorDiscordUserId, action: 'ACTIVITY_SUBMISSION_CANCELLED', entityType: 'ACTIVITY_SUBMISSION', entityId: submissionId, before: context.submission, after: updated ?? null, reason: cancellationReason });
+      await tx.insert(scheduledJobs).values({
+        guildId, jobType: 'ACTIVITY_SUBMISSION_REFRESH', deduplicationKey: `submission:${submissionId}:cancel`,
+        payload: { submissionId }, runAt: now,
+      }).onConflictDoNothing();
+      if (context.activity.status === 'CLOSED') {
+        await tx.insert(scheduledJobs).values({
+          guildId, jobType: 'ACTIVITY_CLOSE', deduplicationKey: `activity:${context.activity.id}:cancel:${submissionId}`,
+          payload: { activityId: context.activity.id }, runAt: now,
+        }).onConflictDoNothing();
+      }
     });
     return this.getSubmission(guildId, submissionId);
   }

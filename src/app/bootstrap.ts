@@ -164,6 +164,7 @@ export async function bootstrap(): Promise<RunningApplication> {
       guildConfig,
       dailyLogs,
       logger,
+      depositService,
     ),
     env.DISCORD_GUILD_ID,
     env.SCHEDULER_POLL_MS,

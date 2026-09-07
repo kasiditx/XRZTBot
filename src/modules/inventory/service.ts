@@ -350,10 +350,49 @@ export class InventoryService {
   }
 }
 
+/** Reverse each source batch once; caller holds the guild inventory lock. */
+export async function reverseSourceInventoryBatches(
+  tx: InventoryTransaction,
+  guildId: string,
+  sourceType: 'DEPOSIT' | 'WITHDRAWAL',
+  sourceId: string,
+  reason: string,
+  actorDiscordUserId: string,
+  now: Date,
+): Promise<void> {
+  const batches = await tx.select().from(inventoryBatches).where(and(
+    eq(inventoryBatches.guildId, guildId), eq(inventoryBatches.sourceType, sourceType),
+    eq(inventoryBatches.sourceId, sourceId),
+  )).for('update');
+  if (batches.length === 0) throw new ConflictError('ไม่พบรายการ Stock ต้นทาง จึงยังยกเลิกไม่ได้');
+  for (const target of batches) {
+    if (target.reversedAt !== null) continue;
+    const movements = await tx.select({ movement: inventoryMovements, item: inventoryItems })
+      .from(inventoryMovements).innerJoin(inventoryItems, eq(inventoryMovements.itemId, inventoryItems.id))
+      .where(eq(inventoryMovements.batchId, target.id)).for('update');
+    if (movements.length === 0) throw new ConflictError('ไม่พบความเคลื่อนไหว Stock ต้นทาง จึงยังยกเลิกไม่ได้');
+    const [reversal] = await tx.insert(inventoryBatches).values({
+      guildId, batchRef: `REVERSAL-${target.id}`, sourceType: 'REVERSAL', sourceId: target.id,
+      reason, createdByDiscordUserId: actorDiscordUserId, createdAt: now, updatedAt: now,
+    }).returning();
+    if (reversal === undefined) throw new Error('Inventory reversal creation did not return a row');
+    await applyInventoryDeltasWithTransaction(tx, {
+      guildId, batchId: reversal.id, action: 'REVERSAL',
+      deltas: movements.map(({ movement, item }) => ({ item, quantityChange: -movement.quantityChange })), now,
+    });
+    await tx.update(inventoryBatches).set({ reversedAt: now, reversedByDiscordUserId: actorDiscordUserId, updatedAt: now })
+      .where(eq(inventoryBatches.id, target.id));
+    await queueStockBatchPublish(tx, guildId, reversal.id, now);
+    // Deposit batches share the request message, which must retain request controls.
+    if (sourceType === 'WITHDRAWAL') await queueStockBatchRefresh(tx, guildId, target.id, now);
+    await writeInventoryAudit(tx, guildId, actorDiscordUserId, 'STOCK_BATCH_REVERSED', 'INVENTORY_BATCH', target.id, target, { reversalId: reversal.id }, reason);
+  }
+  await queueStockRefresh(tx, guildId, now);
+}
+
 /**
- * Discord permits at most 4,096 characters in an embed description.  The dashboard
- * uses a slightly lower limit so the same panel can keep showing as many items as fit
- * without risking a rejected message when names or quantities become longer.
+ * Discord permits at most 4,096 characters in an embed description. The dashboard
+ * reserves space for panel details when splitting inventory into pages.
  */
 export function paginateStockDashboardItems(items: readonly InventoryItem[]): readonly (readonly InventoryItem[])[] {
   if (items.length === 0) return [[]];

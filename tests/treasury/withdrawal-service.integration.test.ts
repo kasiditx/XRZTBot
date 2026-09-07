@@ -133,4 +133,21 @@ describeWithDatabase('TreasuryWithdrawalService PostgreSQL integration', () => {
     );
     expect(cancelled.request.status).toBe('CANCELLED');
   });
+
+  it('requires reversal authority and restores an approved expense exactly once under concurrent retries', async () => {
+    const [request] = await db.select().from(treasuryWithdrawalRequests).where(and(
+      eq(treasuryWithdrawalRequests.guildId, guildId), eq(treasuryWithdrawalRequests.status, 'APPROVED'),
+    ));
+    const id = request!.id;
+    await expect(withdrawals.reject(guildId, id, adminDiscordUserId, 'รายการผิด', new Date()))
+      .rejects.toBeInstanceOf(AuthorizationError);
+    const results = await Promise.all([1, 2].map(() => withdrawals.reject(
+      guildId, id, adminDiscordUserId, 'คืนเงินจริงแล้ว', new Date(), true,
+    )));
+    expect(results.every(({ request: item }) => item.status === 'REJECTED')).toBe(true);
+    expect((await treasury.getDashboard(guildId)).balance).toBe(100_000);
+    const reversals = await db.select().from(treasuryEntries).where(eq(treasuryEntries.reversalOfEntryId, request!.treasuryEntryId!));
+    expect(reversals).toHaveLength(1);
+    expect(reversals[0]?.amount).toBe(40_000);
+  });
 });

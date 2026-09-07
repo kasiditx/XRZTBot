@@ -276,6 +276,33 @@ export async function appendTreasuryEntryWithTransaction(
   return appendTreasuryEntryLocked(tx, input);
 }
 
+/** Called inside the source transaction, after locking the source record. */
+export async function reverseSourcedTreasuryEntry(
+  tx: TreasuryTransaction,
+  guildId: string,
+  sourceType: string,
+  sourceId: string,
+  reason: string,
+  actorDiscordUserId: string,
+  now: Date,
+): Promise<TreasuryEntry> {
+  await lockTreasuryGuild(tx, guildId);
+  const [target] = await tx.select().from(treasuryEntries).where(and(
+    eq(treasuryEntries.guildId, guildId),
+    eq(treasuryEntries.sourceType, sourceType),
+    eq(treasuryEntries.sourceId, sourceId),
+  )).limit(1).for('update');
+  if (target === undefined) throw new ConflictError('ไม่พบรายการเงินต้นทาง จึงยังยกเลิกไม่ได้');
+  const [existing] = await tx.select().from(treasuryEntries)
+    .where(eq(treasuryEntries.reversalOfEntryId, target.id)).limit(1);
+  if (existing !== undefined) return existing;
+  return appendTreasuryEntryLocked(tx, {
+    guildId, entryType: 'REVERSAL', amount: -target.amount,
+    description: reason, sourceType: 'TREASURY_REVERSAL', sourceId: target.id,
+    reversalOfEntryId: target.id, createdByDiscordUserId: actorDiscordUserId, now,
+  });
+}
+
 async function appendTreasuryEntryLocked(
   tx: TreasuryTransaction,
   input: AppendTreasuryEntryInput,
