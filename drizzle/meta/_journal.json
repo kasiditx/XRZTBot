@@ -176,6 +176,13 @@
       "when": 1788497029943,
       "tag": "0024_bouncy_tyrannus",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1788756180553,
+      "tag": "0025_fancy_red_hulk",
+      "breakpoints": true
     }
   ]
 }

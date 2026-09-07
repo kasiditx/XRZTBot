@@ -158,6 +158,121 @@ describeWithDatabase('WeeklyDuesService PostgreSQL integration', () => {
     const [source] = entries.filter((entry) => entry.sourceType === 'WEEKLY_PAYMENT' && entry.sourceId === proof!.id);
     expect(entries.filter((entry) => entry.reversalOfEntryId === source!.id)).toHaveLength(1);
   });
+
+  it('cancels an open collection atomically and reverses approved weekly payments once', async () => {
+    const created = await service.create({
+      guildId,
+      requestId: 'weekly-create-cancel-open',
+      title: 'รอบที่สร้างผิด',
+      startsOn: '2026-09-07',
+      endsOn: '2026-09-13',
+      standardAmount: 100_000,
+      overdueFineAmount: 50_000,
+      recurringFineAmount: 25_000,
+      timezone: 'Asia/Bangkok',
+      actorDiscordUserId: actor,
+      now: new Date('2026-09-07T00:00:00.000Z'),
+    });
+    const prepared = await service.preparePayment(
+      guildId,
+      created.collection.id,
+      firstMember,
+      100_000,
+      new Date('2026-09-08T00:00:00.000Z'),
+    );
+    const proof = await persistProof(
+      service,
+      prepared,
+      'weekly-proof-cancel-open',
+      firstMember,
+      new Date('2026-09-08T00:30:00.000Z'),
+    );
+    await service.approvePayment(guildId, proof.proof.id, actor, new Date('2026-09-08T01:00:00.000Z'));
+
+    const cancelledAt = new Date('2026-09-08T02:00:00.000Z');
+    await expect(service.cancelCollection(
+      guildId,
+      created.collection.id,
+      actor,
+      'สร้างรอบผิดสัปดาห์',
+      cancelledAt,
+    )).rejects.toBeInstanceOf(AuthorizationError);
+    const first = await service.cancelCollection(
+      guildId,
+      created.collection.id,
+      actor,
+      'สร้างรอบผิดสัปดาห์',
+      cancelledAt,
+      true,
+    );
+    const duplicate = await service.cancelCollection(
+      guildId,
+      created.collection.id,
+      actor,
+      'สร้างรอบผิดสัปดาห์',
+      cancelledAt,
+      true,
+    );
+
+    expect(first.collection).toMatchObject({
+      isClosed: true,
+      cancelledAt,
+      cancelledByDiscordUserId: actor,
+      cancellationReason: 'สร้างรอบผิดสัปดาห์',
+    });
+    expect(duplicate.collection.cancelledAt).toEqual(cancelledAt);
+    expect(first.obligations.every(({ obligation }) => obligation.status === 'EXEMPT')).toBe(true);
+    expect((await service.getProof(guildId, proof.proof.id)).proof).toMatchObject({
+      status: 'REJECTED',
+      rejectionReason: 'สร้างรอบผิดสัปดาห์',
+    });
+    await expect(service.preparePayment(
+      guildId,
+      created.collection.id,
+      secondMember,
+      100_000,
+      new Date('2026-09-08T03:00:00.000Z'),
+    )).rejects.toBeInstanceOf(ConflictError);
+
+    const entries = await db.select().from(treasuryEntries).where(eq(treasuryEntries.guildId, guildId));
+    const [source] = entries.filter((entry) => (
+      entry.sourceType === 'WEEKLY_PAYMENT' && entry.sourceId === proof.proof.id
+    ));
+    expect(entries.filter((entry) => entry.reversalOfEntryId === source!.id)).toHaveLength(1);
+    expect(entries.reduce((sum, entry) => sum + entry.amount, 0)).toBe(0);
+  });
+
+  it('cancels fines generated from a closed collection and ignores its scheduled conversion retry', async () => {
+    const collection = (await service.list(guildId)).find(({ collection: value }) => (
+      value.requestId === 'weekly-create-1'
+    ));
+    expect(collection).toBeDefined();
+    const fineIds = collection!.obligations.flatMap(({ obligation }) => (
+      obligation.convertedFineId === null ? [] : [obligation.convertedFineId]
+    ));
+    expect(fineIds.length).toBeGreaterThan(0);
+
+    const cancelled = await service.cancelCollection(
+      guildId,
+      collection!.collection.id,
+      actor,
+      'ยกเลิกรอบย้อนหลัง',
+      new Date('2026-09-08T04:00:00.000Z'),
+      true,
+    );
+    expect(cancelled.obligations.every(({ obligation }) => obligation.status === 'EXEMPT')).toBe(true);
+    for (const fineId of fineIds) {
+      expect((await fineService.get(guildId, fineId)).fine.status).toBe('CANCELLED');
+    }
+
+    const retried = await service.processConversion(
+      guildId,
+      collection!.collection.id,
+      new Date('2026-09-09T00:00:00.000Z'),
+    );
+    expect(retried.collection.cancelledAt).not.toBeNull();
+    expect(retried.obligations.every(({ obligation }) => obligation.status === 'EXEMPT')).toBe(true);
+  });
 });
 
 async function persistProof(
@@ -165,6 +280,7 @@ async function persistProof(
   prepared: PreparedWeeklyPayment,
   requestId: string,
   submittedByDiscordUserId: string,
+  now = new Date('2026-08-29T01:00:00.000Z'),
 ) {
   return service.persistPayment({
     prepared,
@@ -173,6 +289,6 @@ async function persistProof(
     attachmentId: `attachment-${requestId}`,
     logChannelId: 'weekly-channel',
     logMessageId: `message-${requestId}`,
-    now: new Date('2026-08-29T01:00:00.000Z'),
+    now,
   });
 }

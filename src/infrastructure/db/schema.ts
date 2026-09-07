@@ -598,6 +598,9 @@ export const weeklyCollections = pgTable(
     overdueFineAmount: bigint('overdue_fine_amount', { mode: 'number' }).notNull().default(0),
     recurringFineAmount: bigint('recurring_fine_amount', { mode: 'number' }).notNull().default(0),
     isClosed: boolean('is_closed').notNull().default(false),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true, mode: 'date' }),
+    cancelledByDiscordUserId: text('cancelled_by_discord_user_id'),
+    cancellationReason: text('cancellation_reason'),
     createdByDiscordUserId: text('created_by_discord_user_id').notNull(),
     publicChannelId: text('public_channel_id'),
     publicMessageId: text('public_message_id'),
@@ -609,6 +612,16 @@ export const weeklyCollections = pgTable(
     check('weekly_collections_valid_dates', sql`${table.endsOn} >= ${table.startsOn}`),
     check('weekly_collections_amount_non_negative', sql`${table.standardAmount} >= 0 and ${table.overdueFineAmount} >= 0 and ${table.recurringFineAmount} >= 0`),
     check('weekly_collections_title_not_blank', sql`length(trim(${table.title})) > 0`),
+    check('weekly_collections_cancellation_complete', sql`(
+      ${table.cancelledAt} IS NULL
+      AND ${table.cancelledByDiscordUserId} IS NULL
+      AND ${table.cancellationReason} IS NULL
+    ) OR (
+      ${table.cancelledAt} IS NOT NULL
+      AND ${table.cancelledByDiscordUserId} IS NOT NULL
+      AND length(trim(${table.cancellationReason})) > 0
+      AND ${table.isClosed} = true
+    )`),
   ],
 );
 

@@ -23,6 +23,8 @@ import {
   buildCreateWeeklyModal,
   buildPreparedWeeklyProofLog,
   buildWeeklyAdminPanel,
+  buildWeeklyAnnouncement,
+  buildWeeklyCancellationModal,
   buildWeeklyManagement,
   buildWeeklyOverrideModal,
   buildWeeklyPaymentModal,
@@ -112,6 +114,11 @@ export class WeeklyDuesInteractionHandler {
       await interaction.showModal(buildWeeklyRejectionModal(entityId(interaction.customId, 'weekly:reject:')).addComponents(cancellationConfirmationRow()));
       return;
     }
+    if (interaction.customId.startsWith('weekly:cancel:')) {
+      await this.requireCapability(guild, interaction.user.id, 'FINANCIAL_REVERSE');
+      await interaction.showModal(buildWeeklyCancellationModal(entityId(interaction.customId, 'weekly:cancel:')));
+      return;
+    }
     if (interaction.customId.startsWith('weekly:override:')) {
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
       const collectionId = entityId(interaction.customId, 'weekly:override:');
@@ -164,6 +171,10 @@ export class WeeklyDuesInteractionHandler {
     }
     if (interaction.customId.startsWith('weekly:reject_modal:')) {
       await this.rejectPayment(interaction, guild, entityId(interaction.customId, 'weekly:reject_modal:'));
+      return;
+    }
+    if (interaction.customId.startsWith('weekly:cancel_modal:')) {
+      await this.cancelCollection(interaction, guild, entityId(interaction.customId, 'weekly:cancel_modal:'));
       return;
     }
     if (interaction.customId.startsWith('weekly:override_modal:')) {
@@ -308,10 +319,46 @@ export class WeeklyDuesInteractionHandler {
     await interaction.reply({ ...buildNotice('success', 'บันทึกยอดเฉพาะสมาชิกแล้ว', `สมาชิก: <@${memberId}>`, 'Weekly Dues'), flags: MessageFlags.Ephemeral });
   }
 
+  private async cancelCollection(
+    interaction: ModalSubmitInteraction,
+    guild: Guild,
+    collectionId: string,
+  ): Promise<void> {
+    requireCancellationConfirmation(interaction);
+    await this.requireCapability(guild, interaction.user.id, 'FINANCIAL_REVERSE');
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const view = await this.dependencies.weeklyDues.cancelCollection(
+      guild.id,
+      collectionId,
+      interaction.user.id,
+      interaction.fields.getTextInputValue(weeklyComponentIds.cancellationReason),
+      new Date(),
+      true,
+    );
+    await this.refreshCollection(view);
+    await interaction.editReply(buildNotice(
+      'success',
+      'ยกเลิกรอบส่งเงินแล้ว',
+      'ระบบปิดรอบ ย้อนยอดที่เกี่ยวข้อง และบันทึกใน Audit log เรียบร้อย',
+      'Weekly Dues',
+    ));
+  }
+
   private async updateProofLog(view: WeeklyPaymentProofView): Promise<void> {
     const channel = await fetchSendableChannel(this.dependencies.client, view.proof.logChannelId, 'Channel Log ส่งเงินรายสัปดาห์');
     const message = await channel.messages.fetch(view.proof.logMessageId);
     await message.edit(buildWeeklyProofLog(view));
+  }
+
+  private async refreshCollection(view: Awaited<ReturnType<WeeklyDuesService['get']>>): Promise<void> {
+    if (view.collection.publicChannelId === null || view.collection.publicMessageId === null) return;
+    const channel = await fetchSendableChannel(
+      this.dependencies.client,
+      view.collection.publicChannelId,
+      'Channel ส่งเงินรายสัปดาห์',
+    );
+    const message = await channel.messages.fetch(view.collection.publicMessageId).catch(() => null);
+    if (message !== null) await message.edit(buildWeeklyAnnouncement(view));
   }
 
   private async requireActiveMember(guild: Guild, discordUserId: string): Promise<void> {

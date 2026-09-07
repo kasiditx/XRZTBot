@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { DateTime } from 'luxon';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { AuthorizationError, ConflictError, NotFoundError, ValidationError } from '../../domain/errors.js';
 import type { Database } from '../../infrastructure/db/client.js';
 import {
@@ -12,7 +12,7 @@ import {
   weeklyPaymentProofs,
 } from '../../infrastructure/db/schema.js';
 import { writeAudit as persistAudit } from '../audit/service.js';
-import { createSourcedFineWithTransaction } from '../fines/service.js';
+import { cancelFineWithTransaction, createSourcedFineWithTransaction } from '../fines/service.js';
 import { appendTreasuryEntryWithTransaction, reverseSourcedTreasuryEntry } from '../treasury/service.js';
 import { buildWeeklyOverdueFine } from './rules.js';
 
@@ -374,9 +374,120 @@ export class WeeklyDuesService {
     return this.getProof(guildId, proofId);
   }
 
+  public async cancelCollection(
+    guildId: string,
+    collectionId: string,
+    actorDiscordUserId: string,
+    reason: string,
+    now: Date,
+    allowReversal = false,
+  ): Promise<WeeklyCollectionView> {
+    if (!allowReversal) throw new AuthorizationError('ยกเลิกรอบส่งเงินได้เฉพาะหัวแก๊ง/Dev');
+    const cancellationReason = requireText(reason, 'เหตุผลที่ยกเลิก', 2, 500);
+    await this.db.transaction(async (tx) => {
+      const collection = await lockCollection(tx, guildId, collectionId);
+      if (collection.cancelledAt !== null) return;
+
+      const obligations = await tx
+        .select()
+        .from(weeklyObligations)
+        .where(and(eq(weeklyObligations.guildId, guildId), eq(weeklyObligations.collectionId, collectionId)))
+        .orderBy(weeklyObligations.id)
+        .for('update');
+      const obligationIds = obligations.map((obligation) => obligation.id);
+      const proofs = obligationIds.length === 0
+        ? []
+        : await tx
+            .select()
+            .from(weeklyPaymentProofs)
+            .where(and(
+              eq(weeklyPaymentProofs.guildId, guildId),
+              inArray(weeklyPaymentProofs.obligationId, obligationIds),
+            ))
+            .orderBy(weeklyPaymentProofs.id)
+            .for('update');
+
+      for (const proof of proofs) {
+        await queueWeeklyProofRefresh(tx, guildId, proof.id, now);
+        if (proof.status === 'REJECTED' || proof.status === 'CANCELLED') continue;
+        if (proof.status === 'APPROVED') {
+          await reverseSourcedTreasuryEntry(
+            tx,
+            guildId,
+            'WEEKLY_PAYMENT',
+            proof.id,
+            cancellationReason,
+            actorDiscordUserId,
+            now,
+          );
+        }
+        await tx
+          .update(weeklyPaymentProofs)
+          .set({
+            status: 'REJECTED',
+            rejectionReason: cancellationReason,
+            decidedAt: now,
+            decidedByDiscordUserId: actorDiscordUserId,
+            updatedAt: now,
+          })
+          .where(eq(weeklyPaymentProofs.id, proof.id));
+      }
+
+      for (const obligation of obligations) {
+        if (obligation.convertedFineId !== null) {
+          await cancelFineWithTransaction(
+            tx,
+            guildId,
+            obligation.convertedFineId,
+            actorDiscordUserId,
+            cancellationReason,
+            now,
+          );
+        }
+      }
+
+      await tx
+        .update(weeklyObligations)
+        .set({
+          status: 'EXEMPT',
+          decidedAt: now,
+          decidedByDiscordUserId: actorDiscordUserId,
+          rejectionReason: cancellationReason,
+          updatedAt: now,
+        })
+        .where(and(eq(weeklyObligations.guildId, guildId), eq(weeklyObligations.collectionId, collectionId)));
+      const [cancelled] = await tx
+        .update(weeklyCollections)
+        .set({
+          isClosed: true,
+          cancelledAt: now,
+          cancelledByDiscordUserId: actorDiscordUserId,
+          cancellationReason,
+          updatedAt: now,
+        })
+        .where(eq(weeklyCollections.id, collectionId))
+        .returning();
+      if (cancelled === undefined) throw new Error('Weekly collection cancellation did not return a row');
+      await queueWeeklyRefresh(tx, guildId, collectionId, now);
+      await writeAudit(
+        tx,
+        guildId,
+        actorDiscordUserId,
+        'WEEKLY_COLLECTION_CANCELLED',
+        'WEEKLY_COLLECTION',
+        collectionId,
+        collection,
+        cancelled,
+        cancellationReason,
+      );
+    });
+    return this.get(guildId, collectionId);
+  }
+
   public async processConversion(guildId: string, collectionId: string, now: Date): Promise<WeeklyCollectionView> {
     await this.db.transaction(async (tx) => {
       const collection = await lockCollection(tx, guildId, collectionId);
+      if (collection.cancelledAt !== null) return;
       if (now < collection.conversionAt) throw new ConflictError('ยังไม่ถึงเวลาปิดรอบส่งเงิน');
       const unpaid = await tx
         .select()
@@ -469,6 +580,20 @@ async function lockObligation(tx: Transaction, guildId: string, obligationId: st
 }
 
 async function lockProofContext(tx: Transaction, guildId: string, proofId: string) {
+  const [proofReference] = await tx
+    .select({ obligationId: weeklyPaymentProofs.obligationId })
+    .from(weeklyPaymentProofs)
+    .where(and(eq(weeklyPaymentProofs.guildId, guildId), eq(weeklyPaymentProofs.id, proofId)))
+    .limit(1);
+  if (proofReference === undefined) throw new NotFoundError('ไม่พบหลักฐานส่งเงินรายสัปดาห์');
+  const [obligationReference] = await tx
+    .select({ collectionId: weeklyObligations.collectionId })
+    .from(weeklyObligations)
+    .where(and(eq(weeklyObligations.guildId, guildId), eq(weeklyObligations.id, proofReference.obligationId)))
+    .limit(1);
+  if (obligationReference === undefined) throw new NotFoundError('ไม่พบยอดเรียกเก็บรายสัปดาห์');
+  const collection = await lockCollection(tx, guildId, obligationReference.collectionId);
+  const obligation = await lockObligation(tx, guildId, proofReference.obligationId);
   const [proof] = await tx
     .select()
     .from(weeklyPaymentProofs)
@@ -476,14 +601,6 @@ async function lockProofContext(tx: Transaction, guildId: string, proofId: strin
     .limit(1)
     .for('update');
   if (proof === undefined) throw new NotFoundError('ไม่พบหลักฐานส่งเงินรายสัปดาห์');
-  const [obligationReference] = await tx
-    .select({ collectionId: weeklyObligations.collectionId })
-    .from(weeklyObligations)
-    .where(and(eq(weeklyObligations.guildId, guildId), eq(weeklyObligations.id, proof.obligationId)))
-    .limit(1);
-  if (obligationReference === undefined) throw new NotFoundError('ไม่พบยอดเรียกเก็บรายสัปดาห์');
-  const collection = await lockCollection(tx, guildId, obligationReference.collectionId);
-  const obligation = await lockObligation(tx, guildId, proof.obligationId);
   if (obligation.collectionId !== collection.id) throw new ConflictError('ยอดเรียกเก็บไม่อยู่ในรอบของหลักฐาน');
   return { proof, obligation, collection };
 }
@@ -495,6 +612,7 @@ async function getMember(tx: Transaction, memberId: string) {
 }
 
 async function requireCollectionOpen(tx: Transaction, collection: WeeklyCollection, now: Date): Promise<void> {
+  if (collection.cancelledAt !== null) throw new ConflictError('รอบส่งเงินนี้ถูกยกเลิกแล้ว');
   if (collection.isClosed || now >= collection.conversionAt) throw new ConflictError('หมดเวลาส่งเงินรอบนี้แล้ว');
   const [settings] = await tx
     .select({ timezone: guildSettings.timezone })
@@ -558,6 +676,16 @@ async function queueWeeklyJob(
 
 async function queueWeeklyRefresh(tx: Transaction, guildId: string, collectionId: string, runAt: Date): Promise<void> {
   await queueWeeklyJob(tx, guildId, 'WEEKLY_REFRESH', collectionId, runAt, `refresh:${randomUUID()}`);
+}
+
+async function queueWeeklyProofRefresh(tx: Transaction, guildId: string, proofId: string, runAt: Date): Promise<void> {
+  await tx.insert(scheduledJobs).values({
+    guildId,
+    jobType: 'WEEKLY_PROOF_REFRESH',
+    deduplicationKey: `weekly-proof:${proofId}:refresh:${randomUUID()}`,
+    payload: { proofId },
+    runAt,
+  });
 }
 
 async function writeAudit(

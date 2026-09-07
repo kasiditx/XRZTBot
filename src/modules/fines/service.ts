@@ -322,28 +322,7 @@ export class FineService {
   ): Promise<FineView> {
     const cancellationReason = requireText(reason, 'เหตุผลที่ยกเลิก', 2, 500);
     await this.db.transaction(async (tx) => {
-      const fine = await lockFine(tx, guildId, fineId);
-      if (fine.status === 'CANCELLED') return;
-      const proofs = await tx.select().from(finePaymentProofs)
-        .where(and(eq(finePaymentProofs.guildId, guildId), eq(finePaymentProofs.fineId, fineId))).for('update');
-      for (const proof of proofs) {
-        await queueFineProofRefresh(tx, guildId, proof.id, now);
-        if (proof.status === 'REJECTED') continue;
-        if (proof.status === 'APPROVED') {
-          await reverseSourcedTreasuryEntry(tx, guildId, 'FINE_PAYMENT', proof.id, cancellationReason, actorDiscordUserId, now);
-        }
-        await tx.update(finePaymentProofs).set({
-          status: 'REJECTED', rejectionReason: cancellationReason,
-          decidedAt: now, decidedByDiscordUserId: actorDiscordUserId, updatedAt: now,
-        }).where(eq(finePaymentProofs.id, proof.id));
-      }
-      const [cancelled] = await tx
-        .update(fines)
-        .set({ status: 'CANCELLED', paidAt: null, updatedAt: now })
-        .where(eq(fines.id, fineId))
-        .returning();
-      await queueFineRefresh(tx, guildId, fineId, now);
-      await writeFineAudit(tx, guildId, actorDiscordUserId, 'FINE_CANCELLED', 'FINE', fineId, fine, cancelled ?? null, cancellationReason);
+      await cancelFineWithTransaction(tx, guildId, fineId, actorDiscordUserId, cancellationReason, now);
     });
     return this.get(guildId, fineId);
   }
@@ -413,6 +392,71 @@ export async function createSourcedFineWithTransaction(
   await queueFineSurcharge(tx, created);
   await writeFineAudit(tx, input.guildId, input.actorDiscordUserId, 'FINE_CREATED', 'FINE', created.id, null, created);
   return created;
+}
+
+/** Cancels a fine and reverses approved payments inside a caller-owned transaction. */
+export async function cancelFineWithTransaction(
+  tx: Transaction,
+  guildId: string,
+  fineId: string,
+  actorDiscordUserId: string,
+  reason: string,
+  now: Date,
+): Promise<Fine> {
+  const cancellationReason = requireText(reason, 'เหตุผลที่ยกเลิก', 2, 500);
+  const fine = await lockFine(tx, guildId, fineId);
+  if (fine.status === 'CANCELLED') return fine;
+
+  const proofs = await tx
+    .select()
+    .from(finePaymentProofs)
+    .where(and(eq(finePaymentProofs.guildId, guildId), eq(finePaymentProofs.fineId, fineId)))
+    .for('update');
+  for (const proof of proofs) {
+    await queueFineProofRefresh(tx, guildId, proof.id, now);
+    if (proof.status === 'REJECTED' || proof.status === 'CANCELLED') continue;
+    if (proof.status === 'APPROVED') {
+      await reverseSourcedTreasuryEntry(
+        tx,
+        guildId,
+        'FINE_PAYMENT',
+        proof.id,
+        cancellationReason,
+        actorDiscordUserId,
+        now,
+      );
+    }
+    await tx
+      .update(finePaymentProofs)
+      .set({
+        status: 'REJECTED',
+        rejectionReason: cancellationReason,
+        decidedAt: now,
+        decidedByDiscordUserId: actorDiscordUserId,
+        updatedAt: now,
+      })
+      .where(eq(finePaymentProofs.id, proof.id));
+  }
+
+  const [cancelled] = await tx
+    .update(fines)
+    .set({ status: 'CANCELLED', paidAt: null, updatedAt: now })
+    .where(eq(fines.id, fineId))
+    .returning();
+  if (cancelled === undefined) throw new Error('Fine cancellation did not return a row');
+  await queueFineRefresh(tx, guildId, fineId, now);
+  await writeFineAudit(
+    tx,
+    guildId,
+    actorDiscordUserId,
+    'FINE_CANCELLED',
+    'FINE',
+    fineId,
+    fine,
+    cancelled,
+    cancellationReason,
+  );
+  return cancelled;
 }
 
 async function accrueFineWithTransaction(

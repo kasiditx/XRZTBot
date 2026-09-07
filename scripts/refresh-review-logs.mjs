@@ -3,7 +3,7 @@ import 'dotenv/config';
 import { and, asc, eq, gt, isNotNull } from 'drizzle-orm';
 import { REST, Routes } from 'discord.js';
 import { createDatabase } from '../dist/infrastructure/db/client.js';
-import { activitySubmissions, depositRequests, finePaymentProofs, fines, guildSettings, leaves, treasuryWithdrawalRequests, weeklyPaymentProofs, withdrawalRequests } from '../dist/infrastructure/db/schema.js';
+import { activitySubmissions, depositRequests, finePaymentProofs, fines, guildSettings, leaves, treasuryWithdrawalRequests, weeklyCollections, weeklyPaymentProofs, withdrawalRequests } from '../dist/infrastructure/db/schema.js';
 import { ActivityService } from '../dist/modules/activities/service.js';
 import { AttendanceService } from '../dist/modules/attendance/service.js';
 import { DepositService } from '../dist/modules/deposits/service.js';
@@ -16,7 +16,7 @@ import { buildLeaveLog } from '../dist/infrastructure/discord/attendance-compone
 import { buildFineAnnouncement, buildFineProofLog } from '../dist/infrastructure/discord/fine-components.js';
 import { buildDepositLog, buildWithdrawalLog } from '../dist/infrastructure/discord/stock-components.js';
 import { buildTreasuryWithdrawalRequestLog } from '../dist/infrastructure/discord/treasury-components.js';
-import { buildWeeklyProofLog } from '../dist/infrastructure/discord/weekly-dues-components.js';
+import { buildWeeklyAnnouncement, buildWeeklyProofLog } from '../dist/infrastructure/discord/weekly-dues-components.js';
 
 // Run only after deploying the matching handlers. Default is a read-only inventory.
 const apply = process.argv.includes('--apply');
@@ -36,7 +36,8 @@ const targets = [
   ['leave', leaves, 'publicChannelId', 'publicMessageId', (id) => attendance.getLeave(guildId, id), buildLeaveLog],
   ['fine', fines, 'publicChannelId', 'publicMessageId', (id) => fineService.get(guildId, id), buildFineAnnouncement],
   ['fine-proof', finePaymentProofs, 'logChannelId', 'logMessageId', (id) => fineService.getProof(guildId, id), buildFineProofLog],
-  ['weekly', weeklyPaymentProofs, 'logChannelId', 'logMessageId', (id) => weekly.getProof(guildId, id), buildWeeklyProofLog],
+  ['weekly-collection', weeklyCollections, 'publicChannelId', 'publicMessageId', (id) => weekly.get(guildId, id), buildWeeklyAnnouncement],
+  ['weekly-proof', weeklyPaymentProofs, 'logChannelId', 'logMessageId', (id) => weekly.getProof(guildId, id), buildWeeklyProofLog],
   ['treasury-withdrawal', treasuryWithdrawalRequests, 'publicChannelId', 'publicMessageId', (id) => treasury.get(guildId, id), buildTreasuryWithdrawalRequestLog],
   ['withdrawal', withdrawalRequests, 'publicChannelId', 'publicMessageId', (id) => withdrawals.get(guildId, id), buildWithdrawalLog],
   ['deposit', depositRequests, 'publicChannelId', 'publicMessageId', (id) => deposits.get(guildId, id), buildDepositLog],

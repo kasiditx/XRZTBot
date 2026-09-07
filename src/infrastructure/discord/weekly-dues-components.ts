@@ -9,6 +9,7 @@ import {
   TextInputStyle,
 } from 'discord.js';
 import { buildEvidenceInputLabel, type EvidenceInputMode } from './evidence-images.js';
+import { cancellationConfirmationRow } from './cancellation-confirmation.js';
 import { MiruEmbedBuilder as EmbedBuilder, formatPanelText } from './theme.js';
 import type {
   PreparedWeeklyPayment,
@@ -31,6 +32,7 @@ export const weeklyComponentIds = {
   overrideMember: 'weekly:override_member',
   overrideAmount: 'weekly:override_amount',
   rejectionReason: 'weekly:rejection_reason',
+  cancellationReason: 'weekly:cancellation_reason',
 } as const;
 
 export const weeklyCreateModalId = 'weekly:create_modal';
@@ -50,7 +52,7 @@ export function buildWeeklyAdminPanel(values: readonly WeeklyCollectionView[]) {
     .setPlaceholder('เลือกรอบเพื่อดูหรือกำหนดยอดเฉพาะคน')
     .addOptions(values.slice(0, 25).map(({ collection }) => ({
       label: collection.title.slice(0, 100),
-      description: `${collection.startsOn}–${collection.endsOn} · ${collection.isClosed ? 'ปิดแล้ว' : 'เปิดอยู่'}`.slice(0, 100),
+      description: `${collection.startsOn}–${collection.endsOn} · ${weeklyCollectionState(collection)}`.slice(0, 100),
       value: collection.id,
     })));
   return {
@@ -74,20 +76,22 @@ export function buildCreateWeeklyModal(startsOn: string, endsOn: string): ModalB
 
 export function buildWeeklyAnnouncement(view: WeeklyCollectionView) {
   const { collection } = view;
+  const isCancelled = collection.cancelledAt !== null;
   const descriptions = buildWeeklyDescriptions(view);
   const embeds = descriptions.map((description, index) => new EmbedBuilder()
-    .setColor(collection.isClosed ? 0x747f8d : 0x5865f2)
-    .setTitle(`💰 ${collection.title}${index === 0 ? '' : ' (ต่อ)'}`)
+    .setColor(isCancelled ? 0xed4245 : collection.isClosed ? 0x747f8d : 0x5865f2)
+    .setTitle(`${isCancelled ? '❌' : '💰'} ${collection.title}${index === 0 ? '' : ' (ต่อ)'}`)
     .setDescription(description)
-    .setFooter({ text: collection.isClosed ? 'ปิดรอบแล้ว' : 'แนบรูปหลักฐาน 1 รูปและรอหัวแก๊ง/รองแก๊งตรวจสอบ' })
+    .setFooter({ text: isCancelled ? 'ยกเลิกรอบแล้ว' : collection.isClosed ? 'ปิดรอบแล้ว' : 'แนบรูปหลักฐาน 1 รูปและรอหัวแก๊ง/รองแก๊งตรวจสอบ' })
     .setTimestamp(collection.updatedAt));
   const pay = new ButtonBuilder()
     .setCustomId(`weekly:pay:${collection.id}`)
-    .setLabel(collection.isClosed ? 'ปิดรอบแล้ว' : 'ส่งหลักฐาน')
+    .setLabel(isCancelled ? 'ยกเลิกรอบแล้ว' : collection.isClosed ? 'ปิดรอบแล้ว' : 'ส่งหลักฐาน')
     .setEmoji('📸')
     .setStyle(ButtonStyle.Primary)
     .setDisabled(collection.isClosed);
-  return { embeds, components: [new ActionRowBuilder<ButtonBuilder>().addComponents(pay)] };
+  const cancel = buildWeeklyCancellationButton(collection.id, isCancelled);
+  return { embeds, components: [new ActionRowBuilder<ButtonBuilder>().addComponents(pay, cancel)] };
 }
 
 function buildWeeklyDescriptions(view: WeeklyCollectionView): string[] {
@@ -96,6 +100,13 @@ function buildWeeklyDescriptions(view: WeeklyCollectionView): string[] {
     `ช่วงวันที่ **${collection.startsOn} – ${collection.endsOn}**`,
     `ยอดมาตรฐาน **${collection.standardAmount.toLocaleString('th-TH')}**`,
     `ค่าปรับเมื่อหมดเวลา **${collection.overdueFineAmount.toLocaleString('th-TH')}** และเพิ่ม **${collection.recurringFineAmount.toLocaleString('th-TH')}** ทุก 24 ชั่วโมง`,
+    ...(collection.cancelledAt === null
+      ? []
+      : [
+          '',
+          `**ยกเลิกรอบโดย** ${collection.cancelledByDiscordUserId === null ? 'ไม่ทราบผู้ยกเลิก' : `<@${collection.cancelledByDiscordUserId}>`}`,
+          `**เหตุผล** ${collection.cancellationReason ?? '—'}`,
+        ]),
     '',
     `**สถานะสมาชิก (${obligations.length.toString()} คน)**`,
     ...obligations.map(({ obligation, member }) =>
@@ -129,7 +140,29 @@ export function buildWeeklyManagement(view: WeeklyCollectionView) {
     .setLabel('กำหนดยอดเฉพาะสมาชิก')
     .setStyle(ButtonStyle.Secondary)
     .setDisabled(view.collection.isClosed);
-  return { embeds: content.embeds, components: [new ActionRowBuilder<ButtonBuilder>().addComponents(override)] };
+  const cancel = buildWeeklyCancellationButton(
+    view.collection.id,
+    view.collection.cancelledAt !== null,
+  );
+  return { embeds: content.embeds, components: [new ActionRowBuilder<ButtonBuilder>().addComponents(override, cancel)] };
+}
+
+export function buildWeeklyCancellationModal(collectionId: string): ModalBuilder {
+  return new ModalBuilder()
+    .setCustomId(`weekly:cancel_modal:${collectionId}`)
+    .setTitle('ยกเลิกรอบส่งเงินรายสัปดาห์')
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId(weeklyComponentIds.cancellationReason)
+          .setLabel('เหตุผลที่ยกเลิกรอบ')
+          .setStyle(TextInputStyle.Paragraph)
+          .setMinLength(2)
+          .setMaxLength(500)
+          .setRequired(true),
+      ),
+      cancellationConfirmationRow(),
+    );
 }
 
 export function buildWeeklyOverrideModal(collectionId: string, members: readonly MemberSelectionOption[]): ModalBuilder {
@@ -256,4 +289,18 @@ function memberOptions(members: readonly MemberSelectionOption[]) {
     description: `@${member.discordUserId}`,
     value: member.discordUserId,
   }));
+}
+
+function buildWeeklyCancellationButton(collectionId: string, disabled: boolean): ButtonBuilder {
+  return new ButtonBuilder()
+    .setCustomId(`weekly:cancel:${collectionId}`)
+    .setLabel(disabled ? 'ยกเลิกแล้ว' : 'ยกเลิกรอบ')
+    .setEmoji('🗑️')
+    .setStyle(ButtonStyle.Danger)
+    .setDisabled(disabled);
+}
+
+function weeklyCollectionState(collection: WeeklyCollectionView['collection']): string {
+  if (collection.cancelledAt !== null) return 'ยกเลิกแล้ว';
+  return collection.isClosed ? 'ปิดแล้ว' : 'เปิดอยู่';
 }
