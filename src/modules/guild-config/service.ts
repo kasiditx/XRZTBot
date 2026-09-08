@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import type { Database } from '../../infrastructure/db/client.js';
 import { guildSettings, type GuildSettings } from '../../infrastructure/db/schema.js';
+import { queueCurrentRelease } from '../releases/service.js';
 
 export type ConfigurableChannel =
   | 'controlChannelId'
@@ -25,6 +26,7 @@ export type ConfigurableChannel =
   | 'withdrawalLogChannelId'
   | 'depositLogChannelId'
   | 'fightPositionChannelId'
+  | 'releaseChannelId'
   | 'auditChannelId';
 
 export interface RoleSettingsInput {
@@ -105,6 +107,7 @@ export class GuildConfigService {
       .update(guildSettings)
       .set({ [field]: channelId, updatedAt: new Date() })
       .where(eq(guildSettings.guildId, guildId));
+    if (field === 'releaseChannelId') await queueCurrentRelease(this.db, guildId);
   }
 
   public async saveControlPanelMessage(guildId: string, messageId: string): Promise<void> {

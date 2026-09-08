@@ -30,6 +30,8 @@ import { MemberService } from '../modules/members/service.js';
 import { AuditService } from '../modules/audit/service.js';
 import { FightPositionService } from '../modules/fight-positions/service.js';
 import { DurableScheduler } from '../modules/scheduler/service.js';
+import { queueCurrentRelease, RELEASE_ANNOUNCEMENT_JOB } from '../modules/releases/service.js';
+import { createReleaseAnnouncementHandler } from '../infrastructure/discord/release-publisher.js';
 
 export interface RunningApplication {
   readonly stop: () => Promise<void>;
@@ -148,24 +150,27 @@ export async function bootstrap(): Promise<RunningApplication> {
 
   const scheduler = new DurableScheduler(
     db,
-    createDiscordJobHandlers(
-      client,
-      memberService,
-      activityService,
-      attendanceService,
-      fineService,
-      treasuryService,
-      treasuryWithdrawalService,
-      weeklyDuesService,
-      inventoryService,
-      withdrawalService,
-      auditService,
-      fightPositionService,
-      guildConfig,
-      dailyLogs,
-      logger,
-      depositService,
-    ),
+    new Map([
+      ...createDiscordJobHandlers(
+        client,
+        memberService,
+        activityService,
+        attendanceService,
+        fineService,
+        treasuryService,
+        treasuryWithdrawalService,
+        weeklyDuesService,
+        inventoryService,
+        withdrawalService,
+        auditService,
+        fightPositionService,
+        guildConfig,
+        dailyLogs,
+        logger,
+        depositService,
+      ),
+      [RELEASE_ANNOUNCEMENT_JOB, createReleaseAnnouncementHandler(client)] as const,
+    ]),
     env.DISCORD_GUILD_ID,
     env.SCHEDULER_POLL_MS,
     logger,
@@ -176,8 +181,10 @@ export async function bootstrap(): Promise<RunningApplication> {
   try {
     healthServer = await startHealthServer(env.HEALTH_PORT, { client, checkDatabase });
     logger.info({ port: env.HEALTH_PORT }, 'health server listening');
+    await queueCurrentRelease(db, env.DISCORD_GUILD_ID);
   } catch (error: unknown) {
     await scheduler.stop();
+    if (healthServer !== null) await closeServer(healthServer);
     await client.destroy();
     await pool.end();
     throw error;

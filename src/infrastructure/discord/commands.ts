@@ -59,6 +59,7 @@ const adminCommand = new SlashCommandBuilder()
             { name: 'Log เบิกของ', value: 'withdrawalLogChannelId' },
             { name: 'Log ส่งของ', value: 'depositLogChannelId' },
             { name: 'ตำแหน่ง Fight', value: 'fightPositionChannelId' },
+            { name: 'ข่าวอัปเดตบอท', value: 'releaseChannelId' },
             { name: 'Audit (หัวแก๊ง/รองแก๊ง/Dev)', value: 'auditChannelId' },
           ),
       )

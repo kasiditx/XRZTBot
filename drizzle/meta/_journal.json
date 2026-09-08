@@ -190,6 +190,13 @@
       "when": 1788757109638,
       "tag": "0026_busy_maximus",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1788868304031,
+      "tag": "0027_parched_king_bedlam",
+      "breakpoints": true
     }
   ]
 }

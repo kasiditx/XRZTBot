@@ -71,6 +71,7 @@ const channelFields: readonly ConfigurableChannel[] = [
   'withdrawalLogChannelId',
   'depositLogChannelId',
   'fightPositionChannelId',
+  'releaseChannelId',
   'auditChannelId',
 ];
 

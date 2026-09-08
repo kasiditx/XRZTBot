@@ -77,6 +77,7 @@ export const guildSettings = pgTable('guild_settings', {
   fightPositionChannelId: text('fight_position_channel_id'),
   fightPositionSummaryMessageId: text('fight_position_summary_message_id'),
   auditChannelId: text('audit_channel_id'),
+  releaseChannelId: text('release_channel_id'),
   controlPanelMessageId: text('control_panel_message_id'),
   ...auditColumns,
 });

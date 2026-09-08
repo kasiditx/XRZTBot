@@ -1,0 +1,1 @@
+ALTER TABLE "guild_settings" ADD COLUMN "release_channel_id" text;
