@@ -55,16 +55,27 @@ describe('member roster Discord component', () => {
       { ...member(1, 'Leader Miru'), rosterTitle: 'HEAD' as const },
       { ...member(2, 'Deputy Miru'), rosterTitle: 'DEPUTY' as const },
       { ...member(3, 'Account Miru'), rosterTitle: 'ACCOUNTANT' as const },
-      { ...member(4, 'Reserve Miru'), rosterTitle: 'RESERVE' as const },
       { ...member(5, 'General Miru'), rosterTitle: null },
+      { ...member(4, 'Reserve Miru'), rosterTitle: 'RESERVE' as const },
     ];
     const embed = buildMemberRoster(titledMembers).embeds[0]?.toJSON();
 
-    expect(embed?.description).toContain('1. 👑 **หัวแก๊ง** — **Leader Miru**');
-    expect(embed?.description).toContain('2. ⭐ **รองแก๊ง** — **Deputy Miru**');
-    expect(embed?.description).toContain('3. 💰 **บัญชีแก๊ง** — **Account Miru**');
-    expect(embed?.description).toContain('4. 🛡️ **สำรอง** — **Reserve Miru**');
-    expect(embed?.description).toContain('5. 👤 **สมาชิก** — **General Miru**');
+    expect(embed?.description).toBe([
+      '> **━━━━━━━━━━ ୨୧ ✦ 👑 หัวแก๊ง ✦ ୨୧ ━━━━━━━━━━**',
+      '> 1. 👑 **หัวแก๊ง** — **Leader Miru** — <@700000000000000001>',
+      '> ',
+      '> **━━━━━━━━━━ ୨୧ ✦ ⭐ รองแก๊ง ✦ ୨୧ ━━━━━━━━━━**',
+      '> 2. ⭐ **รองแก๊ง** — **Deputy Miru** — <@700000000000000002>',
+      '> ',
+      '> **━━━━━━━━━━ ୨୧ ✦ 💰 บัญชีแก๊ง ✦ ୨୧ ━━━━━━━━━━**',
+      '> 3. 💰 **บัญชีแก๊ง** — **Account Miru** — <@700000000000000003>',
+      '> ',
+      '> **━━━━━━━━━━ ୨୧ ✦ 👤 สมาชิก ✦ ୨୧ ━━━━━━━━━━**',
+      '> 4. 👤 **สมาชิก** — **General Miru** — <@700000000000000005>',
+      '> ',
+      '> **━━━━━━━━━━ ୨୧ ✦ 🛡️ สำรอง ✦ ୨୧ ━━━━━━━━━━**',
+      '> 5. 🛡️ **สำรอง** — **Reserve Miru** — <@700000000000000004>',
+    ].join('\n'));
   });
 });
 

@@ -302,7 +302,7 @@ export function buildLeavePanel() {
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle('📝 แจ้งลา')
-    .setDescription('สมาชิกสามารถแจ้งลาล่วงหน้าได้ทันทีโดยไม่ต้องรออนุมัติ\nถ้าเช็กชื่อแล้วและแจ้งลาภายใน 23:59 ของวันนั้น ระบบจะนับเป็น **ลาเหตุฉุกเฉิน**');
+    .setDescription('สมาชิกสามารถแจ้งลาล่วงหน้าได้ทันทีโดยไม่ต้องรออนุมัติ\nถ้าเช็กชื่อแล้วและแจ้งลาภายใน 23:59 ของวันนั้น ระบบจะเปลี่ยนผลจาก **มา** เป็น **ลา**');
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(attendanceComponentIds.leaveSubmit).setLabel('แจ้งลา').setEmoji('📝').setStyle(ButtonStyle.Primary),
   );

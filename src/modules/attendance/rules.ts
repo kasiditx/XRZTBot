@@ -59,11 +59,8 @@ export function classifyAttendance(evidence: AttendanceEvidence): AttendanceResu
       throw new ValidationError('เวลาเช็กชื่อต้องอยู่ในช่วงเปิดเช็กชื่อ');
     }
 
-    const emergencyLeave = coveringLeaves.find(
-      (leave) => leave.submittedAt > evidence.checkedInAt! && leave.submittedAt <= evidence.emergencyLeaveCutoff,
-    );
-
-    return emergencyLeave === undefined ? 'PRESENT' : 'EMERGENCY_LEAVE';
+    const eligibleLeave = coveringLeaves.some((leave) => leave.submittedAt <= evidence.emergencyLeaveCutoff);
+    return eligibleLeave ? 'LEAVE' : 'PRESENT';
   }
 
   const onTimeLeave = coveringLeaves.some((leave) => leave.submittedAt <= evidence.closesAt);

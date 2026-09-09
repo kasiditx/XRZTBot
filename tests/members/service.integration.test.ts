@@ -100,6 +100,23 @@ describeWithDatabase('MemberService PostgreSQL integration', () => {
     expect(adminRoleSyncJobs.some((job) => job.payload.discordUserId === zixx!.discordUserId && job.payload.desiredRole === null)).toBe(true);
   });
 
+  it('lists reserve members after general members', async () => {
+    const orderGuildId = `${guildId}-roster-order`;
+    await db.insert(guildSettings).values({ guildId: orderGuildId });
+    try {
+      const reserve = await service.addDirectly(orderGuildId, '710000000000000001', 'A Reserve', admin, roleIds);
+      await service.addDirectly(orderGuildId, '710000000000000002', 'Z Member', admin, roleIds);
+      await service.assignRosterTitle(orderGuildId, reserve.id, 'RESERVE', admin, roleIds);
+
+      expect((await service.listActive(orderGuildId)).map((member) => [member.inGameName, member.rosterTitle])).toEqual([
+        ['Z Member', null],
+        ['A Reserve', 'RESERVE'],
+      ]);
+    } finally {
+      await db.delete(guildSettings).where(eq(guildSettings.guildId, orderGuildId));
+    }
+  });
+
   it('removes a former member from the active roster and queues another refresh', async () => {
     const refreshJobsBefore = (await db.select().from(scheduledJobs).where(eq(scheduledJobs.guildId, guildId)))
       .filter((job) => job.jobType === 'MEMBER_ROSTER_REFRESH').length;

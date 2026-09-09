@@ -84,6 +84,43 @@ describeWithDatabase('AttendanceService PostgreSQL integration', () => {
     expect(await service.getReminderRecipients(guildId, round.id)).toEqual([charlie]);
   });
 
+  it('does not let a member check in over an active leave', async () => {
+    await expect(service.checkIn(
+      guildId,
+      round.id,
+      beta,
+      new Date('2026-08-27T12:15:00.000Z'),
+    )).rejects.toThrow('คุณแจ้งลาในรอบนี้แล้ว ไม่สามารถเช็กชื่อทับได้');
+  });
+
+  it('changes a checked-in member from present to leave immediately after leave submission', async () => {
+    const leaveRound = await service.createRound({
+      guildId,
+      requestId: 'attendance-leave-after-check-in',
+      title: 'รอบเปลี่ยนมาเป็นลา',
+      mode: 'GENERAL',
+      ...buildAttendanceRoundTimes('2026-09-09', '19:00', '21:30', timezone),
+      actorDiscordUserId: alpha,
+      now: new Date('2026-09-09T12:00:00.000Z'),
+    });
+    await service.checkIn(guildId, leaveRound.id, charlie, new Date('2026-09-09T12:10:00.000Z'));
+
+    await service.submitLeave({
+      guildId,
+      requestId: 'leave-after-check-in',
+      discordUserId: charlie,
+      startsOn: '2026-09-09',
+      endsOn: '2026-09-09',
+      reason: 'ติดธุระด่วน',
+      timezone,
+      now: new Date('2026-09-09T12:20:00.000Z'),
+    });
+
+    const view = await service.getRoundView(guildId, leaveRound.id);
+    expect(view.present.map((member) => member.discordUserId)).not.toContain(charlie);
+    expect(view.leave.map((member) => member.discordUserId)).toContain(charlie);
+  });
+
   it('closes as present, leave, and absent using the locked rules', async () => {
     await service.closeRound(guildId, round.id, new Date('2026-08-27T14:30:01.000Z'));
     const view = await service.getRoundView(guildId, round.id);
@@ -92,7 +129,7 @@ describeWithDatabase('AttendanceService PostgreSQL integration', () => {
     expect(view.absent.map((member) => member.inGameName)).toEqual(['Charlie']);
   });
 
-  it('reclassifies checked-in member as emergency leave but keeps late non-check-in absent', async () => {
+  it('reclassifies checked-in member as leave but keeps late non-check-in absent', async () => {
     await service.submitLeave({
       guildId,
       requestId: 'leave-alpha-emergency',
@@ -114,7 +151,7 @@ describeWithDatabase('AttendanceService PostgreSQL integration', () => {
       now: new Date('2026-08-27T15:05:00.000Z'),
     });
     const view = await service.getRoundView(guildId, round.id);
-    expect(view.emergencyLeave.map((member) => member.inGameName)).toEqual(['Alpha']);
+    expect(view.leave.map((member) => member.inGameName)).toContain('Alpha');
     expect(view.absent.map((member) => member.inGameName)).toEqual(['Charlie']);
   });
 

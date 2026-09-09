@@ -109,9 +109,7 @@ export function buildMemberRoster(activeMembers: readonly Member[], requestedPag
   const embeds = pages.map((visiblePage, index) => {
     const description = visiblePage.members.length === 0
       ? 'ยังไม่มีสมาชิกที่มีสถานะใช้งาน'
-      : visiblePage.members
-          .map((member, memberIndex) => rosterMemberLine(member, visiblePage.startIndex + memberIndex + 1))
-          .join('\n');
+      : renderRosterPage(visiblePage.members, visiblePage.startIndex);
     return new EmbedBuilder()
       .setColor(0x57f287)
       .setTitle(`👥 รายชื่อสมาชิกปัจจุบัน${index === 0 ? '' : ' (ต่อ)'}`)
@@ -126,22 +124,38 @@ function paginateMemberRoster(activeMembers: readonly Member[]): Array<{ readonl
   if (activeMembers.length === 0) return [{ members: [], startIndex: 0 }];
   const pages: Array<{ members: Member[]; startIndex: number }> = [];
   let currentMembers: Member[] = [];
-  let currentLength = 0;
   let startIndex = 0;
   for (const [index, member] of activeMembers.entries()) {
-    const line = rosterMemberLine(member, index + 1);
-    const nextLength = currentLength === 0 ? line.length : currentLength + line.length + 1;
+    const candidate = renderRosterPage([...currentMembers, member], startIndex);
+    const nextLength = candidate.length;
     if (currentMembers.length > 0 && nextLength > memberRosterDescriptionLimit) {
       pages.push({ members: currentMembers, startIndex });
       currentMembers = [];
-      currentLength = 0;
       startIndex = index;
     }
     currentMembers.push(member);
-    currentLength = currentLength === 0 ? line.length : currentLength + line.length + 1;
   }
   pages.push({ members: currentMembers, startIndex });
   return pages;
+}
+
+function renderRosterPage(pageMembers: readonly Member[], startIndex: number): string {
+  const lines: string[] = [];
+  let previousTitle: Member['rosterTitle'] | undefined;
+  for (const [pageIndex, member] of pageMembers.entries()) {
+    if (member.rosterTitle !== previousTitle) {
+      if (lines.length > 0) lines.push('');
+      lines.push(rosterGroupSeparator(member.rosterTitle));
+      previousTitle = member.rosterTitle;
+    }
+    lines.push(rosterMemberLine(member, startIndex + pageIndex + 1));
+  }
+  return lines.join('\n');
+}
+
+function rosterGroupSeparator(title: Member['rosterTitle']): string {
+  const display = rosterTitleDisplay(title);
+  return `**━━━━━━━━━━ ୨୧ ✦ ${display.emoji} ${display.label} ✦ ୨୧ ━━━━━━━━━━**`;
 }
 
 function rosterMemberLine(member: Member, index: number): string {

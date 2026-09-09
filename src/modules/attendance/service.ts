@@ -245,6 +245,10 @@ export class AttendanceService {
         throw new ValidationError('รอบ Airdrop ต้องแนบรูปตัวละครและรายชื่อในวอ');
       }
       const member = await findActiveMember(tx, guildId, discordUserId);
+      const activeLeaves = await findActiveMemberLeavesForRound(tx, guildId, member.id, round.attendanceDate);
+      if (activeLeaves.length > 0) {
+        throw new ConflictError('คุณแจ้งลาในรอบนี้แล้ว ไม่สามารถเช็กชื่อทับได้');
+      }
       const [existing] = await tx
         .select()
         .from(attendanceRecords)
@@ -288,6 +292,10 @@ export class AttendanceService {
           throw new ValidationError('เช็กชื่อทั่วไปไม่ต้องแนบรูปหลักฐาน');
         }
         const member = await findActiveMember(tx, guildId, discordUserId);
+        const activeLeaves = await findActiveMemberLeavesForRound(tx, guildId, member.id, round.attendanceDate);
+        if (activeLeaves.length > 0) {
+          throw new ConflictError('คุณแจ้งลาในรอบนี้แล้ว ไม่สามารถเช็กชื่อทับได้');
+        }
         const [existing] = await tx
           .select()
           .from(attendanceRecords)
@@ -598,11 +606,10 @@ export class AttendanceService {
       await writeAttendanceAudit(tx, input.guildId, input.discordUserId, 'LEAVE_SUBMITTED', 'LEAVE', created.id, null, created);
       await queueLeavePublish(tx, input.guildId, created.id, input.now);
       const affectedRounds = await findRoundsInDateRange(tx, input.guildId, input.startsOn, input.endsOn);
-      for (const round of affectedRounds) {
-        if (round.status === 'CLOSED') {
-          await recalculateClosedRecordForNewLeave(tx, round, member.id, input.now);
-        }
-        await queueRoundRefresh(tx, input.guildId, round.id, input.now);
+      for (const round of affectedRounds.sort((left, right) => left.id.localeCompare(right.id))) {
+        const currentRound = await lockRound(tx, input.guildId, round.id);
+        await recalculateRecordForLeaveChange(tx, currentRound, member.id, input.now);
+        await queueRoundRefresh(tx, input.guildId, currentRound.id, input.now);
       }
       return created;
     });
@@ -695,7 +702,7 @@ export class AttendanceService {
             eq(attendanceRecords.roundId, round.id), eq(attendanceRecords.memberId, context.leave.memberId),
           )).limit(1).for('update');
           if (record?.leaveId === leaveId && record.correctionReason === null) {
-            await recalculateClosedRecordForNewLeave(tx, currentRound, context.leave.memberId, now);
+            await recalculateRecordForLeaveChange(tx, currentRound, context.leave.memberId, now);
           }
         }
         await queueRoundRefresh(tx, guildId, round.id, now);
@@ -1085,6 +1092,24 @@ async function findActiveLeavesForRound(tx: Transaction, guildId: string, attend
     ));
 }
 
+async function findActiveMemberLeavesForRound(
+  tx: Transaction,
+  guildId: string,
+  memberId: string,
+  attendanceDate: string,
+): Promise<Leave[]> {
+  return tx
+    .select()
+    .from(leaves)
+    .where(and(
+      eq(leaves.guildId, guildId),
+      eq(leaves.memberId, memberId),
+      eq(leaves.status, 'ACTIVE'),
+      lte(leaves.startsOn, attendanceDate),
+      gte(leaves.endsOn, attendanceDate),
+    ));
+}
+
 async function findRoundsInDateRange(
   tx: Transaction,
   guildId: string,
@@ -1102,7 +1127,7 @@ async function findRoundsInDateRange(
     ));
 }
 
-async function recalculateClosedRecordForNewLeave(
+async function recalculateRecordForLeaveChange(
   tx: Transaction,
   round: AttendanceRound,
   memberId: string,
@@ -1167,8 +1192,9 @@ function selectLeaveId(
   round: AttendanceRound,
 ): string | null {
   if (result === 'LEAVE') {
+    const cutoff = record.checkedInAt === null ? round.closesAt : round.emergencyLeaveCutoff;
     return memberLeaves
-      .filter((leave) => leave.submittedAt <= round.closesAt)
+      .filter((leave) => leave.submittedAt <= cutoff)
       .sort((left, right) => left.submittedAt.getTime() - right.submittedAt.getTime())[0]?.id ?? null;
   }
   if (result === 'EMERGENCY_LEAVE' && record.checkedInAt !== null) {

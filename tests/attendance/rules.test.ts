@@ -31,18 +31,18 @@ describe('attendance classification', () => {
     }))).toBe('LEAVE');
   });
 
-  it('treats check-in after an existing leave as present', () => {
+  it('keeps a covering leave when check-in evidence also exists', () => {
     expect(classifyAttendance(evidence({
       checkedInAt: new Date('2026-08-26T13:00:00.000Z'),
       leaves: [{ submittedAt: new Date('2026-08-25T12:00:00.000Z'), coversAttendanceDate: true }],
-    }))).toBe('PRESENT');
+    }))).toBe('LEAVE');
   });
 
-  it('marks leave after check-in and before midnight cutoff as emergency leave', () => {
+  it('changes a prior check-in to leave when leave is submitted before the cutoff', () => {
     expect(classifyAttendance(evidence({
       checkedInAt: new Date('2026-08-26T13:00:00.000Z'),
       leaves: [{ submittedAt: new Date('2026-08-26T15:30:00.000Z'), coversAttendanceDate: true }],
-    }))).toBe('EMERGENCY_LEAVE');
+    }))).toBe('LEAVE');
   });
 
   it('marks no check-in and leave after close as absent', () => {
