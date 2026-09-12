@@ -398,6 +398,7 @@ export const leaves = pgTable(
     memberId: uuid('member_id').notNull().references(() => members.id, { onDelete: 'restrict' }),
     startsOn: text('starts_on').notNull(),
     endsOn: text('ends_on').notNull(),
+    allRounds: boolean('all_rounds').notNull().default(true),
     reason: text('reason').notNull(),
     status: leaveStatusEnum('status').notNull().default('ACTIVE'),
     submittedAt: timestamp('submitted_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
@@ -412,6 +413,15 @@ export const leaves = pgTable(
     check('leaves_valid_dates', sql`${table.endsOn} >= ${table.startsOn}`),
     check('leaves_reason_not_blank', sql`length(trim(${table.reason})) > 0`),
   ],
+);
+
+export const leaveScheduleScopes = pgTable(
+  'leave_schedule_scopes',
+  {
+    leaveId: uuid('leave_id').notNull().references(() => leaves.id, { onDelete: 'cascade' }),
+    scheduleId: uuid('schedule_id').notNull().references(() => attendanceSchedules.id, { onDelete: 'cascade' }),
+  },
+  (table) => [primaryKey({ columns: [table.leaveId, table.scheduleId] })],
 );
 
 export const attendanceRecords = pgTable(

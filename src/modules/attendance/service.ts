@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { DateTime } from 'luxon';
-import { and, asc, desc, eq, gte, lte, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lte, ne, or } from 'drizzle-orm';
 import { AuthorizationError, ConflictError, NotFoundError, ValidationError } from '../../domain/errors.js';
 import type { Database } from '../../infrastructure/db/client.js';
 import {
@@ -8,6 +8,7 @@ import {
   attendanceRecords,
   attendanceRounds,
   attendanceSchedules,
+  leaveScheduleScopes,
   leaves,
   members,
   scheduledJobs,
@@ -44,6 +45,7 @@ export interface LeaveView {
   readonly leave: Leave;
   readonly discordUserId: string;
   readonly inGameName: string;
+  readonly schedules: readonly AttendanceSchedule[];
 }
 
 export interface AttendanceRoundView {
@@ -111,6 +113,7 @@ export interface SubmitLeaveInput {
   readonly discordUserId: string;
   readonly startsOn: string;
   readonly endsOn: string;
+  readonly scheduleIds?: readonly string[];
   readonly reason: string;
   readonly timezone: string;
   readonly now: Date;
@@ -206,6 +209,14 @@ export class AttendanceService {
       .limit(limit);
   }
 
+  public async listActiveSchedules(guildId: string): Promise<AttendanceSchedule[]> {
+    return this.db
+      .select()
+      .from(attendanceSchedules)
+      .where(and(eq(attendanceSchedules.guildId, guildId), eq(attendanceSchedules.isActive, true)))
+      .orderBy(asc(attendanceSchedules.name));
+  }
+
   public async getRound(guildId: string, roundId: string): Promise<AttendanceRound> {
     const [round] = await this.db
       .select()
@@ -245,7 +256,7 @@ export class AttendanceService {
         throw new ValidationError('รอบ Airdrop ต้องแนบรูปตัวละครและรายชื่อในวอ');
       }
       const member = await findActiveMember(tx, guildId, discordUserId);
-      const activeLeaves = await findActiveMemberLeavesForRound(tx, guildId, member.id, round.attendanceDate);
+      const activeLeaves = await findActiveMemberLeavesForRound(tx, guildId, member.id, round);
       if (activeLeaves.length > 0) {
         throw new ConflictError('คุณแจ้งลาในรอบนี้แล้ว ไม่สามารถเช็กชื่อทับได้');
       }
@@ -292,7 +303,7 @@ export class AttendanceService {
           throw new ValidationError('เช็กชื่อทั่วไปไม่ต้องแนบรูปหลักฐาน');
         }
         const member = await findActiveMember(tx, guildId, discordUserId);
-        const activeLeaves = await findActiveMemberLeavesForRound(tx, guildId, member.id, round.attendanceDate);
+        const activeLeaves = await findActiveMemberLeavesForRound(tx, guildId, member.id, round);
         if (activeLeaves.length > 0) {
           throw new ConflictError('คุณแจ้งลาในรอบนี้แล้ว ไม่สามารถเช็กชื่อทับได้');
         }
@@ -496,7 +507,7 @@ export class AttendanceService {
       }
       await snapshotActiveMembers(tx, guildId, roundId);
       const records = await tx.select().from(attendanceRecords).where(eq(attendanceRecords.roundId, roundId));
-      const activeLeaves = await findActiveLeavesForRound(tx, guildId, round.attendanceDate);
+      const activeLeaves = await findActiveLeavesForRound(tx, guildId, round);
       const leavesByMember = groupLeavesByMember(activeLeaves);
 
       for (const record of records) {
@@ -580,6 +591,7 @@ export class AttendanceService {
 
     const leave = await this.db.transaction(async (tx) => {
       const member = await findActiveMember(tx, input.guildId, input.discordUserId);
+      const scheduleIds = normalizeScheduleIds(input.scheduleIds);
       const [existing] = await tx
         .select()
         .from(leaves)
@@ -587,6 +599,9 @@ export class AttendanceService {
         .limit(1);
       if (existing !== undefined) {
         return existing;
+      }
+      if (scheduleIds !== undefined) {
+        await validateLeaveSchedules(tx, input.guildId, scheduleIds);
       }
       const [created] = await tx
         .insert(leaves)
@@ -596,6 +611,7 @@ export class AttendanceService {
           memberId: member.id,
           startsOn: input.startsOn,
           endsOn: input.endsOn,
+          allRounds: scheduleIds === undefined,
           reason,
           submittedAt: input.now,
         })
@@ -603,9 +619,20 @@ export class AttendanceService {
       if (created === undefined) {
         throw new Error('Leave submission did not return a row');
       }
+      if (scheduleIds !== undefined) {
+        await tx.insert(leaveScheduleScopes).values(
+          scheduleIds.map((scheduleId) => ({ leaveId: created.id, scheduleId })),
+        );
+      }
       await writeAttendanceAudit(tx, input.guildId, input.discordUserId, 'LEAVE_SUBMITTED', 'LEAVE', created.id, null, created);
       await queueLeavePublish(tx, input.guildId, created.id, input.now);
-      const affectedRounds = await findRoundsInDateRange(tx, input.guildId, input.startsOn, input.endsOn);
+      const affectedRounds = await findRoundsInDateRange(
+        tx,
+        input.guildId,
+        input.startsOn,
+        input.endsOn,
+        scheduleIds,
+      );
       for (const round of affectedRounds.sort((left, right) => left.id.localeCompare(right.id))) {
         const currentRound = await lockRound(tx, input.guildId, round.id);
         await recalculateRecordForLeaveChange(tx, currentRound, member.id, input.now);
@@ -623,11 +650,13 @@ export class AttendanceService {
     isAdmin: boolean,
     startsOn: string,
     endsOn: string,
+    scheduleIdsInput: readonly string[] | undefined,
     reason: string,
     timezone: string,
     now: Date,
   ): Promise<LeaveView> {
     const normalizedReason = requireText(reason, 'เหตุผลการลา', 2, 500);
+    const scheduleIds = normalizeScheduleIds(scheduleIdsInput);
     validateLeaveDates(startsOn, endsOn);
     const today = DateTime.fromJSDate(now, { zone: timezone }).toFormat('yyyy-MM-dd');
     if (!isAdmin && startsOn < today) {
@@ -643,22 +672,41 @@ export class AttendanceService {
       if (!isAdmin && context.leave.endsOn < today) {
         throw new ConflictError('ใบลาที่ผ่านไปแล้วแก้ไขได้เฉพาะหัวแก๊ง/รองแก๊ง');
       }
-      const [updated] = await tx
-        .update(leaves)
-        .set({ startsOn, endsOn, reason: normalizedReason, updatedAt: now })
-        .where(eq(leaves.id, leaveId))
-        .returning();
-      await writeAttendanceAudit(tx, guildId, actorDiscordUserId, 'LEAVE_EDITED', 'LEAVE', leaveId, context.leave, updated ?? null);
+      if (scheduleIds !== undefined) {
+        await validateLeaveSchedules(tx, guildId, scheduleIds);
+      }
       const affected = await findRoundsInDateRange(
         tx,
         guildId,
         minDate(context.leave.startsOn, startsOn),
         maxDate(context.leave.endsOn, endsOn),
       );
-      for (const round of affected) {
-        if (round.status !== 'CLOSED') {
-          await queueRoundRefresh(tx, guildId, round.id, now);
+      const lockedAffected: AttendanceRound[] = [];
+      for (const round of affected.sort((left, right) => left.id.localeCompare(right.id))) {
+        lockedAffected.push(await lockRound(tx, guildId, round.id));
+      }
+      const [updated] = await tx
+        .update(leaves)
+        .set({ startsOn, endsOn, allRounds: scheduleIds === undefined, reason: normalizedReason, updatedAt: now })
+        .where(eq(leaves.id, leaveId))
+        .returning();
+      await tx.delete(leaveScheduleScopes).where(eq(leaveScheduleScopes.leaveId, leaveId));
+      if (scheduleIds !== undefined) {
+        await tx.insert(leaveScheduleScopes).values(
+          scheduleIds.map((scheduleId) => ({ leaveId, scheduleId })),
+        );
+      }
+      await writeAttendanceAudit(tx, guildId, actorDiscordUserId, 'LEAVE_EDITED', 'LEAVE', leaveId, context.leave, updated ?? null);
+      for (const currentRound of lockedAffected) {
+        if (currentRound.status !== 'CLOSED' || isAdmin) {
+          const [record] = await tx.select().from(attendanceRecords).where(and(
+            eq(attendanceRecords.roundId, currentRound.id), eq(attendanceRecords.memberId, context.leave.memberId),
+          )).limit(1).for('update');
+          if (record !== undefined && record.correctionReason === null) {
+            await recalculateRecordForLeaveChange(tx, currentRound, context.leave.memberId, now);
+          }
         }
+        await queueRoundRefresh(tx, guildId, currentRound.id, now);
       }
     });
     return this.getLeave(guildId, leaveId);
@@ -721,7 +769,13 @@ export class AttendanceService {
     if (row === undefined) {
       throw new NotFoundError('ไม่พบใบลา');
     }
-    return row;
+    const schedules = await this.db
+      .select({ schedule: attendanceSchedules })
+      .from(leaveScheduleScopes)
+      .innerJoin(attendanceSchedules, eq(leaveScheduleScopes.scheduleId, attendanceSchedules.id))
+      .where(eq(leaveScheduleScopes.leaveId, leaveId))
+      .orderBy(asc(attendanceSchedules.name));
+    return { ...row, schedules: schedules.map(({ schedule }) => schedule) };
   }
 
   public async getRoundView(guildId: string, roundId: string): Promise<AttendanceRoundView> {
@@ -742,17 +796,20 @@ export class AttendanceService {
       .orderBy(asc(members.inGameName));
     const leaveRows = round.status === 'CLOSED' || round.status === 'CANCELLED'
       ? []
-      : await this.db
+      : (await this.db
           .select({ leave: leaves, discordUserId: members.discordUserId, inGameName: members.inGameName })
           .from(leaves)
           .innerJoin(members, eq(leaves.memberId, members.id))
+          .leftJoin(leaveScheduleScopes, eq(leaves.id, leaveScheduleScopes.leaveId))
           .where(and(
             eq(leaves.guildId, guildId),
             eq(leaves.status, 'ACTIVE'),
             lte(leaves.startsOn, round.attendanceDate),
             gte(leaves.endsOn, round.attendanceDate),
+            leaveScopeCondition(round),
           ))
-          .orderBy(asc(members.inGameName));
+          .orderBy(asc(members.inGameName)))
+          .map((row) => ({ ...row, schedules: [] }));
 
     const activeLeaveMemberIds = new Set(leaveRows.map((row) => row.leave.memberId));
     return {
@@ -1080,34 +1137,40 @@ async function lockRound(tx: Transaction, guildId: string, roundId: string): Pro
   return round;
 }
 
-async function findActiveLeavesForRound(tx: Transaction, guildId: string, attendanceDate: string): Promise<Leave[]> {
-  return tx
-    .select()
+async function findActiveLeavesForRound(tx: Transaction, guildId: string, round: AttendanceRound): Promise<Leave[]> {
+  const rows = await tx
+    .select({ leave: leaves })
     .from(leaves)
+    .leftJoin(leaveScheduleScopes, eq(leaves.id, leaveScheduleScopes.leaveId))
     .where(and(
       eq(leaves.guildId, guildId),
       eq(leaves.status, 'ACTIVE'),
-      lte(leaves.startsOn, attendanceDate),
-      gte(leaves.endsOn, attendanceDate),
+      lte(leaves.startsOn, round.attendanceDate),
+      gte(leaves.endsOn, round.attendanceDate),
+      leaveScopeCondition(round),
     ));
+  return rows.map(({ leave }) => leave);
 }
 
 async function findActiveMemberLeavesForRound(
   tx: Transaction,
   guildId: string,
   memberId: string,
-  attendanceDate: string,
+  round: AttendanceRound,
 ): Promise<Leave[]> {
-  return tx
-    .select()
+  const rows = await tx
+    .select({ leave: leaves })
     .from(leaves)
+    .leftJoin(leaveScheduleScopes, eq(leaves.id, leaveScheduleScopes.leaveId))
     .where(and(
       eq(leaves.guildId, guildId),
       eq(leaves.memberId, memberId),
       eq(leaves.status, 'ACTIVE'),
-      lte(leaves.startsOn, attendanceDate),
-      gte(leaves.endsOn, attendanceDate),
+      lte(leaves.startsOn, round.attendanceDate),
+      gte(leaves.endsOn, round.attendanceDate),
+      leaveScopeCondition(round),
     ));
+  return rows.map(({ leave }) => leave);
 }
 
 async function findRoundsInDateRange(
@@ -1115,6 +1178,7 @@ async function findRoundsInDateRange(
   guildId: string,
   startsOn: string,
   endsOn: string,
+  scheduleIds?: readonly string[],
 ): Promise<AttendanceRound[]> {
   return tx
     .select()
@@ -1124,6 +1188,7 @@ async function findRoundsInDateRange(
       ne(attendanceRounds.status, 'CANCELLED'),
       gte(attendanceRounds.attendanceDate, startsOn),
       lte(attendanceRounds.attendanceDate, endsOn),
+      ...(scheduleIds === undefined ? [] : [inArray(attendanceRounds.sourceScheduleId, scheduleIds)]),
     ));
 }
 
@@ -1142,16 +1207,7 @@ async function recalculateRecordForLeaveChange(
   if (record === undefined) {
     return;
   }
-  const memberLeaves = await tx
-    .select()
-    .from(leaves)
-    .where(and(
-      eq(leaves.guildId, round.guildId),
-      eq(leaves.memberId, memberId),
-      eq(leaves.status, 'ACTIVE'),
-      lte(leaves.startsOn, round.attendanceDate),
-      gte(leaves.endsOn, round.attendanceDate),
-    ));
+  const memberLeaves = await findActiveMemberLeavesForRound(tx, round.guildId, memberId, round);
   const result = classifyRecord(round, record, memberLeaves);
   await tx
     .update(attendanceRecords)
@@ -1214,6 +1270,52 @@ function groupLeavesByMember(values: readonly Leave[]): Map<string, Leave[]> {
     grouped.set(leave.memberId, memberLeaves);
   }
   return grouped;
+}
+
+function leaveScopeCondition(round: AttendanceRound) {
+  if (round.sourceScheduleId === null) {
+    return eq(leaves.allRounds, true);
+  }
+  return or(
+    eq(leaves.allRounds, true),
+    eq(leaveScheduleScopes.scheduleId, round.sourceScheduleId),
+  );
+}
+
+function normalizeScheduleIds(scheduleIds: readonly string[] | undefined): readonly string[] | undefined {
+  if (scheduleIds === undefined) return undefined;
+  const uniqueIds = [...new Set(scheduleIds)];
+  if (uniqueIds.length === 0) {
+    throw new ValidationError('กรุณาเลือกอย่างน้อย 1 ช่วงกิจกรรม หรือเลือกทั้งคืน');
+  }
+  if (uniqueIds.length !== scheduleIds.length) {
+    throw new ValidationError('ช่วงกิจกรรมที่เลือกต้องไม่ซ้ำกัน');
+  }
+  if (uniqueIds.length > 24) {
+    throw new ValidationError('เลือกช่วงกิจกรรมได้สูงสุด 24 รายการ');
+  }
+  if (uniqueIds.some((scheduleId) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(scheduleId))) {
+    throw new ValidationError('รหัสช่วงกิจกรรมไม่ถูกต้อง');
+  }
+  return uniqueIds;
+}
+
+async function validateLeaveSchedules(
+  tx: Transaction,
+  guildId: string,
+  scheduleIds: readonly string[],
+): Promise<void> {
+  const schedules = await tx
+    .select({ id: attendanceSchedules.id })
+    .from(attendanceSchedules)
+    .where(and(
+      eq(attendanceSchedules.guildId, guildId),
+      eq(attendanceSchedules.isActive, true),
+      inArray(attendanceSchedules.id, scheduleIds),
+    ));
+  if (schedules.length !== scheduleIds.length) {
+    throw new ValidationError('ช่วงกิจกรรมที่เลือกไม่มีอยู่หรือถูกปิดใช้งานแล้ว');
+  }
 }
 
 function validateCreateRound(input: CreateRoundInput): void {

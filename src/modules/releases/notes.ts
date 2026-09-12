@@ -17,13 +17,11 @@ export type ReleaseNotes = z.infer<typeof releaseNotesSchema>;
 // Change the ID only for a new announcement; keep summaries about member-visible changes.
 // Set to null for a deployment that should not announce anything.
 export const currentRelease: ReleaseNotes | null = {
-  id: '2026-09-09.1',
-  title: 'ปรับกฎเช็กชื่อและแจ้งลา',
+  id: '2026-09-13.1',
+  title: 'เลือกช่วงกิจกรรมตอนแจ้งลา',
   added: [],
   improved: [
-    'จัดรายชื่อสมาชิกเป็นหมวดพร้อมเส้นคั่นให้อ่านง่ายขึ้น และย้ายกลุ่มสำรองไว้ล่างสุด',
+    'แจ้งลาได้ทั้งคืน หรือเลือกเฉพาะช่วงกิจกรรม เช่น Airdrop และ Loop ได้หลายช่วงในใบเดียว',
   ],
-  fixed: [
-    'ผู้ที่แจ้งลาแล้วจะไม่สามารถเช็กชื่อทับได้ และถ้าเช็กชื่อก่อนแล้วค่อยแจ้งลา ระบบจะเปลี่ยนผลจากมาเป็นลาให้ทันที',
-  ],
+  fixed: [],
 };

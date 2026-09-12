@@ -2,6 +2,7 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  escapeMarkdown,
   LabelBuilder,
   ModalBuilder,
   StringSelectMenuBuilder,
@@ -15,6 +16,7 @@ import type {
   AttendanceRound,
   AttendanceRoundView,
   AttendanceMode,
+  AttendanceSchedule,
   LeaveView,
 } from '../../modules/attendance/service.js';
 import type { MemberSelectionOption } from './role-verified-members.js';
@@ -45,6 +47,7 @@ export const attendanceComponentIds = {
   leaveSubmit: 'leave:submit',
   leaveStartsOn: 'leave:starts_on',
   leaveEndsOn: 'leave:ends_on',
+  leaveScope: 'leave:scope',
   leaveReason: 'leave:reason',
   correctionMember: 'attendance:correction_member',
   correctionResult: 'attendance:correction_result',
@@ -302,31 +305,42 @@ export function buildLeavePanel() {
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle('📝 แจ้งลา')
-    .setDescription('สมาชิกสามารถแจ้งลาล่วงหน้าได้ทันทีโดยไม่ต้องรออนุมัติ\nถ้าเช็กชื่อแล้วและแจ้งลาภายใน 23:59 ของวันนั้น ระบบจะเปลี่ยนผลจาก **มา** เป็น **ลา**');
+    .setDescription('สมาชิกสามารถเลือกลา **ทั้งคืน** หรือเลือกเฉพาะช่วงกิจกรรมได้หลายช่วงโดยไม่ต้องรออนุมัติ\nถ้าเช็กชื่อแล้วค่อยแจ้งลา ระบบจะเปลี่ยนผลจาก **มา** เป็น **ลา** เฉพาะรอบที่เลือก');
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(attendanceComponentIds.leaveSubmit).setLabel('แจ้งลา').setEmoji('📝').setStyle(ButtonStyle.Primary),
   );
   return { embeds: [embed], components: [row] };
 }
 
-export function buildLeaveModal(startsOn: string, endsOn: string): ModalBuilder {
+export function buildLeaveModal(
+  startsOn: string,
+  endsOn: string,
+  schedules: readonly AttendanceSchedule[],
+): ModalBuilder {
   return new ModalBuilder()
     .setCustomId(leaveSubmitModalId)
     .setTitle('แจ้งลา')
     .addComponents(
       inputRow(attendanceComponentIds.leaveStartsOn, 'วันเริ่ม (DD/MM/YYYY)', undefined, 7, 10, startsOn),
       inputRow(attendanceComponentIds.leaveEndsOn, 'วันสิ้นสุด (DD/MM/YYYY)', undefined, 7, 10, endsOn),
+      leaveScopeLabel(schedules, true, []),
       inputRow(attendanceComponentIds.leaveReason, 'เหตุผล', 'ระบุเหตุผลการลา', 2, 500, undefined, TextInputStyle.Paragraph),
     );
 }
 
-export function buildLeaveEditModal(view: LeaveView, startsOn: string, endsOn: string): ModalBuilder {
+export function buildLeaveEditModal(
+  view: LeaveView,
+  startsOn: string,
+  endsOn: string,
+  schedules: readonly AttendanceSchedule[],
+): ModalBuilder {
   return new ModalBuilder()
     .setCustomId(`${leaveEditModalPrefix}${view.leave.id}`)
     .setTitle('แก้ไขใบลา')
     .addComponents(
       inputRow(attendanceComponentIds.leaveStartsOn, 'วันเริ่ม (DD/MM/YYYY)', undefined, 7, 10, startsOn),
       inputRow(attendanceComponentIds.leaveEndsOn, 'วันสิ้นสุด (DD/MM/YYYY)', undefined, 7, 10, endsOn),
+      leaveScopeLabel(schedules, view.leave.allRounds, view.schedules.map((schedule) => schedule.id)),
       inputRow(attendanceComponentIds.leaveReason, 'เหตุผล', undefined, 2, 500, view.leave.reason, TextInputStyle.Paragraph),
     );
 }
@@ -339,6 +353,7 @@ export function buildLeaveLog(view: LeaveView) {
     .addFields(
       { name: 'สมาชิก', value: `<@${view.discordUserId}> (${view.inGameName})`, inline: true },
       { name: 'ช่วงวันที่', value: `${view.leave.startsOn} ถึง ${view.leave.endsOn}`, inline: true },
+      { name: 'ช่วงกิจกรรม', value: view.leave.allRounds ? '🌙 ทั้งคืน' : view.schedules.map((schedule) => escapeMarkdown(schedule.name)).join('\n') },
       { name: 'เหตุผล', value: view.leave.reason },
       { name: 'แจ้งเมื่อ', value: discordTimestamp(view.leave.submittedAt, 'F') },
     )
@@ -348,6 +363,43 @@ export function buildLeaveLog(view: LeaveView) {
     new ButtonBuilder().setCustomId(`leave:cancel:${view.leave.id}`).setLabel('ยกเลิก').setStyle(ButtonStyle.Danger).setDisabled(cancelled),
   );
   return { embeds: [embed], components: [row] };
+}
+
+function leaveScopeLabel(
+  schedules: readonly AttendanceSchedule[],
+  allRounds: boolean,
+  selectedScheduleIds: readonly string[],
+): LabelBuilder {
+  if (schedules.length > 24) {
+    throw new Error('Discord รองรับรายการช่วงกิจกรรมได้ไม่เกิน 24 รายการ');
+  }
+  const selected = new Set(selectedScheduleIds);
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(attendanceComponentIds.leaveScope)
+    .setPlaceholder('เลือกทั้งคืน หรือเลือกเฉพาะช่วง')
+    .setMinValues(1)
+    .setMaxValues(schedules.length + 1)
+    .addOptions(
+      {
+        label: 'ทั้งคืน',
+        value: 'ALL',
+        emoji: '🌙',
+        description: 'ครอบคลุมทุกกิจกรรม รวมรอบที่สร้างเพิ่มภายหลัง',
+        default: allRounds,
+      },
+      ...schedules.map((schedule) => ({
+        label: schedule.name.slice(0, 100),
+        value: schedule.id,
+        description: schedule.mode === 'AIRDROP'
+          ? `Airdrop เวลา ${schedule.eventAtLocalTime ?? '-'}`
+          : `กิจกรรม ${schedule.opensAtLocalTime ?? '-'}–${schedule.closesAtLocalTime ?? '-'}`,
+        default: !allRounds && selected.has(schedule.id),
+      })),
+    );
+  return new LabelBuilder()
+    .setLabel('ช่วงกิจกรรมที่ต้องการลา')
+    .setDescription('เลือกได้หลายช่วง หากเลือกทั้งคืนให้เลือกเพียงรายการเดียว')
+    .setStringSelectMenuComponent(menu);
 }
 
 export function buildLeaveCancelConfirmation(leaveId: string) {

@@ -23,7 +23,7 @@ import {
   resolveAuthority,
   type AuthorityLevel,
 } from '../../modules/authorization/permissions.js';
-import type { AttendanceMode, AttendanceService } from '../../modules/attendance/service.js';
+import type { AttendanceMode, AttendanceSchedule, AttendanceService } from '../../modules/attendance/service.js';
 import {
   buildAirdropRoundTimes,
   buildGeneralRoundTimes,
@@ -129,7 +129,8 @@ export class AttendanceInteractionHandler {
       const settings = await this.requireSettings(guild.id);
       requireLeaveChannels(settings);
       const today = formatLocalDateInput(new Date(), settings.timezone);
-      await interaction.showModal(buildLeaveModal(today, today));
+      const schedules = await this.dependencies.attendance.listActiveSchedules(guild.id);
+      await interaction.showModal(buildLeaveModal(today, today, schedules));
       return;
     }
     if (interaction.customId.startsWith('attendance:check_in:')) {
@@ -179,10 +180,13 @@ export class AttendanceInteractionHandler {
     if (interaction.customId.startsWith('leave:edit:')) {
       const leaveId = entityId(interaction.customId, 'leave:edit:');
       const view = await this.requireLeaveActor(guild, interaction.user.id, leaveId);
+      const activeSchedules = await this.dependencies.attendance.listActiveSchedules(guild.id);
+      const schedules = mergeLeaveSchedules(activeSchedules, view.schedules);
       await interaction.showModal(buildLeaveEditModal(
         view,
         formatDateInput(view.leave.startsOn),
         formatDateInput(view.leave.endsOn),
+        schedules,
       ));
       return;
     }
@@ -528,12 +532,14 @@ export class AttendanceInteractionHandler {
     await this.requireActiveMember(guild, interaction.user.id);
     const settings = await this.requireSettings(guild.id);
     requireLeaveChannels(settings);
+    const scheduleIds = readLeaveScheduleIds(interaction);
     const view = await this.dependencies.attendance.submitLeave({
       guildId: guild.id,
       requestId: interaction.id,
       discordUserId: interaction.user.id,
       startsOn: parseDateInput(interaction.fields.getTextInputValue(attendanceComponentIds.leaveStartsOn), 'วันเริ่มลา'),
       endsOn: parseDateInput(interaction.fields.getTextInputValue(attendanceComponentIds.leaveEndsOn), 'วันสิ้นสุดลา'),
+      ...(scheduleIds === undefined ? {} : { scheduleIds }),
       reason: interaction.fields.getTextInputValue(attendanceComponentIds.leaveReason),
       timezone: settings.timezone,
       now: new Date(),
@@ -547,6 +553,7 @@ export class AttendanceInteractionHandler {
   private async editLeave(interaction: ModalSubmitInteraction, guild: Guild, leaveId: string): Promise<void> {
     const isAdmin = await this.requireMemberOrAdmin(guild, interaction.user.id);
     const settings = await this.requireSettings(guild.id);
+    const scheduleIds = readLeaveScheduleIds(interaction);
     const view = await this.dependencies.attendance.editLeave(
       guild.id,
       leaveId,
@@ -554,6 +561,7 @@ export class AttendanceInteractionHandler {
       isAdmin,
       parseDateInput(interaction.fields.getTextInputValue(attendanceComponentIds.leaveStartsOn), 'วันเริ่มลา'),
       parseDateInput(interaction.fields.getTextInputValue(attendanceComponentIds.leaveEndsOn), 'วันสิ้นสุดลา'),
+      scheduleIds,
       interaction.fields.getTextInputValue(attendanceComponentIds.leaveReason),
       settings.timezone,
       new Date(),
@@ -777,6 +785,29 @@ function requireLeaveChannels(settings: GuildSettings): void {
   if (settings.leaveChannelId === null || settings.leaveLogChannelId === null) {
     throw new ValidationError('กรุณาตั้งค่า Channel แจ้งลาและ Channel Log แจ้งลาก่อน');
   }
+}
+
+function readLeaveScheduleIds(interaction: ModalSubmitInteraction): readonly string[] | undefined {
+  const values = interaction.fields.getStringSelectValues(attendanceComponentIds.leaveScope);
+  if (values.includes('ALL')) {
+    if (values.length > 1) {
+      throw new ValidationError('หากเลือก “ทั้งคืน” กรุณาเลือกเพียงรายการเดียว');
+    }
+    return undefined;
+  }
+  if (values.length === 0) {
+    throw new ValidationError('กรุณาเลือกช่วงกิจกรรมที่ต้องการลา');
+  }
+  return values;
+}
+
+function mergeLeaveSchedules(
+  activeSchedules: readonly AttendanceSchedule[],
+  selectedSchedules: readonly AttendanceSchedule[],
+): AttendanceSchedule[] {
+  const schedules = new Map(activeSchedules.map((schedule) => [schedule.id, schedule]));
+  for (const schedule of selectedSchedules) schedules.set(schedule.id, schedule);
+  return [...schedules.values()].sort((left, right) => left.name.localeCompare(right.name, 'th'));
 }
 
 async function fetchSendableChannel(client: Client, channelId: string | null, label: string): Promise<SendableChannels> {

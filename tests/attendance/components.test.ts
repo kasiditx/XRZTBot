@@ -6,9 +6,12 @@ import {
   buildAttendanceProofModal,
   buildAttendanceProofRejectionModal,
   buildCreateRoundModal,
+  buildLeaveEditModal,
+  buildLeaveLog,
+  buildLeaveModal,
   buildRecurringScheduleModal,
 } from '../../src/infrastructure/discord/attendance-components.js';
-import type { AttendanceRoundView } from '../../src/modules/attendance/service.js';
+import type { AttendanceRoundView, AttendanceSchedule, LeaveView } from '../../src/modules/attendance/service.js';
 
 describe('attendance Discord components', () => {
   it('lets Admin choose Airdrop or general for both Manual and Auto', () => {
@@ -169,6 +172,44 @@ describe('attendance Discord components', () => {
       .toContain('รูปไม่เห็นรายชื่อในวอ');
     expect(rejected.components[0]?.toJSON().components[0]).toMatchObject({ disabled: true });
   });
+
+  it('lets a member choose all night or multiple recurring activities in the leave modal', () => {
+    const modal = buildLeaveModal('13/09/2569', '13/09/2569', [
+      schedule('schedule-airdrop', 'Airdrop 20:00', 'AIRDROP'),
+      schedule('schedule-loop', 'Loop', 'GENERAL'),
+    ]).toJSON();
+
+    expect(modal.components).toHaveLength(4);
+    expect(modal.components[2]).toMatchObject({
+      component: {
+        custom_id: 'leave:scope',
+        min_values: 1,
+        max_values: 3,
+        options: [
+          expect.objectContaining({ label: 'ทั้งคืน', value: 'ALL', default: true }),
+          expect.objectContaining({ label: 'Airdrop 20:00', value: 'schedule-airdrop' }),
+          expect.objectContaining({ label: 'Loop', value: 'schedule-loop' }),
+        ],
+      },
+    });
+  });
+
+  it('shows and retains the selected activity scope when editing a leave', () => {
+    const selected = schedule('schedule-loop', 'Loop', 'GENERAL');
+    const view = leaveView(false, [selected]);
+    const modal = buildLeaveEditModal(view, '13/09/2569', '13/09/2569', [selected]).toJSON();
+    const log = buildLeaveLog(view).embeds[0]?.toJSON();
+
+    expect(modal.components[2]).toMatchObject({
+      component: {
+        options: [
+          expect.objectContaining({ value: 'ALL', default: false }),
+          expect.objectContaining({ value: selected.id, default: true }),
+        ],
+      },
+    });
+    expect(log?.fields?.find((field) => field.name.includes('ช่วงกิจกรรม'))?.value).toContain('Loop');
+  });
 });
 
 const AIRDROP_ROUND_ID = '11111111-1111-4111-8111-111111111111';
@@ -205,5 +246,52 @@ function roundView(mode: 'AIRDROP' | 'GENERAL'): AttendanceRoundView {
     absent: [],
     pending: [],
     activeLeaves: [],
+  };
+}
+
+function schedule(id: string, name: string, mode: 'AIRDROP' | 'GENERAL'): AttendanceSchedule {
+  const now = new Date('2026-09-13T00:00:00.000Z');
+  return {
+    id,
+    guildId: 'guild',
+    requestId: `request-${id}`,
+    name,
+    mode,
+    weekdays: [1, 2, 3, 4, 5, 6, 7],
+    opensAtLocalTime: mode === 'GENERAL' ? '20:10' : null,
+    closesAtLocalTime: mode === 'GENERAL' ? '22:50' : null,
+    eventAtLocalTime: mode === 'AIRDROP' ? '20:00' : null,
+    opensBeforeMinutes: mode === 'AIRDROP' ? 10 : null,
+    closesAfterMinutes: mode === 'AIRDROP' ? 10 : null,
+    isActive: true,
+    createdByDiscordUserId: '100000000000000001',
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function leaveView(allRounds: boolean, schedules: readonly AttendanceSchedule[]): LeaveView {
+  const now = new Date('2026-09-13T00:00:00.000Z');
+  return {
+    discordUserId: '200000000000000001',
+    inGameName: 'Alpha',
+    schedules,
+    leave: {
+      id: '11111111-1111-4111-8111-111111111111',
+      guildId: 'guild',
+      requestId: 'leave-request',
+      memberId: 'member-id',
+      startsOn: '2026-09-13',
+      endsOn: '2026-09-13',
+      allRounds,
+      reason: 'ติดธุระ',
+      status: 'ACTIVE',
+      submittedAt: now,
+      cancelledAt: null,
+      publicChannelId: null,
+      publicMessageId: null,
+      createdAt: now,
+      updatedAt: now,
+    },
   };
 }

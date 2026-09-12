@@ -212,6 +212,114 @@ describeWithDatabase('AttendanceService PostgreSQL integration', () => {
     expect(ticks).toHaveLength(1);
   });
 
+  it('applies a scoped leave only to the selected recurring activities', async () => {
+    const scopeGuildId = `${guildId}-leave-scope`;
+    const scopedMember = '220000000000000001';
+    await db.insert(guildSettings).values({ guildId: scopeGuildId, timezone });
+    await db.insert(members).values({
+      guildId: scopeGuildId,
+      discordUserId: scopedMember,
+      inGameName: 'Scoped Member',
+      status: 'ACTIVE',
+    });
+    try {
+      const common = {
+        guildId: scopeGuildId,
+        weekdays: [1, 2, 3, 4, 5, 6, 7],
+        timezone,
+        actorDiscordUserId: alpha,
+        now: new Date('2026-09-14T10:00:00.000Z'),
+      } as const;
+      const airdropSchedule = await service.createRecurringSchedule({
+        ...common,
+        requestId: 'scope-airdrop-20',
+        name: 'Airdrop 20:00',
+        mode: 'AIRDROP',
+        eventAtLocalTime: '20:00',
+        opensBeforeMinutes: 10,
+        closesAfterMinutes: 10,
+      });
+      const loopSchedule = await service.createRecurringSchedule({
+        ...common,
+        requestId: 'scope-loop',
+        name: 'Loop',
+        mode: 'GENERAL',
+        opensAtLocalTime: '20:10',
+        closesAtLocalTime: '22:50',
+      });
+      const scopedLeaveInput = {
+        guildId: scopeGuildId,
+        requestId: 'leave-only-airdrop-20',
+        discordUserId: scopedMember,
+        startsOn: '2026-09-14',
+        endsOn: '2026-09-14',
+        scheduleIds: [airdropSchedule.id],
+        reason: 'ลาเฉพาะ Airdrop รอบแรก',
+        timezone,
+        now: new Date('2026-09-14T10:05:00.000Z'),
+      } as const;
+
+      const scopedLeave = await service.submitLeave(scopedLeaveInput);
+
+      const rounds = await service.listRounds(scopeGuildId, 50);
+      const airdropRound = rounds.find((candidate) => (
+        candidate.sourceScheduleId === airdropSchedule.id && candidate.attendanceDate === '2026-09-14'
+      ));
+      const loopRound = rounds.find((candidate) => (
+        candidate.sourceScheduleId === loopSchedule.id && candidate.attendanceDate === '2026-09-14'
+      ));
+      expect(airdropRound).toBeDefined();
+      expect(loopRound).toBeDefined();
+      expect((await service.getRoundView(scopeGuildId, airdropRound!.id)).activeLeaves)
+        .toEqual([expect.objectContaining({ discordUserId: scopedMember })]);
+      expect((await service.getRoundView(scopeGuildId, loopRound!.id)).activeLeaves).toEqual([]);
+
+      await service.editLeave(
+        scopeGuildId,
+        scopedLeave.leave.id,
+        scopedMember,
+        false,
+        '2026-09-14',
+        '2026-09-14',
+        [loopSchedule.id],
+        'เปลี่ยนไปลาเฉพาะ Loop',
+        timezone,
+        new Date('2026-09-14T10:10:00.000Z'),
+      );
+
+      expect((await service.getRoundView(scopeGuildId, airdropRound!.id)).activeLeaves).toEqual([]);
+      expect((await service.getRoundView(scopeGuildId, loopRound!.id)).activeLeaves)
+        .toEqual([expect.objectContaining({ discordUserId: scopedMember })]);
+    } finally {
+      await db.delete(guildSettings).where(eq(guildSettings.guildId, scopeGuildId));
+    }
+  });
+
+  it('applies an all-night leave to a manual round created afterward', async () => {
+    await service.submitLeave({
+      guildId,
+      requestId: 'leave-all-night-before-round',
+      discordUserId: beta,
+      startsOn: '2026-09-20',
+      endsOn: '2026-09-20',
+      reason: 'ลาทั้งคืน',
+      timezone,
+      now: new Date('2026-09-20T08:00:00.000Z'),
+    });
+    const laterRound = await service.createRound({
+      guildId,
+      requestId: 'manual-after-all-night-leave',
+      title: 'ประชุมด่วน',
+      mode: 'GENERAL',
+      ...buildAttendanceRoundTimes('2026-09-20', '19:30', '20:00', timezone),
+      actorDiscordUserId: alpha,
+      now: new Date('2026-09-20T09:00:00.000Z'),
+    });
+
+    expect((await service.getRoundView(guildId, laterRound.id)).activeLeaves)
+      .toEqual([expect.objectContaining({ discordUserId: beta })]);
+  });
+
   it('requires a fresh image proof for every Airdrop round', async () => {
     const eventAt = new Date('2026-08-29T14:00:00.000Z');
     const firstRound = await service.createRound({
