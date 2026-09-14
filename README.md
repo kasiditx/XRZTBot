@@ -174,9 +174,12 @@ npm run build
 
 - ยอดตั้งต้น: [`docs/stock-opening-template.csv`](docs/stock-opening-template.csv)
 - เพิ่ม/หัก stock: [`docs/stock-movement-template.csv`](docs/stock-movement-template.csv)
+- Sync ชื่อ รายการใหม่ และยอดล่าสุด: [`docs/stock-sync-template.csv`](docs/stock-sync-template.csv)
 
 Header ต้องตรงและเรียงตาม template เท่านั้น ระบบตรวจ duplicate file hash, `batch_ref`, `expected_quantity`, item code/name และปฏิเสธทั้งไฟล์หากมีแม้แต่หนึ่งแถวผิด
 
 ยอดตั้งต้นรองรับสูงสุด 1,000 รายการและสร้าง item code ตามลำดับแถว ส่วนไฟล์เพิ่ม/หักใช้ได้สูงสุด 1,000 movement ต่อ batch ไฟล์ CSV ที่ Bot re-upload ใน public log ถือเป็นหลักฐานของ batch จึงไม่ต้องแนบรูปเพิ่ม
+
+ไฟล์ Sync ใช้ `item_code` เดิมเพื่อแก้ชื่อหรือตั้งยอดล่าสุดของรายการเดิม และเว้น `item_code` ว่างสำหรับรายการใหม่เพื่อให้ Bot สร้างรหัสลำดับถัดไปอัตโนมัติ
 
 สมาชิกส่งของเข้าแก๊งจาก public Stock panel โดยเลือกหลายรายการจาก Stock จริงผ่านตะกร้าแบบแบ่งหน้า สูงสุด 25 รายการต่อคำขอ ระบบเติมชื่อสินค้าให้และให้แก้เฉพาะจำนวน พร้อมระบุที่มาและรูปหลักฐาน 1 รูปไม่เกิน 10 MB เมื่อ Deputy/Head/Dev อนุมัติ ระบบจึงเพิ่มยอดเข้า Stock; รายการที่ยังรอตรวจหรือถูกปฏิเสธจะไม่เปลี่ยนยอด
