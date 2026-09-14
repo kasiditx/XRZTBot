@@ -10,6 +10,9 @@ import {
   buildLeaveLog,
   buildLeaveModal,
   buildRecurringScheduleModal,
+  buildScheduleEditModal,
+  buildScheduleManagement,
+  buildScheduleManagementPanel,
 } from '../../src/infrastructure/discord/attendance-components.js';
 import type { AttendanceRoundView, AttendanceSchedule, LeaveView } from '../../src/modules/attendance/service.js';
 
@@ -59,6 +62,19 @@ describe('attendance Discord components', () => {
     expect(JSON.stringify(airdrop.components)).toContain('"value":"10"');
     expect(general.custom_id).toBe('attendance:recurring_modal:GENERAL');
     expect(general.components).toHaveLength(4);
+  });
+
+  it('lets Admin list, add, edit, and disable recurring schedules', () => {
+    const active = schedule('11111111-1111-4111-8111-111111111112', 'Airdrop 20:00', 'AIRDROP');
+    const panel = buildScheduleManagementPanel([active]);
+    const management = buildScheduleManagement(active);
+    const editModal = buildScheduleEditModal(active).toJSON();
+
+    expect(JSON.stringify(panel.components.map((row) => row.toJSON()))).toContain('attendance:admin_schedule_select');
+    expect(JSON.stringify(management.components[0]?.toJSON())).toContain(`attendance:schedule_edit:${active.id}`);
+    expect(JSON.stringify(management.components[0]?.toJSON())).toContain(`attendance:schedule_disable:${active.id}`);
+    expect(editModal.custom_id).toBe(`attendance:schedule_edit_modal:${active.id}:AIRDROP`);
+    expect(JSON.stringify(editModal.components)).toContain('Airdrop 20:00');
   });
 
   it('uses the selected evidence method for an Airdrop check-in', () => {

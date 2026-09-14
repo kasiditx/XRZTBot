@@ -24,6 +24,8 @@ import type { MemberSelectionOption } from './role-verified-members.js';
 export const attendanceComponentIds = {
   adminCreate: 'attendance:admin_create',
   adminRecurring: 'attendance:admin_recurring',
+  adminManageRecurring: 'attendance:admin_manage_recurring',
+  adminScheduleSelect: 'attendance:admin_schedule_select',
   adminPublishLeave: 'attendance:admin_publish_leave',
   adminRoundSelect: 'attendance:admin_round_select',
   createType: 'attendance:create_type',
@@ -56,6 +58,7 @@ export const attendanceComponentIds = {
 
 export const attendanceCreateModalPrefix = 'attendance:create_modal:';
 export const attendanceRecurringModalPrefix = 'attendance:recurring_modal:';
+export const attendanceScheduleEditModalPrefix = 'attendance:schedule_edit_modal:';
 export const attendanceProofModalPrefix = 'attendance:proof_modal:';
 export const attendanceProofRejectModalPrefix = 'attendance:proof_reject_modal:';
 export const leaveSubmitModalId = 'leave:submit_modal';
@@ -65,6 +68,7 @@ export function buildAttendanceAdminPanel(rounds: readonly AttendanceRound[]) {
   const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(attendanceComponentIds.adminCreate).setLabel('เปิดเช็กชื่อเอง').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(attendanceComponentIds.adminRecurring).setLabel('ตั้ง Auto').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(attendanceComponentIds.adminManageRecurring).setLabel('จัดการ Auto').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(attendanceComponentIds.adminPublishLeave).setLabel('ส่ง Panel แจ้งลา').setStyle(ButtonStyle.Secondary),
   );
   if (rounds.length === 0) {
@@ -84,6 +88,44 @@ export function buildAttendanceAdminPanel(rounds: readonly AttendanceRound[]) {
   return {
     content: formatPanelText('✅', 'ระบบเช็กชื่อและแจ้งลา', 'จัดการรอบเช็กชื่อ ตารางเวลา และ Panel แจ้งลา', 'เลือกรอบด้านล่างเพื่อดูรายละเอียดหรือแก้ผลย้อนหลัง'),
     components: [actionRow, new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selector)],
+  };
+}
+
+export function buildScheduleManagementPanel(schedules: readonly AttendanceSchedule[]) {
+  const add = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(attendanceComponentIds.adminRecurring).setLabel('เพิ่ม Auto').setStyle(ButtonStyle.Success),
+  );
+  if (schedules.length === 0) {
+    return { content: formatPanelText('⏰', 'จัดการ Auto เช็กชื่อ', 'ยังไม่มี Auto', 'กดเพิ่ม Auto เพื่อสร้างรายการใหม่'), components: [add] };
+  }
+  const selector = new StringSelectMenuBuilder().setCustomId(attendanceComponentIds.adminScheduleSelect)
+    .setPlaceholder('เลือก Auto เพื่อดู แก้ไข หรือปิดใช้งาน')
+    .addOptions(schedules.slice(0, 25).map((schedule) => ({
+      label: schedule.name.slice(0, 100),
+      description: `${schedule.mode === 'AIRDROP' ? 'Airdrop' : 'ทั่วไป'} · ${schedule.isActive ? 'เปิดใช้งาน' : 'ปิดแล้ว'}`,
+      value: schedule.id,
+    })));
+  return {
+    content: formatPanelText('⏰', 'จัดการ Auto เช็กชื่อ', `พบ ${schedules.length.toString()} รายการ`, 'เลือก Auto ด้านล่าง หรือกดเพิ่ม Auto'),
+    components: [add, new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selector)],
+  };
+}
+
+export function buildScheduleManagement(schedule: AttendanceSchedule) {
+  const time = schedule.mode === 'AIRDROP'
+    ? `Airdrop ${schedule.eventAtLocalTime} · เปิดก่อน ${schedule.opensBeforeMinutes} นาที · ปิดหลัง ${schedule.closesAfterMinutes} นาที`
+    : `เปิด ${schedule.opensAtLocalTime} · ปิด ${schedule.closesAtLocalTime}`;
+  return {
+    content: formatPanelText(
+      '⏰', schedule.name,
+      `${schedule.isActive ? '🟢 เปิดใช้งาน' : '⚫ ปิดใช้งาน'}\nวัน: ${schedule.weekdays.join(', ')}\n${time}`,
+      schedule.isActive ? 'แก้ไขเวลาได้ หรือปิด Auto นี้ถ้าไม่ใช้แล้ว' : 'Auto ที่ปิดแล้วเก็บไว้เป็นประวัติ',
+    ),
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId(`attendance:schedule_edit:${schedule.id}`).setLabel('แก้ไข Auto').setStyle(ButtonStyle.Primary).setDisabled(!schedule.isActive),
+      new ButtonBuilder().setCustomId(`attendance:schedule_disable:${schedule.id}`).setLabel('ปิด Auto').setStyle(ButtonStyle.Danger).setDisabled(!schedule.isActive),
+      new ButtonBuilder().setCustomId(attendanceComponentIds.adminRecurring).setLabel('เพิ่ม Auto').setStyle(ButtonStyle.Success),
+    )],
   };
 }
 
@@ -132,25 +174,31 @@ export function buildCreateRoundModal(mode: AttendanceMode, defaults: CreateRoun
   );
 }
 
-export function buildRecurringScheduleModal(mode: AttendanceMode): ModalBuilder {
+export function buildRecurringScheduleModal(mode: AttendanceMode, defaults?: AttendanceSchedule): ModalBuilder {
   const modal = new ModalBuilder()
     .setCustomId(`${attendanceRecurringModalPrefix}${mode}`)
     .setTitle(mode === 'AIRDROP' ? 'ตั้ง Auto รอบ Airdrop' : 'ตั้ง Auto เช็กชื่อทั่วไป')
     .addComponents(
-      inputRow(attendanceComponentIds.recurringName, 'ชื่อ Auto', mode === 'AIRDROP' ? 'Airdrop 21:00' : 'ซ้อมไฟต์', 2, 100),
-      inputRow(attendanceComponentIds.recurringWeekdays, 'วัน: 1=จันทร์ ... 7=อาทิตย์', '1,2,3,4,5,6,7', 1, 13),
+      inputRow(attendanceComponentIds.recurringName, 'ชื่อ Auto', mode === 'AIRDROP' ? 'Airdrop 21:00' : 'ซ้อมไฟต์', 2, 100, defaults?.name),
+      inputRow(attendanceComponentIds.recurringWeekdays, 'วัน: 1=จันทร์ ... 7=อาทิตย์', '1,2,3,4,5,6,7', 1, 13, defaults?.weekdays.join(',')),
     );
   if (mode === 'AIRDROP') {
     return modal.addComponents(
-      inputRow(attendanceComponentIds.recurringEventAt, 'เวลา Airdrop (HH:mm)', '21:00', 4, 5, '21:00'),
-      inputRow(attendanceComponentIds.recurringBeforeMinutes, 'เปิดก่อน Airdrop กี่นาที', '10', 1, 4, '10'),
-      inputRow(attendanceComponentIds.recurringAfterMinutes, 'ปิดหลัง Airdrop กี่นาที', '10', 1, 4, '10'),
+      inputRow(attendanceComponentIds.recurringEventAt, 'เวลา Airdrop (HH:mm)', '21:00', 4, 5, defaults?.eventAtLocalTime ?? '21:00'),
+      inputRow(attendanceComponentIds.recurringBeforeMinutes, 'เปิดก่อน Airdrop กี่นาที', '10', 1, 4, String(defaults?.opensBeforeMinutes ?? 10)),
+      inputRow(attendanceComponentIds.recurringAfterMinutes, 'ปิดหลัง Airdrop กี่นาที', '10', 1, 4, String(defaults?.closesAfterMinutes ?? 10)),
     );
   }
   return modal.addComponents(
-    inputRow(attendanceComponentIds.recurringOpensAt, 'เวลาเปิด (HH:mm)', '19:00', 4, 5, '19:00'),
-    inputRow(attendanceComponentIds.recurringClosesAt, 'เวลาปิด (HH:mm)', '21:30', 4, 5, '21:30'),
+    inputRow(attendanceComponentIds.recurringOpensAt, 'เวลาเปิด (HH:mm)', '19:00', 4, 5, defaults?.opensAtLocalTime ?? '19:00'),
+    inputRow(attendanceComponentIds.recurringClosesAt, 'เวลาปิด (HH:mm)', '21:30', 4, 5, defaults?.closesAtLocalTime ?? '21:30'),
   );
+}
+
+export function buildScheduleEditModal(schedule: AttendanceSchedule): ModalBuilder {
+  return buildRecurringScheduleModal(schedule.mode, schedule)
+    .setCustomId(`${attendanceScheduleEditModalPrefix}${schedule.id}:${schedule.mode}`)
+    .setTitle(schedule.mode === 'AIRDROP' ? 'แก้ไข Auto รอบ Airdrop' : 'แก้ไข Auto เช็กชื่อทั่วไป');
 }
 
 export function buildAttendanceProofModal(roundId: string, evidenceMode: EvidenceInputMode): ModalBuilder {

@@ -39,6 +39,7 @@ import {
   attendanceProofModalPrefix,
   attendanceProofRejectModalPrefix,
   attendanceRecurringModalPrefix,
+  attendanceScheduleEditModalPrefix,
   buildAttendanceAdminPanel,
   buildAttendanceAnnouncement,
   buildAttendanceCancellationModal,
@@ -54,6 +55,9 @@ import {
   buildLeaveModal,
   buildLeavePanel,
   buildRecurringScheduleModal,
+  buildScheduleEditModal,
+  buildScheduleManagement,
+  buildScheduleManagementPanel,
   leaveEditModalPrefix,
   leaveSubmitModalId,
 } from './attendance-components.js';
@@ -118,6 +122,26 @@ export class AttendanceInteractionHandler {
       const settings = await this.requireSettings(guild.id);
       requireAttendanceChannels(settings);
       await interaction.reply({ ...buildAttendanceModeSelector('AUTO'), flags: MessageFlags.Ephemeral });
+      return;
+    }
+    if (interaction.customId === attendanceComponentIds.adminManageRecurring) {
+      await this.requireAdmin(guild, interaction.user.id);
+      const schedules = await this.dependencies.attendance.listSchedules(guild.id);
+      await interaction.reply({ ...buildScheduleManagementPanel(schedules), flags: MessageFlags.Ephemeral });
+      return;
+    }
+    if (interaction.customId.startsWith('attendance:schedule_edit:')) {
+      await this.requireAdmin(guild, interaction.user.id);
+      const schedule = await this.dependencies.attendance.getSchedule(guild.id, entityId(interaction.customId, 'attendance:schedule_edit:'));
+      await interaction.showModal(buildScheduleEditModal(schedule));
+      return;
+    }
+    if (interaction.customId.startsWith('attendance:schedule_disable:')) {
+      await this.requireAdmin(guild, interaction.user.id);
+      const scheduleId = entityId(interaction.customId, 'attendance:schedule_disable:');
+      await this.dependencies.attendance.disableSchedule(guild.id, scheduleId, interaction.user.id, new Date());
+      const schedule = await this.dependencies.attendance.getSchedule(guild.id, scheduleId);
+      await interaction.update(buildScheduleManagement(schedule));
       return;
     }
     if (interaction.customId === attendanceComponentIds.adminPublishLeave) {
@@ -241,6 +265,14 @@ export class AttendanceInteractionHandler {
       await interaction.showModal(buildRecurringScheduleModal(mode));
       return;
     }
+    if (interaction.customId === attendanceComponentIds.adminScheduleSelect) {
+      await this.requireAdmin(guild, interaction.user.id);
+      const scheduleId = interaction.values[0];
+      if (scheduleId === undefined) throw new ValidationError('กรุณาเลือก Auto');
+      const schedule = await this.dependencies.attendance.getSchedule(guild.id, scheduleId);
+      await interaction.update(buildScheduleManagement(schedule));
+      return;
+    }
     if (interaction.customId !== attendanceComponentIds.adminRoundSelect) return;
     await this.requireAdmin(guild, interaction.user.id);
     const roundId = interaction.values[0];
@@ -281,6 +313,14 @@ export class AttendanceInteractionHandler {
         guild,
         requireAttendanceMode(interaction.customId.slice(attendanceRecurringModalPrefix.length)),
       );
+      return;
+    }
+    if (interaction.customId.startsWith(attendanceScheduleEditModalPrefix)) {
+      const context = interaction.customId.slice(attendanceScheduleEditModalPrefix.length).split(':');
+      const scheduleId = context[0];
+      const mode = requireAttendanceMode(context[1]);
+      if (scheduleId === undefined) throw new ValidationError('รหัส Auto ไม่ถูกต้อง');
+      await this.updateRecurringSchedule(interaction, guild, scheduleId, mode);
       return;
     }
     if (interaction.customId.startsWith(attendanceProofModalPrefix)) {
@@ -394,6 +434,43 @@ export class AttendanceInteractionHandler {
         });
     await interaction.reply({
       ...buildNotice('success', 'ตั้งเวลาเช็กชื่อประจำแล้ว', `⏰ **${schedule.name}**\nระบบเตรียมรอบล่วงหน้าและจะประกาศเช็กชื่อทีละวันโดยอัตโนมัติ`, 'Attendance'),
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  private async updateRecurringSchedule(
+    interaction: ModalSubmitInteraction,
+    guild: Guild,
+    scheduleId: string,
+    mode: AttendanceMode,
+  ): Promise<void> {
+    await this.requireAdmin(guild, interaction.user.id);
+    const settings = await this.requireSettings(guild.id);
+    requireAttendanceChannels(settings);
+    requireAttendanceProofChannel(settings, mode);
+    const common = {
+      guildId: guild.id,
+      scheduleId,
+      name: interaction.fields.getTextInputValue(attendanceComponentIds.recurringName),
+      weekdays: parseWeekdays(interaction.fields.getTextInputValue(attendanceComponentIds.recurringWeekdays)),
+      timezone: settings.timezone,
+      actorDiscordUserId: interaction.user.id,
+      now: new Date(),
+    } as const;
+    const schedule = mode === 'AIRDROP'
+      ? await this.dependencies.attendance.updateRecurringSchedule({
+          ...common, mode,
+          eventAtLocalTime: interaction.fields.getTextInputValue(attendanceComponentIds.recurringEventAt),
+          opensBeforeMinutes: parseMinuteOffset(interaction.fields.getTextInputValue(attendanceComponentIds.recurringBeforeMinutes), 'นาทีก่อน Airdrop'),
+          closesAfterMinutes: parseMinuteOffset(interaction.fields.getTextInputValue(attendanceComponentIds.recurringAfterMinutes), 'นาทีหลัง Airdrop'),
+        })
+      : await this.dependencies.attendance.updateRecurringSchedule({
+          ...common, mode,
+          opensAtLocalTime: interaction.fields.getTextInputValue(attendanceComponentIds.recurringOpensAt),
+          closesAtLocalTime: interaction.fields.getTextInputValue(attendanceComponentIds.recurringClosesAt),
+        });
+    await interaction.reply({
+      ...buildNotice('success', 'แก้ไข Auto แล้ว', `⏰ **${schedule.name}**\nรอบที่ยังไม่ประกาศจะใช้วันและเวลาใหม่`, 'Attendance'),
       flags: MessageFlags.Ephemeral,
     });
   }

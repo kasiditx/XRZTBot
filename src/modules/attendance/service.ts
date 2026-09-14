@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { DateTime } from 'luxon';
-import { and, asc, desc, eq, gte, inArray, lte, ne, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, like, lte, ne, or } from 'drizzle-orm';
 import { AuthorizationError, ConflictError, NotFoundError, ValidationError } from '../../domain/errors.js';
 import type { Database } from '../../infrastructure/db/client.js';
 import {
@@ -91,6 +91,19 @@ interface CreateRecurringScheduleBaseInput {
 }
 
 export type CreateRecurringScheduleInput = CreateRecurringScheduleBaseInput & ({
+  readonly mode: 'GENERAL';
+  readonly opensAtLocalTime: string;
+  readonly closesAtLocalTime: string;
+} | {
+  readonly mode: 'AIRDROP';
+  readonly eventAtLocalTime: string;
+  readonly opensBeforeMinutes: number;
+  readonly closesAfterMinutes: number;
+});
+
+export type UpdateRecurringScheduleInput = Omit<CreateRecurringScheduleBaseInput, 'requestId'> & {
+  readonly scheduleId: string;
+} & ({
   readonly mode: 'GENERAL';
   readonly opensAtLocalTime: string;
   readonly closesAtLocalTime: string;
@@ -216,6 +229,61 @@ export class AttendanceService {
       .from(attendanceSchedules)
       .where(and(eq(attendanceSchedules.guildId, guildId), eq(attendanceSchedules.isActive, true)))
       .orderBy(asc(attendanceSchedules.name));
+  }
+
+  public async listSchedules(guildId: string): Promise<AttendanceSchedule[]> {
+    return this.db.select().from(attendanceSchedules)
+      .where(eq(attendanceSchedules.guildId, guildId))
+      .orderBy(desc(attendanceSchedules.isActive), asc(attendanceSchedules.name));
+  }
+
+  public async getSchedule(guildId: string, scheduleId: string): Promise<AttendanceSchedule> {
+    const [schedule] = await this.db.select().from(attendanceSchedules)
+      .where(and(eq(attendanceSchedules.guildId, guildId), eq(attendanceSchedules.id, scheduleId))).limit(1);
+    if (schedule === undefined) throw new NotFoundError('ไม่พบ Auto เช็กชื่อนี้');
+    return schedule;
+  }
+
+  public async updateRecurringSchedule(input: UpdateRecurringScheduleInput): Promise<AttendanceSchedule> {
+    validateScheduleInput({ ...input, requestId: input.scheduleId });
+    return this.db.transaction(async (tx) => {
+      const [existing] = await tx.select().from(attendanceSchedules).where(and(
+        eq(attendanceSchedules.guildId, input.guildId), eq(attendanceSchedules.id, input.scheduleId),
+      )).limit(1).for('update');
+      if (existing === undefined) throw new NotFoundError('ไม่พบ Auto เช็กชื่อนี้');
+      if (!existing.isActive) throw new ConflictError('Auto นี้ปิดใช้งานแล้ว กรุณาสร้าง Auto ใหม่');
+      await removeUnpublishedScheduleRounds(tx, input.guildId, input.scheduleId);
+      const [updated] = await tx.update(attendanceSchedules).set({
+        name: requireText(input.name, 'ชื่อ Auto', 2, 100), weekdays: validateWeekdays(input.weekdays), mode: input.mode,
+        opensAtLocalTime: input.mode === 'GENERAL' ? input.opensAtLocalTime.trim() : null,
+        closesAtLocalTime: input.mode === 'GENERAL' ? input.closesAtLocalTime.trim() : null,
+        eventAtLocalTime: input.mode === 'AIRDROP' ? input.eventAtLocalTime.trim() : null,
+        opensBeforeMinutes: input.mode === 'AIRDROP' ? input.opensBeforeMinutes : null,
+        closesAfterMinutes: input.mode === 'AIRDROP' ? input.closesAfterMinutes : null,
+        updatedAt: input.now,
+      }).where(eq(attendanceSchedules.id, input.scheduleId)).returning();
+      if (updated === undefined) throw new Error('Attendance schedule update did not return a row');
+      await materializeScheduleWithTransaction(tx, updated, input.timezone, input.now);
+      await writeAttendanceAudit(tx, input.guildId, input.actorDiscordUserId, 'ATTENDANCE_SCHEDULE_UPDATED', 'ATTENDANCE_SCHEDULE', updated.id, existing, updated);
+      return updated;
+    });
+  }
+
+  public async disableSchedule(guildId: string, scheduleId: string, actorDiscordUserId: string, now: Date): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const [existing] = await tx.select().from(attendanceSchedules).where(and(
+        eq(attendanceSchedules.guildId, guildId), eq(attendanceSchedules.id, scheduleId),
+      )).limit(1).for('update');
+      if (existing === undefined) throw new NotFoundError('ไม่พบ Auto เช็กชื่อนี้');
+      if (!existing.isActive) return;
+      await removeUnpublishedScheduleRounds(tx, guildId, scheduleId);
+      await tx.update(scheduledJobs).set({ status: 'CANCELLED', updatedAt: now }).where(and(
+        eq(scheduledJobs.guildId, guildId), eq(scheduledJobs.status, 'PENDING'),
+        like(scheduledJobs.deduplicationKey, `attendance-schedule:${scheduleId}:tick:%`),
+      ));
+      await tx.update(attendanceSchedules).set({ isActive: false, updatedAt: now }).where(eq(attendanceSchedules.id, scheduleId));
+      await writeAttendanceAudit(tx, guildId, actorDiscordUserId, 'ATTENDANCE_SCHEDULE_DISABLED', 'ATTENDANCE_SCHEDULE', scheduleId, existing, { ...existing, isActive: false });
+    });
   }
 
   public async getRound(guildId: string, roundId: string): Promise<AttendanceRound> {
@@ -1106,6 +1174,25 @@ async function queueNextScheduleTick(
       runAt: nextTick.toJSDate(),
     })
     .onConflictDoNothing();
+}
+
+async function removeUnpublishedScheduleRounds(tx: Transaction, guildId: string, scheduleId: string): Promise<void> {
+  const rounds = await tx.select({ id: attendanceRounds.id }).from(attendanceRounds).where(and(
+    eq(attendanceRounds.guildId, guildId),
+    eq(attendanceRounds.sourceScheduleId, scheduleId),
+    eq(attendanceRounds.status, 'SCHEDULED'),
+    isNull(attendanceRounds.announcementMessageId),
+  ));
+  if (rounds.length === 0) return;
+  const roundIds = rounds.map((round) => round.id);
+  const jobKeys = roundIds.flatMap((roundId) => ['publish', 'open', 'reminder', 'close'].map(
+    (key) => `attendance:${roundId}:${key}`,
+  ));
+  await tx.delete(scheduledJobs).where(and(
+    eq(scheduledJobs.guildId, guildId),
+    inArray(scheduledJobs.deduplicationKey, jobKeys),
+  ));
+  await tx.delete(attendanceRounds).where(inArray(attendanceRounds.id, roundIds));
 }
 
 async function snapshotActiveMembers(tx: Transaction, guildId: string, roundId: string): Promise<void> {
