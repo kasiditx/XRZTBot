@@ -7,6 +7,7 @@ import {
   type ButtonInteraction,
   type Client,
   type Guild,
+  type GuildMember,
   type Interaction,
   type ModalSubmitInteraction,
   type SendableChannels,
@@ -132,21 +133,21 @@ export class StockInteractionHandler {
       return;
     }
     if (interaction.customId === 'stock:withdraw') {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       await this.requireActiveMember(guild, interaction.user.id);
       const session = this.createSelectionSession(guild.id, interaction.user.id, 'WITHDRAWAL');
-      await interaction.reply({
+      await interaction.editReply({
         ...buildStockItemPicker('WITHDRAWAL', await this.dependencies.inventory.getDashboard(guild.id, 1, 25), session.token, session.itemIds),
-        flags: MessageFlags.Ephemeral,
       });
       return;
     }
     if (interaction.customId === 'stock:deposit') {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       await this.requireActiveMember(guild, interaction.user.id);
       await this.requireDepositLogChannel(guild.id);
       const session = this.createSelectionSession(guild.id, interaction.user.id, 'DEPOSIT');
-      await interaction.reply({
+      await interaction.editReply({
         ...buildStockItemPicker('DEPOSIT', await this.dependencies.inventory.getDashboard(guild.id, 1, 25), session.token, session.itemIds),
-        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -690,7 +691,7 @@ export class StockInteractionHandler {
   }
 
   private async resolveCurrentAuthority(guild: Guild, discordUserId: string): Promise<AuthorityLevel> {
-    const [settings, member] = await Promise.all([this.requireSettings(guild.id), guild.members.fetch(discordUserId)]);
+    const [settings, member] = await Promise.all([this.requireSettings(guild.id), fetchGuildMember(guild, discordUserId)]);
     const authority = resolveAuthority(new Set(member.roles.cache.keys()), {
       devRoleId: settings.devRoleId,
       headRoleId: settings.headRoleId,
@@ -776,9 +777,22 @@ function parseStockViewPage(value: string): number {
 
 async function fetchSendableChannel(client: Client, channelId: string | null, label: string): Promise<SendableChannels> {
   if (channelId === null) throw new ValidationError(`กรุณาตั้งค่า ${label} ก่อน`);
-  const channel = await client.channels.fetch(channelId);
+  let channel;
+  try {
+    channel = await client.channels.fetch(channelId);
+  } catch {
+    throw new ValidationError(`${label} ใช้งานไม่ได้ (Bot มองไม่เห็น Channel หรือ Channel ถูกลบไปแล้ว)`);
+  }
   if (channel === null || !channel.isTextBased() || !channel.isSendable()) {
     throw new ValidationError(`${label} ไม่ใช่ Text Channel ที่ Bot ส่งข้อความได้`);
   }
   return channel;
+}
+
+async function fetchGuildMember(guild: Guild, discordUserId: string): Promise<GuildMember> {
+  try {
+    return await guild.members.fetch(discordUserId);
+  } catch {
+    throw new ValidationError('ดึงข้อมูลสมาชิก Discord ไม่สำเร็จ กรุณาลองใหม่ (หากเป็นกับทุกคน แจ้ง Dev ตรวจสอบ Server Members Intent)');
+  }
 }

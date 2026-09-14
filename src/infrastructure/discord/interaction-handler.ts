@@ -559,7 +559,7 @@ export class DiscordInteractionHandler {
   private async requireAuthority(guild: Guild, discordUserId: string, capability: Capability): Promise<AuthorityLevel> {
     const [settings, member] = await Promise.all([
       this.requireSettings(guild.id),
-      guild.members.fetch(discordUserId),
+      fetchGuildMember(guild, discordUserId),
     ]);
     const authority = resolveMemberAuthority(member, settings);
     requireCapability(authority, capability);
@@ -591,13 +591,27 @@ export class DiscordInteractionHandler {
       'System Response',
     );
     if (!(error instanceof DomainError)) {
-      this.dependencies.logger.error({ err: error, interactionId: interaction.id }, 'interaction failed');
+      this.dependencies.logger.error(
+        {
+          err: error,
+          interactionId: interaction.id,
+          interactionKind: interactionTypeLabel(interaction),
+          customId: interactionCustomId(interaction),
+          guildId: interaction.guildId,
+          userId: interaction.user.id,
+        },
+        'interaction failed',
+      );
     }
 
     if (!interaction.isRepliable()) {
       return;
     }
-    if (interaction.replied || interaction.deferred) {
+    if (interaction.deferred && !interaction.replied) {
+      await interaction.editReply(notice);
+      return;
+    }
+    if (interaction.replied) {
       await interaction.followUp({ ...notice, flags: MessageFlags.Ephemeral });
       return;
     }
@@ -610,6 +624,24 @@ function requireGuild(guild: Guild | null): Guild {
     throw new ValidationError('คำสั่งนี้ใช้ได้เฉพาะใน Discord Server');
   }
   return guild;
+}
+
+function interactionTypeLabel(interaction: Interaction): string {
+  if (interaction.isButton()) return 'button';
+  if (interaction.isStringSelectMenu()) return 'select';
+  if (interaction.isModalSubmit()) return 'modal';
+  if (interaction.isChatInputCommand()) return 'command';
+  return 'other';
+}
+
+function interactionCustomId(interaction: Interaction): string | null {
+  if (interaction.isButton() || interaction.isStringSelectMenu() || interaction.isModalSubmit()) {
+    return interaction.customId;
+  }
+  if (interaction.isChatInputCommand()) {
+    return interaction.commandName;
+  }
+  return null;
 }
 
 function resolveMemberAuthority(member: GuildMember, settings: GuildSettings): AuthorityLevel {
@@ -705,11 +737,24 @@ function parseRosterMemberContext(
   return { title: parseRosterTitleSelection(rawTitle), page: parsePositivePage(rawPage ?? '') };
 }
 
+async function fetchGuildMember(guild: Guild, discordUserId: string): Promise<GuildMember> {
+  try {
+    return await guild.members.fetch(discordUserId);
+  } catch {
+    throw new ValidationError('ดึงข้อมูลสมาชิก Discord ไม่สำเร็จ กรุณาลองใหม่ (หากเป็นกับทุกคน แจ้ง Dev ตรวจสอบ Server Members Intent)');
+  }
+}
+
 async function fetchSendableChannel(client: Client, channelId: string | null, label: string): Promise<GuildTextBasedChannel> {
   if (channelId === null) {
     throw new ValidationError(`กรุณาตั้งค่า ${label} ก่อน`);
   }
-  const channel = await client.channels.fetch(channelId);
+  let channel;
+  try {
+    channel = await client.channels.fetch(channelId);
+  } catch {
+    throw new ValidationError(`${label} ใช้งานไม่ได้ (Bot มองไม่เห็น Channel หรือ Channel ถูกลบไปแล้ว)`);
+  }
   if (channel === null || channel.isDMBased() || !channel.isTextBased() || !channel.isSendable()) {
     throw new ValidationError(`${label} ไม่ใช่ Text Channel ที่ Bot ส่งข้อความได้`);
   }

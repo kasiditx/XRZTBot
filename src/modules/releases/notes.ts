@@ -17,8 +17,8 @@ export type ReleaseNotes = z.infer<typeof releaseNotesSchema>;
 // Change the ID only for a new announcement; keep summaries about member-visible changes.
 // Set to null for a deployment that should not announce anything.
 export const currentRelease: ReleaseNotes | null = {
-  id: '2026-09-14.4',
-  title: 'เพิ่มหน้าจัดการ Auto เช็กชื่อ',
+  id: '2026-09-14.5',
+  title: 'แก้ระบบเบิกของและส่งของเข้าแก๊ง',
   added: [
     'เพิ่มเมนูจัดการ Auto สำหรับดูรายการ แก้ไขวันและเวลา ปิด Auto เดิม และเพิ่ม Auto ได้หลายรายการ',
   ],
@@ -26,6 +26,6 @@ export const currentRelease: ReleaseNotes | null = {
     'เมื่อแก้ไขหรือปิด Auto ระบบจะจัดการรอบอนาคตที่ยังไม่ประกาศให้ตรงกับการตั้งค่าใหม่',
   ],
   fixed: [
-    'Auto เช็กชื่อจะประกาศทีละวันตามวันที่ของรอบ ไม่ส่งรอบล่วงหน้าทั้งหมดพร้อมกันตอนตั้งเวลา',
+    'แก้ปุ่มขอเบิกของและส่งของเข้าแก๊งที่อาจขึ้นระบบเกิดข้อผิดพลาดเมื่อโหลดข้อมูลเกินเวลาตอบรับของ Discord',
   ],
 };
