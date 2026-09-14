@@ -128,6 +128,12 @@ export class StockInteractionHandler {
       await interaction.showModal(buildStockCsvModal('MOVEMENT'));
       return;
     }
+    if (interaction.customId === stockComponentIds.adminSync) {
+      await this.requireCapability(guild, interaction.user.id, 'STOCK_REVERSE');
+      await this.requireStockLogChannel(guild.id);
+      await interaction.showModal(buildStockCsvModal('SYNC'));
+      return;
+    }
     if (interaction.customId === stockComponentIds.adminPublishPanel) {
       await this.publishDashboard(interaction, guild);
       return;
@@ -285,6 +291,10 @@ export class StockInteractionHandler {
       await this.applyCsv(interaction, guild, 'MOVEMENT');
       return;
     }
+    if (interaction.customId === stockComponentIds.syncModal) {
+      await this.applyCsv(interaction, guild, 'SYNC');
+      return;
+    }
     if (interaction.customId.startsWith(stockComponentIds.withdrawalModalPrefix)) {
       await this.createWithdrawal(interaction, guild, entityId(interaction.customId, stockComponentIds.withdrawalModalPrefix));
       return;
@@ -311,8 +321,8 @@ export class StockInteractionHandler {
     }
   }
 
-  private async applyCsv(interaction: ModalSubmitInteraction, guild: Guild, kind: 'OPENING' | 'MOVEMENT'): Promise<void> {
-    await this.requireCapability(guild, interaction.user.id, kind === 'OPENING' ? 'STOCK_REVERSE' : 'ROUTINE_ADMIN');
+  private async applyCsv(interaction: ModalSubmitInteraction, guild: Guild, kind: 'OPENING' | 'MOVEMENT' | 'SYNC'): Promise<void> {
+    await this.requireCapability(guild, interaction.user.id, kind === 'MOVEMENT' ? 'ROUTINE_ADMIN' : 'STOCK_REVERSE');
     const settings = await this.requireSettings(guild.id);
     const channel = await fetchSendableChannel(
       this.dependencies.client,
@@ -346,7 +356,11 @@ export class StockInteractionHandler {
             actorDiscordUserId: interaction.user.id,
             now: new Date(),
           })
-        : await this.dependencies.inventory.applyMovementCsv({
+        : kind === 'SYNC' ? await this.dependencies.inventory.applySyncCsv({
+            guildId: guild.id, content, originalAttachmentId: persistedAttachment.id,
+            publicChannelId: channel.id, publicMessageId: logMessage.id,
+            actorDiscordUserId: interaction.user.id, now: new Date(),
+          }) : await this.dependencies.inventory.applyMovementCsv({
             guildId: guild.id,
             content,
             originalAttachmentId: persistedAttachment.id,

@@ -1,6 +1,8 @@
 import {
   buildDepositModal,
   buildPreparedDepositLog,
+  buildStockAdminPanel,
+  buildStockCsvModal,
   buildStockDashboard,
   buildStockItemPicker,
   buildFulfillmentModal,
@@ -46,6 +48,11 @@ const withdrawalView: WithdrawalRequestView = {
 };
 
 describe('stock Discord components', () => {
+  it('offers a latest-balance sync CSV action', () => {
+    const payload = buildStockAdminPanel([], [], []);
+    expect(JSON.stringify(payload.components[0]?.toJSON())).toContain('stock:admin_sync');
+    expect(buildStockCsvModal('SYNC').toJSON().custom_id).toBe('stock:sync_modal');
+  });
   it('serializes the stock dashboard with withdrawal and deposit actions', () => {
     const payload = buildStockDashboard({
       items: [],

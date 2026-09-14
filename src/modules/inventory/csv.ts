@@ -3,6 +3,7 @@ import { parse } from 'csv-parse/sync';
 import { ValidationError } from '../../domain/errors.js';
 
 const initialHeaders = ['item_name', 'opening_quantity'] as const;
+const syncHeaders = ['item_code', 'item_name', 'latest_quantity'] as const;
 const movementHeaders = [
   'batch_ref',
   'item_code',
@@ -28,6 +29,35 @@ export interface StockMovementCsvRow {
   readonly action: 'ADD' | 'REMOVE';
   readonly changeQuantity: number;
   readonly reason: string;
+}
+
+export interface StockSyncCsvRow {
+  readonly rowNumber: number;
+  readonly itemCode: string | null;
+  readonly itemName: string;
+  readonly latestQuantity: number;
+}
+
+export function parseStockSyncCsv(content: Buffer | string): StockSyncCsvRow[] {
+  const rows = parseRows(content);
+  assertExactHeaders(rows, syncHeaders);
+  const seenCodes = new Set<string>();
+  const seenNames = new Set<string>();
+  return rows.slice(1).map((row, index) => {
+    const rowNumber = index + 2;
+    const rawCode = row[0]?.trim().toUpperCase() ?? '';
+    if (rawCode !== '' && !/^MR-\d{3,}$/u.test(rawCode)) {
+      throw new ValidationError(`แถว ${rowNumber}: item_code ต้องเป็น MR-001 หรือเว้นว่างสำหรับของใหม่`);
+    }
+    const itemName = requireText(row[1], 'item_name', rowNumber);
+    const normalizedName = itemName.toLocaleLowerCase('th');
+    if ((rawCode !== '' && seenCodes.has(rawCode)) || seenNames.has(normalizedName)) {
+      throw new ValidationError(`แถว ${rowNumber}: item_code หรือ item_name ซ้ำในไฟล์`);
+    }
+    if (rawCode !== '') seenCodes.add(rawCode);
+    seenNames.add(normalizedName);
+    return { rowNumber, itemCode: rawCode === '' ? null : rawCode, itemName, latestQuantity: parseInteger(row[2], 'latest_quantity', rowNumber, true) };
+  });
 }
 
 export interface InventoryState {

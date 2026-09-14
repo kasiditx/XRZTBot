@@ -17,14 +17,12 @@ export type ReleaseNotes = z.infer<typeof releaseNotesSchema>;
 // Change the ID only for a new announcement; keep summaries about member-visible changes.
 // Set to null for a deployment that should not announce anything.
 export const currentRelease: ReleaseNotes | null = {
-  id: '2026-09-14.6',
-  title: 'แก้หน้ารายการเบิกของและส่งของ',
+  id: '2026-09-14.7',
+  title: 'เพิ่ม Sync รายการและยอด Stock ล่าสุด',
   added: [
-    'เพิ่มเมนูจัดการ Auto สำหรับดูรายการ แก้ไขวันและเวลา ปิด Auto เดิม และเพิ่ม Auto ได้หลายรายการ',
+    'เพิ่มเมนู Sync ยอดล่าสุดด้วย CSV รองรับแก้ชื่อและยอดของเดิม พร้อมสร้าง item_code อัตโนมัติสำหรับของใหม่',
   ],
-  improved: [
-    'เมื่อแก้ไขหรือปิด Auto ระบบจะจัดการรอบอนาคตที่ยังไม่ประกาศให้ตรงกับการตั้งค่าใหม่',
-  ],
+  improved: [],
   fixed: [
     'แก้ปุ่มขอเบิกของและส่งของเข้าแก๊งที่เปิดไม่ได้เมื่อ Stock มีเพียงหน้าเดียว',
   ],

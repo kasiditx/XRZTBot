@@ -18,12 +18,14 @@ import type { WithdrawalRequestView } from '../../modules/withdrawals/service.js
 export const stockComponentIds = {
   adminOpening: 'stock:admin_opening',
   adminMovement: 'stock:admin_movement',
+  adminSync: 'stock:admin_sync',
   adminPublishPanel: 'stock:admin_publish_panel',
   adminBatchSelect: 'stock:admin_batch_select',
   adminWithdrawalSelect: 'stock:admin_withdrawal_select',
   adminDepositSelect: 'stock:admin_deposit_select',
   openingModal: 'stock:opening_modal',
   movementModal: 'stock:movement_modal',
+  syncModal: 'stock:sync_modal',
   csvFile: 'stock:csv_file',
   memberSelectPrefix: 'stock:member_select:',
   memberPagePrefix: 'stock:member_page:',
@@ -51,6 +53,7 @@ export function buildStockAdminPanel(
   const actions = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(stockComponentIds.adminOpening).setLabel('Import ยอดตั้งต้น').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(stockComponentIds.adminMovement).setLabel('เพิ่ม/หักด้วย CSV').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(stockComponentIds.adminSync).setLabel('Sync ยอดล่าสุด').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId(stockComponentIds.adminPublishPanel).setLabel('ส่ง/อัปเดต Stock').setStyle(ButtonStyle.Success),
   );
   const components: (
@@ -95,15 +98,15 @@ export function buildStockAdminPanel(
   };
 }
 
-export function buildStockCsvModal(kind: 'OPENING' | 'MOVEMENT'): ModalBuilder {
+export function buildStockCsvModal(kind: 'OPENING' | 'MOVEMENT' | 'SYNC'): ModalBuilder {
   const file = new FileUploadBuilder()
     .setCustomId(stockComponentIds.csvFile)
     .setMinValues(1)
     .setMaxValues(1)
     .setRequired(true);
   return new ModalBuilder()
-    .setCustomId(kind === 'OPENING' ? stockComponentIds.openingModal : stockComponentIds.movementModal)
-    .setTitle(kind === 'OPENING' ? 'Import ยอดตั้งต้น Stock' : 'เพิ่ม/หัก Stock ด้วย CSV')
+    .setCustomId(kind === 'OPENING' ? stockComponentIds.openingModal : kind === 'SYNC' ? stockComponentIds.syncModal : stockComponentIds.movementModal)
+    .setTitle(kind === 'OPENING' ? 'Import ยอดตั้งต้น Stock' : kind === 'SYNC' ? 'Sync รายการและยอดล่าสุด' : 'เพิ่ม/หัก Stock ด้วย CSV')
     .addLabelComponents(new LabelBuilder().setLabel('ไฟล์ CSV 1 ไฟล์ (ไม่เกิน 2 MB)').setFileUploadComponent(file));
 }
 

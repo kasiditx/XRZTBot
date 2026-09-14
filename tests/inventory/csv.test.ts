@@ -3,6 +3,7 @@ import {
   hashCsv,
   parseInitialStockCsv,
   parseStockMovementCsv,
+  parseStockSyncCsv,
   planStockMovements,
 } from '../../src/modules/inventory/csv.js';
 
@@ -13,6 +14,12 @@ const validMovementCsv = [
 ].join('\n');
 
 describe('stock CSV', () => {
+  it('parses sync rows with an existing code or an automatic new code', () => {
+    expect(parseStockSyncCsv('item_code,item_name,latest_quantity\nMR-001,กล่องตีอาวุธ,36\n,AED,0')).toEqual([
+      { rowNumber: 2, itemCode: 'MR-001', itemName: 'กล่องตีอาวุธ', latestQuantity: 36 },
+      { rowNumber: 3, itemCode: null, itemName: 'AED', latestQuantity: 0 },
+    ]);
+  });
   it('parses initial stock and rejects duplicate names', () => {
     expect(parseInitialStockCsv('item_name,opening_quantity\nRepair Kit,10\nArmor,0')).toEqual([
       { itemName: 'Repair Kit', openingQuantity: 10 },

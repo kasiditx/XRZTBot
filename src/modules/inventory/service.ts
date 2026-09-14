@@ -13,6 +13,7 @@ import { writeAudit } from '../audit/service.js';
 import {
   hashCsv,
   parseInitialStockCsv,
+  parseStockSyncCsv,
   parseStockMovementCsv,
   planStockMovements,
 } from './csv.js';
@@ -270,6 +271,64 @@ export class InventoryService {
       });
       await queueStockRefresh(tx, input.guildId, input.now);
       await writeInventoryAudit(tx, input.guildId, input.actorDiscordUserId, 'STOCK_CSV_APPLIED', 'INVENTORY_BATCH', batch.id, null, batch);
+      return batch.id;
+    });
+    return this.getBatch(input.guildId, batchId);
+  }
+
+  public async applySyncCsv(input: ApplyStockCsvInput): Promise<InventoryBatchView> {
+    const rows = parseStockSyncCsv(input.content);
+    const fileHash = hashCsv(input.content);
+    const batchId = await this.db.transaction(async (tx) => {
+      await lockInventoryGuild(tx, input.guildId);
+      const duplicate = await findBatchByHash(tx, input.guildId, fileHash);
+      if (duplicate !== null) return duplicate.id;
+      const currentItems = await tx.select().from(inventoryItems)
+        .where(eq(inventoryItems.guildId, input.guildId)).for('update');
+      const byCode = new Map(currentItems.map((item) => [item.itemCode, item]));
+      const namesOutsideFile = new Set(currentItems
+        .filter((item) => !rows.some((row) => row.itemCode === item.itemCode))
+        .map((item) => item.itemName.toLocaleLowerCase('th')));
+      for (const row of rows) {
+        if (row.itemCode !== null && !byCode.has(row.itemCode)) throw new ValidationError(`แถว ${row.rowNumber}: ไม่พบ item_code ${row.itemCode}`);
+        if (namesOutsideFile.has(row.itemName.toLocaleLowerCase('th'))) throw new ValidationError(`แถว ${row.rowNumber}: item_name ซ้ำกับรายการอื่นในระบบ`);
+      }
+      const [batch] = await tx.insert(inventoryBatches).values({
+        guildId: input.guildId, batchRef: `SYNC-${fileHash.slice(0, 16).toUpperCase()}`,
+        fileHash, sourceType: 'STOCK_SYNC_CSV', originalAttachmentId: input.originalAttachmentId,
+        publicChannelId: input.publicChannelId, publicMessageId: input.publicMessageId,
+        reason: 'Sync รายการและยอดล่าสุดจาก CSV', createdByDiscordUserId: input.actorDiscordUserId,
+        createdAt: input.now, updatedAt: input.now,
+      }).returning();
+      if (batch === undefined) throw new Error('Stock sync batch creation did not return a row');
+      let nextSequence = currentItems.reduce((maximum, item) => {
+        const sequence = /^MR-(\d+)$/u.exec(item.itemCode)?.[1];
+        return sequence === undefined ? maximum : Math.max(maximum, Number(sequence));
+      }, 0) + 1;
+      const targets: Array<{ item: InventoryItem; latestQuantity: number }> = [];
+      for (const row of rows) {
+        let item = row.itemCode === null ? undefined : byCode.get(row.itemCode);
+        if (item === undefined) {
+          const [created] = await tx.insert(inventoryItems).values({
+            guildId: input.guildId, itemCode: formatInventoryItemCode(nextSequence), itemName: row.itemName,
+            quantity: 0, createdAt: input.now, updatedAt: input.now,
+          }).returning();
+          if (created === undefined) throw new Error('Stock sync item creation did not return a row');
+          nextSequence += 1;
+          item = created;
+        } else if (item.itemName !== row.itemName) {
+          const [renamed] = await tx.update(inventoryItems).set({ itemName: row.itemName, updatedAt: input.now })
+            .where(eq(inventoryItems.id, item.id)).returning();
+          if (renamed === undefined) throw new Error('Stock sync item rename did not return a row');
+          item = renamed;
+        }
+        targets.push({ item, latestQuantity: row.latestQuantity });
+      }
+      const deltas = targets.filter(({ item, latestQuantity }) => item.quantity !== latestQuantity)
+        .map(({ item, latestQuantity }) => ({ item, quantityChange: latestQuantity - item.quantity, action: latestQuantity > item.quantity ? 'ADD' as const : 'REMOVE' as const }));
+      if (deltas.length > 0) await applyInventoryDeltasWithTransaction(tx, { guildId: input.guildId, batchId: batch.id, action: null, deltas, now: input.now });
+      await queueStockRefresh(tx, input.guildId, input.now);
+      await writeInventoryAudit(tx, input.guildId, input.actorDiscordUserId, 'STOCK_SYNC_APPLIED', 'INVENTORY_BATCH', batch.id, null, { batch, rowCount: rows.length });
       return batch.id;
     });
     return this.getBatch(input.guildId, batchId);
