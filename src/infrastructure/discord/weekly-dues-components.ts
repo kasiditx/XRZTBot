@@ -16,6 +16,7 @@ import type {
   WeeklyCollectionView,
   WeeklyPaymentProofView,
 } from '../../modules/weekly-dues/service.js';
+import { WEEKLY_RESERVE_EXEMPTION_REASON } from '../../modules/weekly-dues/service.js';
 import type { MemberSelectionOption } from './role-verified-members.js';
 
 export const weeklyComponentIds = {
@@ -96,6 +97,12 @@ export function buildWeeklyAnnouncement(view: WeeklyCollectionView) {
 
 function buildWeeklyDescriptions(view: WeeklyCollectionView): string[] {
   const { collection, obligations } = view;
+  const reserveExemptions = obligations.filter(({ obligation }) => (
+    obligation.status === 'EXEMPT' && obligation.rejectionReason === WEEKLY_RESERVE_EXEMPTION_REASON
+  ));
+  const paymentStatuses = obligations.filter(({ obligation }) => (
+    obligation.status !== 'EXEMPT' || obligation.rejectionReason !== WEEKLY_RESERVE_EXEMPTION_REASON
+  ));
   const lines = [
     `ช่วงวันที่ **${collection.startsOn} – ${collection.endsOn}**`,
     `ยอดมาตรฐาน **${collection.standardAmount.toLocaleString('th-TH')}**`,
@@ -108,9 +115,17 @@ function buildWeeklyDescriptions(view: WeeklyCollectionView): string[] {
           `**เหตุผล** ${collection.cancellationReason ?? '—'}`,
         ]),
     '',
-    `**สถานะสมาชิก (${obligations.length.toString()} คน)**`,
-    ...obligations.map(({ obligation, member }) =>
+    `**สถานะสมาชิกที่ต้องส่ง (${paymentStatuses.length.toString()} คน)**`,
+    ...paymentStatuses.map(({ obligation, member }) =>
       `${statusEmoji(obligation.status)} <@${member.discordUserId}> — ${obligation.amount.toLocaleString('th-TH')} · ${thaiStatus(obligation.status)}`),
+    ...(reserveExemptions.length === 0
+      ? []
+      : [
+          '',
+          `**สมาชิกที่ได้รับการยกเว้น (${reserveExemptions.length.toString()} คน)**`,
+          ...reserveExemptions.map(({ member }) =>
+            `🛡️ <@${member.discordUserId}> — ${WEEKLY_RESERVE_EXEMPTION_REASON}`),
+        ]),
   ];
   return splitWeeklyDescription(lines);
 }

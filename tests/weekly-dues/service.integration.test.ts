@@ -27,6 +27,7 @@ describeWithDatabase('WeeklyDuesService PostgreSQL integration', () => {
   const firstMember = '500000000000000002';
   const secondMember = '500000000000000003';
   const adminMember = '500000000000000004';
+  const reserveMember = '500000000000000006';
 
   beforeAll(async () => {
     if (testDatabaseUrl === undefined) throw new Error('TEST_DATABASE_URL is required');
@@ -42,6 +43,7 @@ describeWithDatabase('WeeklyDuesService PostgreSQL integration', () => {
       { guildId, discordUserId: secondMember, inGameName: 'Bravo', status: 'ACTIVE' },
       { guildId, discordUserId: adminMember, inGameName: 'Admin Active', status: 'ACTIVE' },
       { guildId, discordUserId: '500000000000000005', inGameName: 'Former', status: 'FORMER' },
+      { guildId, discordUserId: reserveMember, inGameName: 'Reserve', status: 'ACTIVE', rosterTitle: 'RESERVE' },
     ]);
   });
 
@@ -66,7 +68,19 @@ describeWithDatabase('WeeklyDuesService PostgreSQL integration', () => {
     const created = await service.create(input);
     const duplicate = await service.create(input);
     expect(duplicate.collection.id).toBe(created.collection.id);
-    expect(created.obligations.map(({ member }) => member.discordUserId).sort()).toEqual([adminMember, firstMember, secondMember].sort());
+    expect(created.obligations.map(({ member }) => member.discordUserId).sort()).toEqual([adminMember, firstMember, secondMember, reserveMember].sort());
+    expect(created.obligations.find(({ member }) => member.discordUserId === reserveMember)?.obligation).toMatchObject({
+      amount: 0,
+      status: 'EXEMPT',
+      rejectionReason: 'ยกเว้นเนื่องจากเป็นตำแหน่งสำรอง',
+      convertedFineId: null,
+    });
+    expect(created.obligations.filter(({ member }) => member.discordUserId !== reserveMember)
+      .every(({ obligation }) => obligation.status === 'UNPAID' && obligation.amount === 100_000)).toBe(true);
+    await expect(service.preparePayment(guildId, created.collection.id, reserveMember, 100_000, input.now))
+      .rejects.toBeInstanceOf(ConflictError);
+    await expect(service.overrideAmount(guildId, created.collection.id, reserveMember, 100_000, actor, input.now))
+      .rejects.toBeInstanceOf(ConflictError);
     expect(created.collection.conversionAt.toISOString()).toBe('2026-08-30T17:00:00.000Z');
     await expect(service.preparePayment(
       guildId,
@@ -104,6 +118,11 @@ describeWithDatabase('WeeklyDuesService PostgreSQL integration', () => {
 
     const converted = await service.processConversion(guildId, collection!.collection.id, new Date('2026-08-30T17:00:00.000Z'));
     expect(converted.collection.isClosed).toBe(true);
+    expect(converted.obligations.find(({ member }) => member.discordUserId === reserveMember)?.obligation).toMatchObject({
+      status: 'EXEMPT',
+      amount: 0,
+      convertedFineId: null,
+    });
     expect(converted.obligations.find(({ member }) => member.discordUserId === adminMember)?.obligation.status).toBe('PENDING_VERIFICATION');
     expect(converted.obligations.find(({ member }) => member.discordUserId === secondMember)?.obligation.status).toBe('CONVERTED_TO_FINE');
 
@@ -272,6 +291,37 @@ describeWithDatabase('WeeklyDuesService PostgreSQL integration', () => {
     );
     expect(retried.collection.cancelledAt).not.toBeNull();
     expect(retried.obligations.every(({ obligation }) => obligation.status === 'EXEMPT')).toBe(true);
+  });
+
+  it('exempts existing unpaid reserve dues idempotently while preserving other obligations', async () => {
+    const now = new Date('2026-09-14T00:00:00.000Z');
+    const created = await service.create({
+      guildId, requestId: 'reserve-retroactive', title: 'Reserve exemption',
+      startsOn: '2026-09-14', endsOn: '2026-09-19', standardAmount: 200_000,
+      overdueFineAmount: 50_000, recurringFineAmount: 25_000,
+      timezone: 'Asia/Bangkok', actorDiscordUserId: actor, now,
+    });
+    const reserve = created.obligations.find(({ member }) => member.discordUserId === reserveMember)!;
+    // Reproduce an obligation created before reserve exemptions were introduced.
+    await db.update(weeklyObligations).set({ status: 'UNPAID', amount: 200_000 })
+      .where(eq(weeklyObligations.id, reserve.obligation.id));
+    const updated = await service.exemptReserveMembers(guildId, created.collection.id, actor, now);
+    expect(updated.obligations.find(({ member }) => member.discordUserId === reserveMember)?.obligation)
+      .toMatchObject({
+        status: 'EXEMPT',
+        amount: 0,
+        rejectionReason: 'ยกเว้นเนื่องจากเป็นตำแหน่งสำรอง',
+        convertedFineId: null,
+        decidedByDiscordUserId: actor,
+      });
+    expect(updated.obligations.filter(({ member }) => member.discordUserId !== reserveMember))
+      .toEqual(created.obligations.filter(({ member }) => member.discordUserId !== reserveMember));
+    expect(await service.exemptReserveMembers(guildId, created.collection.id, actor, now)).toEqual(updated);
+    await expect(service.exemptReserveMembers(guildId, created.collection.id, actor, created.collection.conversionAt))
+      .rejects.toBeInstanceOf(ConflictError);
+    const converted = await service.processConversion(guildId, created.collection.id, created.collection.conversionAt);
+    expect(converted.obligations.find(({ member }) => member.discordUserId === reserveMember)?.obligation)
+      .toMatchObject({ status: 'EXEMPT', amount: 0, convertedFineId: null });
   });
 });
 

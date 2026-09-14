@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { DateTime } from 'luxon';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm';
 import { AuthorizationError, ConflictError, NotFoundError, ValidationError } from '../../domain/errors.js';
 import type { Database } from '../../infrastructure/db/client.js';
 import {
@@ -15,6 +15,8 @@ import { writeAudit as persistAudit } from '../audit/service.js';
 import { cancelFineWithTransaction, createSourcedFineWithTransaction } from '../fines/service.js';
 import { appendTreasuryEntryWithTransaction, reverseSourcedTreasuryEntry } from '../treasury/service.js';
 import { buildWeeklyOverdueFine } from './rules.js';
+
+export const WEEKLY_RESERVE_EXEMPTION_REASON = 'ยกเว้นเนื่องจากเป็นตำแหน่งสำรอง';
 
 export type WeeklyCollection = typeof weeklyCollections.$inferSelect;
 export type WeeklyObligation = typeof weeklyObligations.$inferSelect;
@@ -99,7 +101,7 @@ export class WeeklyDuesService {
       if (existing !== undefined) return existing.id;
 
       const activeMembers = await tx
-        .select({ id: members.id })
+        .select({ id: members.id, rosterTitle: members.rosterTitle })
         .from(members)
         .where(and(eq(members.guildId, input.guildId), eq(members.status, 'ACTIVE')));
       if (activeMembers.length === 0) throw new ValidationError('ยังไม่มีสมาชิกสถานะใช้งานสำหรับสร้างรอบส่งเงิน');
@@ -127,7 +129,9 @@ export class WeeklyDuesService {
         guildId: input.guildId,
         collectionId: collection.id,
         memberId: member.id,
-        amount: input.standardAmount,
+        amount: member.rosterTitle === 'RESERVE' ? 0 : input.standardAmount,
+        status: member.rosterTitle === 'RESERVE' ? 'EXEMPT' as const : 'UNPAID' as const,
+        rejectionReason: member.rosterTitle === 'RESERVE' ? WEEKLY_RESERVE_EXEMPTION_REASON : null,
         createdAt: input.now,
         updatedAt: input.now,
       })));
@@ -147,6 +151,61 @@ export class WeeklyDuesService {
       .orderBy(desc(weeklyCollections.createdAt))
       .limit(limit);
     return Promise.all(collections.map(async (collection) => this.get(guildId, collection.id)));
+  }
+
+  public async exemptReserveMembers(
+    guildId: string,
+    collectionId: string,
+    actorDiscordUserId: string,
+    now: Date,
+  ): Promise<WeeklyCollectionView> {
+    await this.db.transaction(async (tx) => {
+      const collection = await lockCollection(tx, guildId, collectionId);
+      if (collection.isClosed || collection.cancelledAt !== null || now >= collection.conversionAt) {
+        throw new ConflictError('ยกเว้นได้เฉพาะรอบส่งเงินที่ยังเปิดอยู่');
+      }
+      const rows = await tx
+        .select({ obligation: weeklyObligations })
+        .from(weeklyObligations)
+        .innerJoin(members, eq(weeklyObligations.memberId, members.id))
+        .where(and(
+          eq(weeklyObligations.guildId, guildId),
+          eq(weeklyObligations.collectionId, collectionId),
+          eq(members.rosterTitle, 'RESERVE'),
+          or(
+            eq(weeklyObligations.status, 'UNPAID'),
+            and(eq(weeklyObligations.status, 'EXEMPT'), isNull(weeklyObligations.rejectionReason)),
+          ),
+        ))
+        .orderBy(weeklyObligations.id)
+        .for('update');
+      for (const { obligation } of rows) {
+        const [updated] = await tx.update(weeklyObligations)
+          .set({
+            status: 'EXEMPT',
+            amount: 0,
+            rejectionReason: WEEKLY_RESERVE_EXEMPTION_REASON,
+            decidedAt: now,
+            decidedByDiscordUserId: actorDiscordUserId,
+            updatedAt: now,
+          })
+          .where(eq(weeklyObligations.id, obligation.id))
+          .returning();
+        await writeAudit(
+          tx,
+          guildId,
+          actorDiscordUserId,
+          'WEEKLY_RESERVE_EXEMPTED',
+          'WEEKLY_OBLIGATION',
+          obligation.id,
+          obligation,
+          updated,
+          WEEKLY_RESERVE_EXEMPTION_REASON,
+        );
+      }
+      if (rows.length > 0) await queueWeeklyRefresh(tx, guildId, collectionId, now);
+    });
+    return this.get(guildId, collectionId);
   }
 
   public async get(guildId: string, collectionId: string): Promise<WeeklyCollectionView> {

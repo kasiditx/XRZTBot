@@ -92,10 +92,30 @@ describe('weekly dues Discord components', () => {
     } satisfies WeeklyCollectionView);
     const embed = payload.embeds[0]?.toJSON();
 
-    expect(embed?.description).toContain('สถานะสมาชิก (13 คน)');
+    expect(embed?.description).toContain('สถานะสมาชิกที่ต้องส่ง (13 คน)');
     expect(embed?.description).toContain('<@700000000000000001>');
     expect(embed?.description).toContain('<@700000000000000013>');
     expect(embed?.fields).toBeUndefined();
+  });
+
+  it('separates reserve exemptions below members who must pay and explains the reason', () => {
+    const view = weeklyView();
+    const obligation = {
+      id: 'reserve-obligation', guildId: 'guild', collectionId: view.collection.id, memberId: 'reserve-member',
+      amount: 0, status: 'EXEMPT' as const, attachmentId: null, submittedAt: null, decidedAt: now,
+      decidedByDiscordUserId: '700000000000000001', rejectionReason: 'ยกเว้นเนื่องจากเป็นตำแหน่งสำรอง',
+      convertedFineId: null, createdAt: now, updatedAt: now,
+    };
+    const payload = buildWeeklyAnnouncement({
+      ...view,
+      obligations: [{ obligation, member: { id: 'reserve-member', discordUserId: '700000000000000099', inGameName: 'Reserve' } }],
+    });
+    const description = payload.embeds[0]?.toJSON().description ?? '';
+
+    expect(description).toContain('สถานะสมาชิกที่ต้องส่ง (0 คน)');
+    expect(description).toContain('สมาชิกที่ได้รับการยกเว้น (1 คน)');
+    expect(description).toContain('🛡️ <@700000000000000099> — ยกเว้นเนื่องจากเป็นตำแหน่งสำรอง');
+    expect(description.indexOf('สมาชิกที่ได้รับการยกเว้น')).toBeGreaterThan(description.indexOf('สถานะสมาชิกที่ต้องส่ง'));
   });
 
   it('shows a cancelled collection and disables every action', () => {
