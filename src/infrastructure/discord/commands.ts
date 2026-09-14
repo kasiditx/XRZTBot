@@ -60,6 +60,7 @@ const adminCommand = new SlashCommandBuilder()
             { name: 'Log ส่งของ', value: 'depositLogChannelId' },
             { name: 'ตำแหน่ง Fight', value: 'fightPositionChannelId' },
             { name: 'ข่าวอัปเดตบอท', value: 'releaseChannelId' },
+            { name: 'สถานะบอท', value: 'botStatusChannelId' },
             { name: 'Audit (หัวแก๊ง/รองแก๊ง/Dev)', value: 'auditChannelId' },
           ),
       )
@@ -87,6 +88,24 @@ const adminCommand = new SlashCommandBuilder()
       .setDescription('ให้ออกจากแก๊งและเปลี่ยน Role เป็นอดีตสมาชิก/พี่น้อง')
       .addUserOption((option) => option.setName('user').setDescription('Discord user').setRequired(true))
       .addStringOption((option) => option.setName('reason').setDescription('เหตุผล').setMinLength(2).setMaxLength(500).setRequired(true)),
+  )
+  .addSubcommand((command) =>
+    command
+      .setName('bot-status')
+      .setDescription('เปลี่ยนสถานะการเปิดใช้งาน Bot และแจ้งสมาชิก')
+      .addStringOption((option) => option
+        .setName('status')
+        .setDescription('สถานะที่ต้องการประกาศ')
+        .setRequired(true)
+        .addChoices(
+          { name: 'ใช้งานได้ปกติ', value: 'OPERATIONAL' },
+          { name: 'กำลังอัปเดต — งดใช้งานชั่วคราว', value: 'UPDATING' },
+        ))
+      .addStringOption((option) => option
+        .setName('detail')
+        .setDescription('รายละเอียดเพิ่มเติม (ถ้ามี)')
+        .setMinLength(2)
+        .setMaxLength(300)),
   )
   .addSubcommand((command) => command.setName('health').setDescription('ตรวจสถานะ Bot และ Database'));
 

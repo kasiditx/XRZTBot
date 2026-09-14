@@ -38,6 +38,7 @@ export const treasuryEntryTypeEnum = pgEnum('treasury_entry_type', ['OPENING_BAL
 export const weeklyObligationStatusEnum = pgEnum('weekly_obligation_status', ['UNPAID', 'EXEMPT', 'PENDING_VERIFICATION', 'PAID', 'CONVERTED_TO_FINE']);
 export const inventoryActionEnum = pgEnum('inventory_action', ['OPENING', 'ADD', 'REMOVE', 'WITHDRAWAL', 'DEPOSIT', 'REVERSAL']);
 export const withdrawalStatusEnum = pgEnum('withdrawal_status', ['PENDING', 'PARTIALLY_FULFILLED', 'FULFILLED', 'CANCELLED']);
+export const botOperationalStatusEnum = pgEnum('bot_operational_status', ['OPERATIONAL', 'UPDATING']);
 
 export const guildSettings = pgTable('guild_settings', {
   guildId: text('guild_id').primaryKey(),
@@ -78,6 +79,12 @@ export const guildSettings = pgTable('guild_settings', {
   fightPositionSummaryMessageId: text('fight_position_summary_message_id'),
   auditChannelId: text('audit_channel_id'),
   releaseChannelId: text('release_channel_id'),
+  botStatusChannelId: text('bot_status_channel_id'),
+  botStatusMessageId: text('bot_status_message_id'),
+  botStatus: botOperationalStatusEnum('bot_status').notNull().default('OPERATIONAL'),
+  botStatusDetail: text('bot_status_detail'),
+  botStatusUpdatedAt: timestamp('bot_status_updated_at', { withTimezone: true, mode: 'date' }),
+  botStatusUpdatedByDiscordUserId: text('bot_status_updated_by_discord_user_id'),
   controlPanelMessageId: text('control_panel_message_id'),
   ...auditColumns,
 });

@@ -120,6 +120,14 @@ Environment variables:
 
 ชื่อ Role และ Channel ตั้งเองได้ทั้งหมด Bot บันทึกและตรวจด้วย Discord ID
 
+## สถานะการใช้งานบอท
+
+1. สร้าง Channel ที่สมาชิกอ่านได้ และให้ Bot มีสิทธิ์ `View Channel`, `Send Messages`, `Embed Links`, `Read Message History` และ `Mention @everyone, @here, and All Roles` เฉพาะ Channel นี้
+2. ใช้ `/mirubot set-channel` เลือกประเภท `สถานะบอท` และ Channel ที่สร้างไว้
+3. ใช้ `/mirubot bot-status status:กำลังอัปเดต` ก่อนเริ่มปรับระบบ และใช้ `status:ใช้งานได้ปกติ` เมื่อเปิดใช้งานอีกครั้ง โดยใส่ `detail` เพิ่มได้ตามต้องการ
+
+Bot จะอัปเดตข้อความสถานะหลักและส่งข้อความแจ้งเตือนใหม่ โดย mention เฉพาะ Role สมาชิกที่กำหนดผ่าน `/mirubot setup-roles` ทุกครั้งที่สถานะเปลี่ยน การเลือกสถานะเดิมซ้ำจะไม่ส่ง notification ซ้ำ
+
 ## ข่าวอัปเดตบอทอัตโนมัติ
 
 1. สร้างช่องข่าว แล้วให้สมาชิกอ่านได้ และให้ Bot มีสิทธิ์ตามขั้นตอนตั้ง Channel ด้านบน

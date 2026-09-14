@@ -8,15 +8,19 @@ import {
   type Client,
   type Guild,
   type GuildMember,
+  type GuildTextBasedChannel,
   type Interaction,
   type ModalSubmitInteraction,
-  type SendableChannels,
   type StringSelectMenuInteraction,
 } from 'discord.js';
-import { AuthorizationError, DomainError, ValidationError } from '../../domain/errors.js';
+import { AuthorizationError, ConflictError, DomainError, ValidationError } from '../../domain/errors.js';
 import type { GuildSettings } from '../db/schema.js';
 import { resolveAuthority, requireCapability, type AuthorityLevel, type Capability } from '../../modules/authorization/permissions.js';
-import type { ConfigurableChannel, GuildConfigService } from '../../modules/guild-config/service.js';
+import type {
+  BotOperationalStatus,
+  ConfigurableChannel,
+  GuildConfigService,
+} from '../../modules/guild-config/service.js';
 import type { MemberRoleIds, MemberService } from '../../modules/members/service.js';
 import type { ActivityInteractionHandler } from './activity-interaction-handler.js';
 import type { AttendanceInteractionHandler } from './attendance-interaction-handler.js';
@@ -26,6 +30,7 @@ import type { WeeklyDuesInteractionHandler } from './weekly-dues-interaction-han
 import type { StockInteractionHandler } from './stock-interaction-handler.js';
 import type { FightPositionInteractionHandler } from './fight-position-interaction-handler.js';
 import { listMissingBotChannelPermissions } from './channel-permissions.js';
+import { buildBotStatusAlert, buildBotStatusPanel } from './bot-status-components.js';
 import { commandNames } from './commands.js';
 import {
   buildControlPanel,
@@ -72,6 +77,7 @@ const channelFields: readonly ConfigurableChannel[] = [
   'depositLogChannelId',
   'fightPositionChannelId',
   'releaseChannelId',
+  'botStatusChannelId',
   'auditChannelId',
 ];
 
@@ -93,6 +99,8 @@ export interface InteractionHandlerDependencies {
 }
 
 export class DiscordInteractionHandler {
+  private readonly botStatusUpdates = new Set<string>();
+
   public constructor(private readonly dependencies: InteractionHandlerDependencies) {}
 
   public async handle(interaction: Interaction): Promise<void> {
@@ -172,6 +180,9 @@ export class DiscordInteractionHandler {
         return;
       case 'remove-member':
         await this.removeMember(interaction, guild);
+        return;
+      case 'bot-status':
+        await this.updateBotStatus(interaction, guild);
         return;
       case 'health':
         await this.showHealth(interaction, guild);
@@ -344,6 +355,76 @@ export class DiscordInteractionHandler {
       `**Discord** • ${websocketPing.toString()} ms ✅\n**Database** • ${databaseHealthy ? 'พร้อมใช้งาน ✅' : 'ผิดปกติ ❌'}`,
       'Health Check',
     ), flags: MessageFlags.Ephemeral });
+  }
+
+  private async updateBotStatus(interaction: ChatInputCommandInteraction, guild: Guild): Promise<void> {
+    await this.requireAuthority(guild, interaction.user.id, 'ROUTINE_ADMIN');
+    const settings = await this.requireSettings(guild.id);
+    if (settings.activeMemberRoleId === null) {
+      throw new ValidationError('กรุณาตั้งค่า Role สมาชิกก่อน');
+    }
+    if (this.botStatusUpdates.has(guild.id)) {
+      throw new ConflictError('กำลังเปลี่ยนสถานะ Bot อยู่ กรุณารอสักครู่');
+    }
+
+    const status = parseBotOperationalStatus(interaction.options.getString('status', true));
+    const detail = optionalDetail(interaction.options.getString('detail'));
+    const channel = await fetchSendableChannel(
+      this.dependencies.client,
+      settings.botStatusChannelId,
+      'Channel สถานะ Bot',
+    );
+    const memberRole = await guild.roles.fetch(settings.activeMemberRoleId);
+    if (memberRole === null) {
+      throw new ValidationError('ไม่พบ Role สมาชิกที่ตั้งค่าไว้ กรุณาตั้งค่า Role ใหม่');
+    }
+    const botMember = guild.members.me ?? await guild.members.fetchMe();
+    const canMentionMemberRole = memberRole.mentionable
+      || channel.permissionsFor(botMember)?.has(PermissionsBitField.Flags.MentionEveryone) === true;
+    if (!canMentionMemberRole) {
+      throw new ValidationError(
+        'Bot ยังแท็ก Role สมาชิกไม่ได้ กรุณาอนุญาต Mention @everyone, @here, and All Roles ใน Channel สถานะ Bot',
+      );
+    }
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    this.botStatusUpdates.add(guild.id);
+    try {
+      const existing = settings.botStatusMessageId === null
+        ? null
+        : await channel.messages.fetch(settings.botStatusMessageId).catch(() => null);
+      if (existing !== null && settings.botStatus === status) {
+        await interaction.editReply(buildNotice(
+          'info',
+          'สถานะ Bot ไม่มีการเปลี่ยนแปลง',
+          `สถานะปัจจุบันเป็น ${botStatusEmoji(status)} **${botStatusLabel(status)}** อยู่แล้ว จึงไม่ได้แจ้งสมาชิกซ้ำ`,
+          'Bot Status',
+        ));
+        return;
+      }
+
+      const updatedAt = new Date();
+      const display = { status, detail, actorDiscordUserId: interaction.user.id, updatedAt };
+      const statusMessage = existing === null
+        ? await channel.send(buildBotStatusPanel(display))
+        : await existing.edit(buildBotStatusPanel(display));
+      await this.dependencies.guildConfig.saveBotStatus(
+        guild.id,
+        status,
+        detail,
+        statusMessage.id,
+        interaction.user.id,
+        updatedAt,
+      );
+      await channel.send(buildBotStatusAlert(display, settings.activeMemberRoleId));
+      await interaction.editReply(buildNotice(
+        'success',
+        'อัปเดตสถานะ Bot แล้ว',
+        `${botStatusEmoji(status)} **${botStatusLabel(status)}**\nแจ้ง <@&${settings.activeMemberRoleId}> ใน <#${channel.id}> เรียบร้อยแล้ว`,
+        'Bot Status',
+      ));
+    } finally {
+      this.botStatusUpdates.delete(guild.id);
+    }
   }
 
   private async handleButton(interaction: ButtonInteraction): Promise<void> {
@@ -598,6 +679,28 @@ function parseRosterTitleSelection(value: string | undefined): RosterTitleSelect
   throw new ValidationError('ตำแหน่งกำกับสมาชิกไม่ถูกต้อง');
 }
 
+function parseBotOperationalStatus(value: string): BotOperationalStatus {
+  if (value === 'OPERATIONAL' || value === 'UPDATING') return value;
+  throw new ValidationError('สถานะ Bot ไม่ถูกต้อง');
+}
+
+function optionalDetail(value: string | null): string | null {
+  if (value === null) return null;
+  const normalized = value.trim();
+  if (normalized.length < 2 || normalized.length > 300) {
+    throw new ValidationError('รายละเอียดต้องมี 2–300 ตัวอักษร');
+  }
+  return normalized;
+}
+
+function botStatusLabel(status: BotOperationalStatus): string {
+  return status === 'OPERATIONAL' ? 'ใช้งานได้ปกติ' : 'กำลังอัปเดต';
+}
+
+function botStatusEmoji(status: BotOperationalStatus): string {
+  return status === 'OPERATIONAL' ? '🟢' : '🟠';
+}
+
 function parseRosterMemberContext(
   customId: string,
   prefix: string,
@@ -607,12 +710,12 @@ function parseRosterMemberContext(
   return { title: parseRosterTitleSelection(rawTitle), page: parsePositivePage(rawPage ?? '') };
 }
 
-async function fetchSendableChannel(client: Client, channelId: string | null, label: string): Promise<SendableChannels> {
+async function fetchSendableChannel(client: Client, channelId: string | null, label: string): Promise<GuildTextBasedChannel> {
   if (channelId === null) {
     throw new ValidationError(`กรุณาตั้งค่า ${label} ก่อน`);
   }
   const channel = await client.channels.fetch(channelId);
-  if (channel === null || !channel.isTextBased() || !channel.isSendable()) {
+  if (channel === null || channel.isDMBased() || !channel.isTextBased() || !channel.isSendable()) {
     throw new ValidationError(`${label} ไม่ใช่ Text Channel ที่ Bot ส่งข้อความได้`);
   }
   return channel;

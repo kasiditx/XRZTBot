@@ -27,7 +27,10 @@ export type ConfigurableChannel =
   | 'depositLogChannelId'
   | 'fightPositionChannelId'
   | 'releaseChannelId'
+  | 'botStatusChannelId'
   | 'auditChannelId';
+
+export type BotOperationalStatus = GuildSettings['botStatus'];
 
 export interface RoleSettingsInput {
   readonly devRoleId: string;
@@ -103,6 +106,13 @@ export class GuildConfigService {
         .where(eq(guildSettings.guildId, guildId));
       return;
     }
+    if (field === 'botStatusChannelId') {
+      await this.db
+        .update(guildSettings)
+        .set({ botStatusChannelId: channelId, botStatusMessageId: null, updatedAt: new Date() })
+        .where(eq(guildSettings.guildId, guildId));
+      return;
+    }
     await this.db
       .update(guildSettings)
       .set({ [field]: channelId, updatedAt: new Date() })
@@ -163,6 +173,27 @@ export class GuildConfigService {
     await this.db
       .update(guildSettings)
       .set({ fightPositionSummaryMessageId: messageId, updatedAt: new Date() })
+      .where(eq(guildSettings.guildId, guildId));
+  }
+
+  public async saveBotStatus(
+    guildId: string,
+    status: BotOperationalStatus,
+    detail: string | null,
+    messageId: string,
+    actorDiscordUserId: string,
+    updatedAt: Date,
+  ): Promise<void> {
+    await this.db
+      .update(guildSettings)
+      .set({
+        botStatus: status,
+        botStatusDetail: detail,
+        botStatusMessageId: messageId,
+        botStatusUpdatedAt: updatedAt,
+        botStatusUpdatedByDiscordUserId: actorDiscordUserId,
+        updatedAt,
+      })
       .where(eq(guildSettings.guildId, guildId));
   }
 }
