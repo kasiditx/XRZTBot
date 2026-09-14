@@ -62,6 +62,8 @@ describeWithDatabase('Bot status configuration PostgreSQL integration', () => {
   it('publishes updating and operational transitions while mentioning only the member role', async () => {
     await db.update(guildSettings).set({
       botStatusChannelId: 'channel-1',
+      headRoleId: 'leader-role-1',
+      deputyRoleId: 'deputy-role-1',
       activeMemberRoleId: 'member-role-1',
     }).where(eq(guildSettings.guildId, guildId));
     const post = jest.fn<(route: string, options: unknown) => Promise<unknown>>()
@@ -84,8 +86,11 @@ describeWithDatabase('Bot status configuration PostgreSQL integration', () => {
     expect(post).toHaveBeenCalledTimes(2);
     expect(post.mock.calls[1]?.[1]).toMatchObject({
       body: {
-        content: '<@&member-role-1>',
-        allowedMentions: { parse: [], roles: ['member-role-1'] },
+        content: '<@&leader-role-1> <@&deputy-role-1> <@&member-role-1>',
+        allowedMentions: {
+          parse: [],
+          roles: ['leader-role-1', 'deputy-role-1', 'member-role-1'],
+        },
       },
     });
 

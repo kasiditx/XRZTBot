@@ -126,7 +126,7 @@ Environment variables:
 2. ใช้ `/mirubot set-channel` เลือกประเภท `สถานะบอท` และ Channel ที่สร้างไว้
 3. ใช้ `/mirubot bot-status status:กำลังอัปเดต` ก่อนเริ่มปรับระบบ และใช้ `status:ใช้งานได้ปกติ` เมื่อเปิดใช้งานอีกครั้ง โดยใส่ `detail` เพิ่มได้ตามต้องการ
 
-Bot จะอัปเดตข้อความสถานะหลักและส่งข้อความแจ้งเตือนใหม่ โดย mention เฉพาะ Role สมาชิกที่กำหนดผ่าน `/mirubot setup-roles` ทุกครั้งที่สถานะเปลี่ยน การเลือกสถานะเดิมซ้ำจะไม่ส่ง notification ซ้ำ เมื่อ deploy ผ่าน Start command `npm start` ระบบจะประกาศ `กำลังอัปเดต` ในขั้น `prestart` และประกาศ `ใช้งานได้ปกติ` หลัง Discord, Database และ health server พร้อมแล้วโดยอัตโนมัติ
+Bot จะอัปเดตข้อความสถานะหลักและส่งข้อความแจ้งเตือนใหม่ โดย mention Role Leader, Deputy และ Member ที่กำหนดผ่าน `/mirubot setup-roles` ทุกครั้งที่สถานะเปลี่ยน การเลือกสถานะเดิมซ้ำจะไม่ส่ง notification ซ้ำ เมื่อ deploy ผ่าน Start command `npm start` ระบบจะประกาศ `กำลังอัปเดต` ในขั้น `prestart` และประกาศ `ใช้งานได้ปกติ` หลัง Discord, Database และ health server พร้อมแล้วโดยอัตโนมัติ
 
 ## ข่าวอัปเดตบอทอัตโนมัติ
 

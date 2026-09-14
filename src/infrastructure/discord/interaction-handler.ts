@@ -360,8 +360,8 @@ export class DiscordInteractionHandler {
   private async updateBotStatus(interaction: ChatInputCommandInteraction, guild: Guild): Promise<void> {
     await this.requireAuthority(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const settings = await this.requireSettings(guild.id);
-    if (settings.activeMemberRoleId === null) {
-      throw new ValidationError('กรุณาตั้งค่า Role สมาชิกก่อน');
+    if (settings.headRoleId === null || settings.deputyRoleId === null || settings.activeMemberRoleId === null) {
+      throw new ValidationError('กรุณาตั้งค่า Role Leader, Deputy และ Member ก่อน');
     }
     if (this.botStatusUpdates.has(guild.id)) {
       throw new ConflictError('กำลังเปลี่ยนสถานะ Bot อยู่ กรุณารอสักครู่');
@@ -374,16 +374,17 @@ export class DiscordInteractionHandler {
       settings.botStatusChannelId,
       'Channel สถานะ Bot',
     );
-    const memberRole = await guild.roles.fetch(settings.activeMemberRoleId);
-    if (memberRole === null) {
-      throw new ValidationError('ไม่พบ Role สมาชิกที่ตั้งค่าไว้ กรุณาตั้งค่า Role ใหม่');
+    const statusRoleIds = [settings.headRoleId, settings.deputyRoleId, settings.activeMemberRoleId];
+    const statusRoles = await Promise.all(statusRoleIds.map(async (roleId) => guild.roles.fetch(roleId)));
+    if (statusRoles.some((role) => role === null)) {
+      throw new ValidationError('ไม่พบ Role Leader, Deputy หรือ Member ที่ตั้งค่าไว้ กรุณาตั้งค่า Role ใหม่');
     }
     const botMember = guild.members.me ?? await guild.members.fetchMe();
-    const canMentionMemberRole = memberRole.mentionable
-      || channel.permissionsFor(botMember)?.has(PermissionsBitField.Flags.MentionEveryone) === true;
-    if (!canMentionMemberRole) {
+    const canMentionAllStatusRoles = channel.permissionsFor(botMember)?.has(PermissionsBitField.Flags.MentionEveryone) === true
+      || statusRoles.every((role) => role?.mentionable === true);
+    if (!canMentionAllStatusRoles) {
       throw new ValidationError(
-        'Bot ยังแท็ก Role สมาชิกไม่ได้ กรุณาอนุญาต Mention @everyone, @here, and All Roles ใน Channel สถานะ Bot',
+        'Bot ยังแท็ก Role สถานะได้ไม่ครบ กรุณาอนุญาต Mention @everyone, @here, and All Roles ใน Channel สถานะ Bot',
       );
     }
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -413,7 +414,7 @@ export class DiscordInteractionHandler {
       await interaction.editReply(buildNotice(
         'success',
         'อัปเดตสถานะ Bot แล้ว',
-        `${botStatusEmoji(status)} **${botStatusLabel(status)}**\nแจ้ง <@&${result.memberRoleId}> ใน <#${result.channelId}> เรียบร้อยแล้ว`,
+        `${botStatusEmoji(status)} **${botStatusLabel(status)}**\nแจ้ง ${result.roleIds.map((roleId) => `<@&${roleId}>`).join(' ')} ใน <#${result.channelId}> เรียบร้อยแล้ว`,
         'Bot Status',
       ));
     } finally {

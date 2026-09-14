@@ -29,10 +29,11 @@ export function buildBotStatusPanel(input: BotStatusDisplayInput) {
   };
 }
 
-export function buildBotStatusAlert(input: BotStatusDisplayInput, memberRoleId: string) {
+export function buildBotStatusAlert(input: BotStatusDisplayInput, roleIds: readonly string[]) {
   const display = botStatusDisplay(input.status);
+  const mentionRoleIds = [...new Set(roleIds)];
   return {
-    content: `<@&${memberRoleId}>`,
+    content: mentionRoleIds.map((roleId) => `<@&${roleId}>`).join(' '),
     embeds: [buildMiruEmbed({
       tone: display.tone,
       title: `MiruBot ${display.label}`,
@@ -42,7 +43,7 @@ export function buildBotStatusAlert(input: BotStatusDisplayInput, memberRoleId: 
       ].join('\n'),
       module: 'Status Notification',
     })],
-    allowedMentions: { parse: [] as const, roles: [memberRoleId] },
+    allowedMentions: { parse: [] as const, roles: mentionRoleIds },
   };
 }
 

@@ -37,16 +37,19 @@ describe('bot status Discord components', () => {
     expect(embed?.description).toContain('งดใช้งานคำสั่งของ Bot ชั่วคราว');
   });
 
-  it('mentions only the configured active-member role in notifications', () => {
+  it('mentions only the configured leader, deputy and member roles in notifications', () => {
     const message = buildBotStatusAlert({
       status: 'UPDATING',
       detail: 'ใช้เวลาประมาณ 10 นาที',
       actorDiscordUserId: '700000000000000001',
       updatedAt,
-    }, '800000000000000001');
+    }, ['800000000000000001', '800000000000000002', '800000000000000003']);
 
-    expect(message.content).toBe('<@&800000000000000001>');
-    expect(message.allowedMentions).toEqual({ parse: [], roles: ['800000000000000001'] });
+    expect(message.content).toBe('<@&800000000000000001> <@&800000000000000002> <@&800000000000000003>');
+    expect(message.allowedMentions).toEqual({
+      parse: [],
+      roles: ['800000000000000001', '800000000000000002', '800000000000000003'],
+    });
     expect(message.embeds[0]?.toJSON().description).toContain('ใช้เวลาประมาณ 10 นาที');
   });
 });
