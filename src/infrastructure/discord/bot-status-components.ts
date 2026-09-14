@@ -4,7 +4,7 @@ import { buildMiruEmbed } from './theme.js';
 export interface BotStatusDisplayInput {
   readonly status: BotOperationalStatus;
   readonly detail: string | null;
-  readonly actorDiscordUserId: string;
+  readonly actorDiscordUserId: string | null;
   readonly updatedAt: Date;
 }
 
@@ -15,7 +15,7 @@ export function buildBotStatusPanel(input: BotStatusDisplayInput) {
     display.guidance,
     ...(input.detail === null ? [] : ['', `**รายละเอียด**\n${input.detail}`]),
     '',
-    `**อัปเดตโดย** <@${input.actorDiscordUserId}>`,
+    `**อัปเดตโดย** ${input.actorDiscordUserId === null ? 'ระบบอัตโนมัติ' : `<@${input.actorDiscordUserId}>`}`,
     `**อัปเดตล่าสุด** <t:${discordTimestamp(input.updatedAt)}:F>`,
   ].join('\n');
   return {

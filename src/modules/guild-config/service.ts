@@ -181,7 +181,7 @@ export class GuildConfigService {
     status: BotOperationalStatus,
     detail: string | null,
     messageId: string,
-    actorDiscordUserId: string,
+    actorDiscordUserId: string | null,
     updatedAt: Date,
   ): Promise<void> {
     await this.db

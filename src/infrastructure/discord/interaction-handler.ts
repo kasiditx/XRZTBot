@@ -30,7 +30,7 @@ import type { WeeklyDuesInteractionHandler } from './weekly-dues-interaction-han
 import type { StockInteractionHandler } from './stock-interaction-handler.js';
 import type { FightPositionInteractionHandler } from './fight-position-interaction-handler.js';
 import { listMissingBotChannelPermissions } from './channel-permissions.js';
-import { buildBotStatusAlert, buildBotStatusPanel } from './bot-status-components.js';
+import { publishBotStatus } from './bot-status-publisher.js';
 import { commandNames } from './commands.js';
 import {
   buildControlPanel,
@@ -389,10 +389,16 @@ export class DiscordInteractionHandler {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     this.botStatusUpdates.add(guild.id);
     try {
-      const existing = settings.botStatusMessageId === null
-        ? null
-        : await channel.messages.fetch(settings.botStatusMessageId).catch(() => null);
-      if (existing !== null && settings.botStatus === status) {
+      const result = await publishBotStatus({
+        rest: this.dependencies.client.rest,
+        guildConfig: this.dependencies.guildConfig,
+        guildId: guild.id,
+        status,
+        detail,
+        actorDiscordUserId: interaction.user.id,
+        now: new Date(),
+      });
+      if (result.outcome === 'UNCHANGED') {
         await interaction.editReply(buildNotice(
           'info',
           'สถานะ Bot ไม่มีการเปลี่ยนแปลง',
@@ -401,25 +407,13 @@ export class DiscordInteractionHandler {
         ));
         return;
       }
-
-      const updatedAt = new Date();
-      const display = { status, detail, actorDiscordUserId: interaction.user.id, updatedAt };
-      const statusMessage = existing === null
-        ? await channel.send(buildBotStatusPanel(display))
-        : await existing.edit(buildBotStatusPanel(display));
-      await this.dependencies.guildConfig.saveBotStatus(
-        guild.id,
-        status,
-        detail,
-        statusMessage.id,
-        interaction.user.id,
-        updatedAt,
-      );
-      await channel.send(buildBotStatusAlert(display, settings.activeMemberRoleId));
+      if (result.outcome === 'SKIPPED') {
+        throw new ValidationError('กรุณาตั้งค่า Channel สถานะ Bot และ Role สมาชิกก่อน');
+      }
       await interaction.editReply(buildNotice(
         'success',
         'อัปเดตสถานะ Bot แล้ว',
-        `${botStatusEmoji(status)} **${botStatusLabel(status)}**\nแจ้ง <@&${settings.activeMemberRoleId}> ใน <#${channel.id}> เรียบร้อยแล้ว`,
+        `${botStatusEmoji(status)} **${botStatusLabel(status)}**\nแจ้ง <@&${result.memberRoleId}> ใน <#${result.channelId}> เรียบร้อยแล้ว`,
         'Bot Status',
       ));
     } finally {

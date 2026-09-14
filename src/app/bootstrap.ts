@@ -32,6 +32,7 @@ import { FightPositionService } from '../modules/fight-positions/service.js';
 import { DurableScheduler } from '../modules/scheduler/service.js';
 import { queueCurrentRelease, RELEASE_ANNOUNCEMENT_JOB } from '../modules/releases/service.js';
 import { createReleaseAnnouncementHandler } from '../infrastructure/discord/release-publisher.js';
+import { publishBotStatus } from '../infrastructure/discord/bot-status-publisher.js';
 
 export interface RunningApplication {
   readonly stop: () => Promise<void>;
@@ -181,6 +182,20 @@ export async function bootstrap(): Promise<RunningApplication> {
   try {
     healthServer = await startHealthServer(env.HEALTH_PORT, { client, checkDatabase });
     logger.info({ port: env.HEALTH_PORT }, 'health server listening');
+    try {
+      const statusResult = await publishBotStatus({
+        rest: client.rest,
+        guildConfig,
+        guildId: env.DISCORD_GUILD_ID,
+        status: 'OPERATIONAL',
+        detail: 'อัปเดตเสร็จแล้ว พร้อมใช้งานตามปกติ',
+        actorDiscordUserId: null,
+        now: new Date(),
+      });
+      logger.info({ outcome: statusResult.outcome }, 'automatic operational status completed');
+    } catch (error: unknown) {
+      logger.error({ err: error }, 'automatic operational status failed');
+    }
     await queueCurrentRelease(db, env.DISCORD_GUILD_ID);
   } catch (error: unknown) {
     await scheduler.stop();
