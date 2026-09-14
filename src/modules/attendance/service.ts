@@ -17,6 +17,7 @@ import { writeAudit } from '../audit/service.js';
 import {
   buildAirdropRoundTimes,
   buildAttendanceRoundTimes,
+  buildRecurringPublishAt,
   classifyAttendance,
   parseLocalTime,
   validateWeekdays,
@@ -947,7 +948,11 @@ export class AttendanceService {
 
 type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
 
-async function createRoundWithTransaction(tx: Transaction, input: CreateRoundInput): Promise<AttendanceRound> {
+async function createRoundWithTransaction(
+  tx: Transaction,
+  input: CreateRoundInput,
+  publishAt = input.now,
+): Promise<AttendanceRound> {
   const [existing] = await tx
     .select()
     .from(attendanceRounds)
@@ -980,7 +985,7 @@ async function createRoundWithTransaction(tx: Transaction, input: CreateRoundInp
   if (status === 'OPEN') {
     await snapshotActiveMembers(tx, input.guildId, round.id);
   }
-  await queueRoundLifecycleJobs(tx, round, input.now);
+  await queueRoundLifecycleJobs(tx, round, input.now, publishAt);
   await writeAttendanceAudit(tx, input.guildId, input.actorDiscordUserId, 'ATTENDANCE_ROUND_CREATED', 'ATTENDANCE_ROUND', round.id, null, round);
   return round;
 }
@@ -1013,7 +1018,7 @@ async function materializeScheduleWithTransaction(
       actorDiscordUserId: schedule.createdByDiscordUserId,
       now,
       sourceScheduleId: schedule.id,
-    });
+    }, buildRecurringPublishAt(attendanceDate, times.opensAt, timezone, now));
   }
 }
 
@@ -1059,9 +1064,14 @@ function buildScheduleRoundTimes(
   };
 }
 
-async function queueRoundLifecycleJobs(tx: Transaction, round: AttendanceRound, now: Date): Promise<void> {
+async function queueRoundLifecycleJobs(
+  tx: Transaction,
+  round: AttendanceRound,
+  now: Date,
+  publishAt: Date,
+): Promise<void> {
   const jobs: Array<{ type: string; key: string; runAt: Date }> = [
-    { type: 'ATTENDANCE_PUBLISH', key: 'publish', runAt: now },
+    { type: 'ATTENDANCE_PUBLISH', key: 'publish', runAt: publishAt },
     { type: 'ATTENDANCE_OPEN', key: 'open', runAt: round.opensAt },
     { type: 'ATTENDANCE_CLOSE', key: 'close', runAt: round.closesAt },
   ];

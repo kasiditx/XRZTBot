@@ -393,7 +393,7 @@ export class AttendanceInteractionHandler {
           closesAtLocalTime: interaction.fields.getTextInputValue(attendanceComponentIds.recurringClosesAt),
         });
     await interaction.reply({
-      ...buildNotice('success', 'ตั้งเวลาเช็กชื่อประจำแล้ว', `⏰ **${schedule.name}**\nสร้างรอบล่วงหน้า 21 วัน และระบบจะเติมรอบใหม่ให้อัตโนมัติ`, 'Attendance'),
+      ...buildNotice('success', 'ตั้งเวลาเช็กชื่อประจำแล้ว', `⏰ **${schedule.name}**\nระบบเตรียมรอบล่วงหน้าและจะประกาศเช็กชื่อทีละวันโดยอัตโนมัติ`, 'Attendance'),
       flags: MessageFlags.Ephemeral,
     });
   }

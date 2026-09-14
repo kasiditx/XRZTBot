@@ -4,6 +4,7 @@ import {
   buildAttendanceRoundTimes,
   buildDailyAttendanceTitle,
   buildGeneralRoundTimes,
+  buildRecurringPublishAt,
   classifyAttendance,
   currentAttendanceDate,
   parseAttendanceDate,
@@ -121,6 +122,23 @@ describe('attendance input parsing', () => {
     expect(times.opensAt.toISOString()).toBe('2026-08-27T16:50:00.000Z');
     expect(times.closesAt.toISOString()).toBe('2026-08-27T17:10:00.000Z');
     expect(times.emergencyLeaveCutoff.toISOString()).toBe('2026-08-28T16:59:59.999Z');
+  });
+
+  it('publishes recurring rounds one day at a time in the server timezone', () => {
+    const now = new Date('2026-08-28T02:00:00.000Z');
+    const todayOpensAt = new Date('2026-08-28T12:00:00.000Z');
+    const tomorrowOpensAt = new Date('2026-08-29T12:00:00.000Z');
+
+    expect(buildRecurringPublishAt('2026-08-28', todayOpensAt, 'Asia/Bangkok', now)).toEqual(now);
+    expect(buildRecurringPublishAt('2026-08-29', tomorrowOpensAt, 'Asia/Bangkok', now).toISOString())
+      .toBe('2026-08-28T17:00:00.000Z');
+  });
+
+  it('publishes a midnight recurring Airdrop no later than its previous-day opening time', () => {
+    const now = new Date('2026-08-28T02:00:00.000Z');
+    const opensAt = new Date('2026-08-28T16:50:00.000Z');
+
+    expect(buildRecurringPublishAt('2026-08-29', opensAt, 'Asia/Bangkok', now)).toEqual(opensAt);
   });
 
   it('builds a Manual general session from explicit datetimes', () => {

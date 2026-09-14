@@ -17,11 +17,11 @@ export type ReleaseNotes = z.infer<typeof releaseNotesSchema>;
 // Change the ID only for a new announcement; keep summaries about member-visible changes.
 // Set to null for a deployment that should not announce anything.
 export const currentRelease: ReleaseNotes | null = {
-  id: '2026-09-14.2',
-  title: 'แจ้งสถานะบอทครบทุกยศสมาชิก',
+  id: '2026-09-14.3',
+  title: 'แก้ Auto เช็กชื่อส่งรอบล่วงหน้ารัว',
   added: [],
-  improved: [
-    'การแจ้งสถานะ MiruBot จะแท็ก Leader, Deputy และ Member พร้อมกัน เพื่อให้สมาชิกทุกยศได้รับแจ้ง',
+  improved: [],
+  fixed: [
+    'Auto เช็กชื่อจะประกาศทีละวันตามวันที่ของรอบ ไม่ส่งรอบล่วงหน้าทั้งหมดพร้อมกันตอนตั้งเวลา',
   ],
-  fixed: [],
 };

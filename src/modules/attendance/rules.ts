@@ -39,6 +39,20 @@ export function currentAttendanceDate(now: Date, timezone: string): string {
   return isoDate;
 }
 
+export function buildRecurringPublishAt(
+  attendanceDate: string,
+  opensAt: Date,
+  timezone: string,
+  now: Date,
+): Date {
+  const attendanceDayStartsAt = DateTime.fromISO(attendanceDate, { zone: timezone }).startOf('day');
+  if (!attendanceDayStartsAt.isValid || attendanceDayStartsAt.toFormat('yyyy-MM-dd') !== attendanceDate) {
+    throw new ValidationError('วันที่เช็กชื่อหรือ Timezone ไม่ถูกต้อง');
+  }
+  const publishAt = Math.min(attendanceDayStartsAt.toMillis(), opensAt.getTime());
+  return publishAt > now.getTime() ? new Date(publishAt) : now;
+}
+
 export function buildDailyAttendanceTitle(attendanceDate: string): string {
   const date = DateTime.fromISO(attendanceDate, { zone: 'UTC' });
   if (!date.isValid || date.toFormat('yyyy-MM-dd') !== attendanceDate) {

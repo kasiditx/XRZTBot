@@ -190,6 +190,7 @@ describeWithDatabase('AttendanceService PostgreSQL integration', () => {
   });
 
   it('materializes recurring rounds and a next-day durable tick idempotently', async () => {
+    const createdAt = new Date('2026-08-28T02:00:00.000Z');
     const schedule = await service.createRecurringSchedule({
       guildId,
       requestId: 'attendance-schedule-1',
@@ -200,16 +201,25 @@ describeWithDatabase('AttendanceService PostgreSQL integration', () => {
       closesAtLocalTime: '21:30',
       timezone,
       actorDiscordUserId: alpha,
-      now: new Date('2026-08-28T02:00:00.000Z'),
+      now: createdAt,
     });
-    await service.materializeSchedule(guildId, schedule.id, timezone, new Date('2026-08-28T02:00:00.000Z'));
+    await service.materializeSchedule(guildId, schedule.id, timezone, createdAt);
     const rounds = await service.listRounds(guildId, 25);
     expect(rounds.some((candidate) => candidate.sourceScheduleId === schedule.id)).toBe(true);
-    const ticks = await db.select().from(scheduledJobs).where(and(
-      eq(scheduledJobs.guildId, guildId),
-      eq(scheduledJobs.jobType, 'ATTENDANCE_SCHEDULE_TICK'),
-    ));
+    const scheduleJobs = await db.select().from(scheduledJobs).where(eq(scheduledJobs.guildId, guildId));
+    const ticks = scheduleJobs.filter((job) => job.jobType === 'ATTENDANCE_SCHEDULE_TICK');
     expect(ticks).toHaveLength(1);
+
+    const recurringRounds = rounds.filter((candidate) => candidate.sourceScheduleId === schedule.id);
+    const todayRound = recurringRounds.find((candidate) => candidate.attendanceDate === '2026-08-28');
+    const tomorrowRound = recurringRounds.find((candidate) => candidate.attendanceDate === '2026-08-29');
+    const publishAt = (roundId: string | undefined): Date | undefined => scheduleJobs.find((job) => (
+      job.jobType === 'ATTENDANCE_PUBLISH'
+      && (job.payload as { roundId?: string }).roundId === roundId
+    ))?.runAt;
+
+    expect(publishAt(todayRound?.id)).toEqual(createdAt);
+    expect(publishAt(tomorrowRound?.id)?.toISOString()).toBe('2026-08-28T17:00:00.000Z');
   });
 
   it('applies a scoped leave only to the selected recurring activities', async () => {
