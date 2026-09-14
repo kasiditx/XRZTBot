@@ -112,6 +112,18 @@ describe('stock Discord components', () => {
     ]);
   });
 
+  it('uses unique component IDs when the member item picker has only one page', () => {
+    const payload = buildStockItemPicker('WITHDRAWAL', {
+      items: [stockItem], page: 1, pageSize: 25, totalItems: 1, totalPages: 1,
+    }, sessionToken, new Set());
+    const rows = payload.components.map((row) => row.toJSON() as { components: Array<{ custom_id?: string }> });
+    const customIds = rows.flatMap((row) => row.components)
+      .map((component) => component.custom_id)
+      .filter((customId): customId is string => customId !== undefined);
+
+    expect(new Set(customIds).size).toBe(customIds.length);
+  });
+
   it('serializes selected-item modals with quantity fields instead of item-name/code fields', () => {
     const depositModal = buildDepositModal(sessionToken, [stockItem], 'FILE').toJSON();
     const depositLinkModal = buildDepositModal(sessionToken, [stockItem], 'LINK').toJSON();

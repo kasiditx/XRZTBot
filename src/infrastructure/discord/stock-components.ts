@@ -183,12 +183,12 @@ export function buildStockItemPicker(
     })));
   const navigation = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId(`${stockComponentIds.memberPagePrefix}${action}:${sessionToken}:${String(Math.max(1, dashboard.page - 1))}`)
+      .setCustomId(`${stockComponentIds.memberPagePrefix}${action}:${sessionToken}:${String(dashboard.page - 1)}`)
       .setLabel('ก่อนหน้า')
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(dashboard.page <= 1),
     new ButtonBuilder()
-      .setCustomId(`${stockComponentIds.memberPagePrefix}${action}:${sessionToken}:${String(Math.min(dashboard.totalPages, dashboard.page + 1))}`)
+      .setCustomId(`${stockComponentIds.memberPagePrefix}${action}:${sessionToken}:${String(dashboard.page + 1)}`)
       .setLabel('ถัดไป')
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(dashboard.page >= dashboard.totalPages),
