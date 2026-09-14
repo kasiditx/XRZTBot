@@ -38,6 +38,13 @@ export interface StockSyncCsvRow {
   readonly latestQuantity: number;
 }
 
+export function buildStockSyncCsv(items: readonly InventoryState[]): Buffer {
+  const lines = ['item_code,item_name,latest_quantity', ...items.map((item) => [
+    csvCell(item.itemCode), csvCell(item.itemName), item.quantity.toString(),
+  ].join(','))];
+  return Buffer.from(`\uFEFF${lines.join('\r\n')}\r\n`, 'utf8');
+}
+
 export function parseStockSyncCsv(content: Buffer | string): StockSyncCsvRow[] {
   const rows = parseRows(content);
   assertExactHeaders(rows, syncHeaders);
@@ -231,4 +238,8 @@ function parseInteger(value: string | undefined, field: string, rowNumber: numbe
     throw new ValidationError(`แถว ${rowNumber}: ${field} ต้องเป็นจำนวนเต็มตั้งแต่ ${minimum.toString()} ขึ้นไป`);
   }
   return parsed;
+}
+
+function csvCell(value: string): string {
+  return /[",\r\n]/u.test(value) ? `"${value.replaceAll('"', '""')}"` : value;
 }

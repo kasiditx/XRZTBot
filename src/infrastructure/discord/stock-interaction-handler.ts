@@ -134,6 +134,16 @@ export class StockInteractionHandler {
       await interaction.showModal(buildStockCsvModal('SYNC'));
       return;
     }
+    if (interaction.customId === stockComponentIds.adminExportSync) {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await this.requireCapability(guild, interaction.user.id, 'STOCK_REVERSE');
+      const content = await this.dependencies.inventory.exportSyncCsv(guild.id);
+      await interaction.editReply({
+        ...buildNotice('success', 'Export ยอด Stock ล่าสุดแล้ว', 'แก้เฉพาะ `item_name` และ `latest_quantity` จากนั้นนำไฟล์กลับมาใช้กับ **Sync ยอดล่าสุด**', 'Stock'),
+        files: [{ attachment: content, name: 'stock-sync-latest.csv' }],
+      });
+      return;
+    }
     if (interaction.customId === stockComponentIds.adminPublishPanel) {
       await this.publishDashboard(interaction, guild);
       return;

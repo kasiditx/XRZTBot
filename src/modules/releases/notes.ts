@@ -17,10 +17,10 @@ export type ReleaseNotes = z.infer<typeof releaseNotesSchema>;
 // Change the ID only for a new announcement; keep summaries about member-visible changes.
 // Set to null for a deployment that should not announce anything.
 export const currentRelease: ReleaseNotes | null = {
-  id: '2026-09-14.7',
-  title: 'เพิ่ม Sync รายการและยอด Stock ล่าสุด',
+  id: '2026-09-14.8',
+  title: 'เพิ่ม Export ยอด Stock ล่าสุดเป็น CSV',
   added: [
-    'เพิ่มเมนู Sync ยอดล่าสุดด้วย CSV รองรับแก้ชื่อและยอดของเดิม พร้อมสร้าง item_code อัตโนมัติสำหรับของใหม่',
+    'เพิ่มปุ่ม Export CSV สำหรับดาวน์โหลดยอด Stock ปัจจุบันทั้งหมด แล้วนำไปอัปเดตและ Sync กลับเข้าระบบได้ทันที',
   ],
   improved: [],
   fixed: [

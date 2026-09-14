@@ -19,6 +19,7 @@ export const stockComponentIds = {
   adminOpening: 'stock:admin_opening',
   adminMovement: 'stock:admin_movement',
   adminSync: 'stock:admin_sync',
+  adminExportSync: 'stock:admin_export_sync',
   adminPublishPanel: 'stock:admin_publish_panel',
   adminBatchSelect: 'stock:admin_batch_select',
   adminWithdrawalSelect: 'stock:admin_withdrawal_select',
@@ -54,6 +55,7 @@ export function buildStockAdminPanel(
     new ButtonBuilder().setCustomId(stockComponentIds.adminOpening).setLabel('Import ยอดตั้งต้น').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(stockComponentIds.adminMovement).setLabel('เพิ่ม/หักด้วย CSV').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId(stockComponentIds.adminSync).setLabel('Sync ยอดล่าสุด').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(stockComponentIds.adminExportSync).setLabel('Export CSV').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(stockComponentIds.adminPublishPanel).setLabel('ส่ง/อัปเดต Stock').setStyle(ButtonStyle.Success),
   );
   const components: (

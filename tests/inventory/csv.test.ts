@@ -1,6 +1,7 @@
 import { ValidationError } from '../../src/domain/errors.js';
 import {
   hashCsv,
+  buildStockSyncCsv,
   parseInitialStockCsv,
   parseStockMovementCsv,
   parseStockSyncCsv,
@@ -14,6 +15,12 @@ const validMovementCsv = [
 ].join('\n');
 
 describe('stock CSV', () => {
+  it('exports a sync CSV that safely escapes item names and can be imported again', () => {
+    const content = buildStockSyncCsv([{ itemCode: 'MR-001', itemName: 'กล่อง "A,B"', quantity: 12 }]);
+    expect(parseStockSyncCsv(content)).toEqual([
+      { rowNumber: 2, itemCode: 'MR-001', itemName: 'กล่อง "A,B"', latestQuantity: 12 },
+    ]);
+  });
   it('parses sync rows with an existing code or an automatic new code', () => {
     expect(parseStockSyncCsv('item_code,item_name,latest_quantity\nMR-001,กล่องตีอาวุธ,36\n,AED,0')).toEqual([
       { rowNumber: 2, itemCode: 'MR-001', itemName: 'กล่องตีอาวุธ', latestQuantity: 36 },

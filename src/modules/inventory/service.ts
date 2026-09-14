@@ -12,6 +12,7 @@ import {
 import { writeAudit } from '../audit/service.js';
 import {
   hashCsv,
+  buildStockSyncCsv,
   parseInitialStockCsv,
   parseStockSyncCsv,
   parseStockMovementCsv,
@@ -100,6 +101,13 @@ export class InventoryService {
       .from(inventoryItems)
       .where(and(eq(inventoryItems.guildId, guildId), eq(inventoryItems.isActive, true)))
       .orderBy(asc(inventoryItems.itemCode));
+  }
+
+  public async exportSyncCsv(guildId: string): Promise<Buffer> {
+    const items = await this.db.select().from(inventoryItems)
+      .where(and(eq(inventoryItems.guildId, guildId), eq(inventoryItems.isActive, true)))
+      .orderBy(asc(inventoryItems.itemCode));
+    return buildStockSyncCsv(items);
   }
 
   public async getActiveItems(guildId: string, itemIds: readonly string[]): Promise<InventoryItem[]> {
