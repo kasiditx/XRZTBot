@@ -17,13 +17,14 @@ import {
 import type { AttendanceRoundView, AttendanceSchedule, LeaveView } from '../../src/modules/attendance/service.js';
 
 describe('attendance Discord components', () => {
-  it('lets Admin choose Airdrop or Loop for both Manual and Auto', () => {
+  it('lets Admin choose Airdrop, Loop, or normal attendance for Manual and Auto', () => {
     for (const purpose of ['MANUAL', 'AUTO'] as const) {
       const payload = buildAttendanceModeSelector(purpose);
       const options = payload.components[0]!.toJSON().components[0];
 
       expect(options !== undefined && 'options' in options ? options.options.map((option) => option.value) : []).toEqual([
         'AIRDROP',
+        'LOOP',
         'GENERAL',
       ]);
       expect(JSON.stringify(options)).toContain('เล่น Loop');
@@ -56,11 +57,14 @@ describe('attendance Discord components', () => {
 
   it('configures one recurring entry per selected attendance mode', () => {
     const airdrop = buildRecurringScheduleModal('AIRDROP').toJSON();
+    const loop = buildRecurringScheduleModal('LOOP').toJSON();
     const general = buildRecurringScheduleModal('GENERAL').toJSON();
 
     expect(airdrop.custom_id).toBe('attendance:recurring_modal:AIRDROP');
     expect(airdrop.components).toHaveLength(5);
     expect(JSON.stringify(airdrop.components)).toContain('"value":"10"');
+    expect(loop.custom_id).toBe('attendance:recurring_modal:LOOP');
+    expect(loop.components).toHaveLength(4);
     expect(general.custom_id).toBe('attendance:recurring_modal:GENERAL');
     expect(general.components).toHaveLength(4);
   });
@@ -92,13 +96,17 @@ describe('attendance Discord components', () => {
     });
   });
 
-  it('requires image proof on both Airdrop and Loop announcements', () => {
+  it('shows the correct image requirement for every attendance mode', () => {
     const airdrop = buildAttendanceAnnouncement(roundView('AIRDROP'));
+    const loop = buildAttendanceAnnouncement(roundView('LOOP'));
     const general = buildAttendanceAnnouncement(roundView('GENERAL'));
 
     expect(airdrop.embeds[0]?.toJSON().description).toContain('ตัวละครของตัวเอง');
     expect(airdrop.components[0]?.toJSON().components[0]).toMatchObject({ label: 'แนบรูปเช็กชื่อ' });
-    expect(general.embeds[0]?.toJSON().description).toContain('ขณะเล่น Loop');
+    expect(loop.embeds[0]?.toJSON().description).toContain('อยู่ในประเทศและเข้าวอเรียบร้อย');
+    expect(loop.embeds[0]?.toJSON().description).not.toContain('ขณะเล่น Loop');
+    expect(loop.components[0]?.toJSON().components[0]).toMatchObject({ label: 'แนบรูปเช็กชื่อ' });
+    expect(general.embeds[0]?.toJSON().description).toContain('รูปหลักฐานการเข้าร่วมกิจกรรม');
     expect(general.components[0]?.toJSON().components[0]).toMatchObject({ label: 'แนบรูปเช็กชื่อ' });
   });
 
@@ -194,7 +202,7 @@ describe('attendance Discord components', () => {
   it('lets a member choose all night or multiple recurring activities in the leave modal', () => {
     const modal = buildLeaveModal('13/09/2569', '13/09/2569', [
       schedule('schedule-airdrop', 'Airdrop 20:00', 'AIRDROP'),
-      schedule('schedule-loop', 'Loop', 'GENERAL'),
+      schedule('schedule-loop', 'Loop', 'LOOP'),
     ]).toJSON();
 
     expect(modal.components).toHaveLength(4);
@@ -213,7 +221,7 @@ describe('attendance Discord components', () => {
   });
 
   it('shows and retains the selected activity scope when editing a leave', () => {
-    const selected = schedule('schedule-loop', 'Loop', 'GENERAL');
+    const selected = schedule('schedule-loop', 'Loop', 'LOOP');
     const view = leaveView(false, [selected]);
     const modal = buildLeaveEditModal(view, '13/09/2569', '13/09/2569', [selected]).toJSON();
     const log = buildLeaveLog(view).embeds[0]?.toJSON();
@@ -233,14 +241,14 @@ describe('attendance Discord components', () => {
 const AIRDROP_ROUND_ID = '11111111-1111-4111-8111-111111111111';
 const PROOF_MESSAGE_ID = '300000000000000001';
 
-function roundView(mode: 'AIRDROP' | 'GENERAL'): AttendanceRoundView {
+function roundView(mode: 'AIRDROP' | 'GENERAL' | 'LOOP'): AttendanceRoundView {
   const now = new Date('2026-08-27T14:00:00.000Z');
   return {
     round: {
       id: AIRDROP_ROUND_ID,
       guildId: 'guild',
       requestId: 'request',
-      title: mode === 'AIRDROP' ? 'Airdrop 21:00' : 'ซ้อมไฟต์',
+      title: mode === 'AIRDROP' ? 'Airdrop 21:00' : mode === 'LOOP' ? 'เล่น Loop' : 'เช็กชื่อปกติ',
       mode,
       attendanceDate: '2026-08-27',
       eventAt: mode === 'AIRDROP' ? now : null,
@@ -267,7 +275,7 @@ function roundView(mode: 'AIRDROP' | 'GENERAL'): AttendanceRoundView {
   };
 }
 
-function schedule(id: string, name: string, mode: 'AIRDROP' | 'GENERAL'): AttendanceSchedule {
+function schedule(id: string, name: string, mode: 'AIRDROP' | 'GENERAL' | 'LOOP'): AttendanceSchedule {
   const now = new Date('2026-09-13T00:00:00.000Z');
   return {
     id,
@@ -276,8 +284,8 @@ function schedule(id: string, name: string, mode: 'AIRDROP' | 'GENERAL'): Attend
     name,
     mode,
     weekdays: [1, 2, 3, 4, 5, 6, 7],
-    opensAtLocalTime: mode === 'GENERAL' ? '20:10' : null,
-    closesAtLocalTime: mode === 'GENERAL' ? '22:50' : null,
+    opensAtLocalTime: mode === 'AIRDROP' ? null : '20:10',
+    closesAtLocalTime: mode === 'AIRDROP' ? null : '22:50',
     eventAtLocalTime: mode === 'AIRDROP' ? '20:00' : null,
     opensBeforeMinutes: mode === 'AIRDROP' ? 10 : null,
     closesAfterMinutes: mode === 'AIRDROP' ? 10 : null,

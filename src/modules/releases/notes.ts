@@ -17,13 +17,15 @@ export type ReleaseNotes = z.infer<typeof releaseNotesSchema>;
 // Change the ID only for a new announcement; keep summaries about member-visible changes.
 // Set to null for a deployment that should not announce anything.
 export const currentRelease: ReleaseNotes | null = {
-  id: '2026-09-15.3',
-  title: 'ปรับการตอบสนองของปุ่มและแบบฟอร์มทุกระบบ',
-  added: [],
+  id: '2026-09-15.4',
+  title: 'แยกเช็กชื่อปกติและเช็กชื่อ Loop',
+  added: [
+    'เพิ่มเช็กชื่อปกติกลับมาเป็นตัวเลือกแยกจาก Airdrop และ Loop ทั้งแบบ Manual และ Auto',
+  ],
   improved: [
-    'ปุ่มอนุมัติและแบบฟอร์มที่บันทึกข้อมูลในระบบสมาชิก กิจกรรม เช็กชื่อ ใบลา ค่าปรับ เงินกองกลาง ส่งเงิน Stock และตำแหน่ง Fight ตอบรับ Discord ก่อนเริ่มงานที่อาจใช้เวลานาน',
+    'เช็กชื่อ Loop เปลี่ยนข้อกำหนดรูปเป็นหลักฐานว่าอยู่ในประเทศและเข้าวอเรียบร้อย',
   ],
   fixed: [
-    'แก้อาการรายการบันทึกสำเร็จแล้วแต่ Discord แจ้งว่า Bot ไม่ตอบสนอง และลดกรณีปุ่มเก่าค้างให้กดซ้ำหลังดำเนินการแล้ว',
+    'แก้ตัวเลือกเช็กชื่อปกติหายไปหลังเพิ่มเช็กชื่อ Loop',
   ],
 };

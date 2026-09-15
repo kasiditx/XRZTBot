@@ -28,7 +28,7 @@ export const requestStatusEnum = pgEnum('request_status', ['PENDING', 'APPROVED'
 export const scheduledJobStatusEnum = pgEnum('scheduled_job_status', ['PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED']);
 export const activityStatusEnum = pgEnum('activity_status', ['DRAFT', 'SCHEDULED', 'OPEN', 'CLOSED', 'CANCELLED']);
 export const activityModeEnum = pgEnum('activity_mode', ['SCORE', 'EVIDENCE', 'ANNOUNCEMENT']);
-export const attendanceModeEnum = pgEnum('attendance_mode', ['AIRDROP', 'GENERAL']);
+export const attendanceModeEnum = pgEnum('attendance_mode', ['AIRDROP', 'GENERAL', 'LOOP']);
 export const attendanceRoundStatusEnum = pgEnum('attendance_round_status', ['SCHEDULED', 'OPEN', 'CLOSED', 'CANCELLED']);
 export const attendanceResultEnum = pgEnum('attendance_result', ['PENDING', 'PRESENT', 'LEAVE', 'EMERGENCY_LEAVE', 'ABSENT']);
 export const attendanceProofStatusEnum = pgEnum('attendance_proof_status', ['PENDING', 'REJECTED']);
@@ -378,7 +378,7 @@ export const attendanceSchedules = pgTable(
     uniqueIndex('attendance_schedules_guild_request_uq').on(table.guildId, table.requestId),
     check('attendance_schedules_weekdays_not_empty', sql`jsonb_array_length(${table.weekdays}) > 0`),
     check('attendance_schedules_mode_fields', sql`(
-      ${table.mode} = 'GENERAL'
+      ${table.mode} <> 'AIRDROP'
       AND ${table.opensAtLocalTime} IS NOT NULL
       AND ${table.closesAtLocalTime} IS NOT NULL
       AND ${table.eventAtLocalTime} IS NULL

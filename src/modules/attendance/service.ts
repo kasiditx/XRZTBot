@@ -91,7 +91,7 @@ interface CreateRecurringScheduleBaseInput {
 }
 
 export type CreateRecurringScheduleInput = CreateRecurringScheduleBaseInput & ({
-  readonly mode: 'GENERAL';
+  readonly mode: 'GENERAL' | 'LOOP';
   readonly opensAtLocalTime: string;
   readonly closesAtLocalTime: string;
 } | {
@@ -104,7 +104,7 @@ export type CreateRecurringScheduleInput = CreateRecurringScheduleBaseInput & ({
 export type UpdateRecurringScheduleInput = Omit<CreateRecurringScheduleBaseInput, 'requestId'> & {
   readonly scheduleId: string;
 } & ({
-  readonly mode: 'GENERAL';
+  readonly mode: 'GENERAL' | 'LOOP';
   readonly opensAtLocalTime: string;
   readonly closesAtLocalTime: string;
 } | {
@@ -169,7 +169,7 @@ export class AttendanceService {
           name,
           mode: input.mode,
           weekdays,
-          ...(input.mode === 'GENERAL'
+          ...(input.mode !== 'AIRDROP'
             ? {
                 opensAtLocalTime: input.opensAtLocalTime.trim(),
                 closesAtLocalTime: input.closesAtLocalTime.trim(),
@@ -255,8 +255,8 @@ export class AttendanceService {
       await removeUnpublishedScheduleRounds(tx, input.guildId, input.scheduleId);
       const [updated] = await tx.update(attendanceSchedules).set({
         name: requireText(input.name, 'ชื่อ Auto', 2, 100), weekdays: validateWeekdays(input.weekdays), mode: input.mode,
-        opensAtLocalTime: input.mode === 'GENERAL' ? input.opensAtLocalTime.trim() : null,
-        closesAtLocalTime: input.mode === 'GENERAL' ? input.closesAtLocalTime.trim() : null,
+        opensAtLocalTime: input.mode !== 'AIRDROP' ? input.opensAtLocalTime.trim() : null,
+        closesAtLocalTime: input.mode !== 'AIRDROP' ? input.closesAtLocalTime.trim() : null,
         eventAtLocalTime: input.mode === 'AIRDROP' ? input.eventAtLocalTime.trim() : null,
         opensBeforeMinutes: input.mode === 'AIRDROP' ? input.opensBeforeMinutes : null,
         closesAfterMinutes: input.mode === 'AIRDROP' ? input.closesAfterMinutes : null,
@@ -1100,9 +1100,9 @@ function buildScheduleRoundTimes(
   attendanceDate: string,
   timezone: string,
 ): { times: AttendanceRoundTimes; eventAt: Date | null } {
-  if (schedule.mode === 'GENERAL') {
+  if (schedule.mode !== 'AIRDROP') {
     if (schedule.opensAtLocalTime === null || schedule.closesAtLocalTime === null) {
-      throw new Error(`GENERAL attendance schedule ${schedule.id} has incomplete time configuration`);
+      throw new Error(`${schedule.mode} attendance schedule ${schedule.id} has incomplete time configuration`);
     }
     return {
       times: buildAttendanceRoundTimes(
@@ -1445,12 +1445,12 @@ function validateCreateRound(input: CreateRoundInput): void {
       throw new ValidationError('เวลา Airdrop ต้องอยู่ในช่วงเปิดเช็กชื่อ');
     }
   } else if (input.eventAt !== undefined) {
-    throw new ValidationError('เช็กชื่อทั่วไปไม่ต้องระบุเวลา Airdrop');
+    throw new ValidationError('เช็กชื่อที่ไม่ใช่ Airdrop ไม่ต้องระบุเวลา Airdrop');
   }
 }
 
 function validateScheduleInput(input: CreateRecurringScheduleInput): void {
-  if (input.mode === 'GENERAL') {
+  if (input.mode !== 'AIRDROP') {
     parseLocalTime(input.opensAtLocalTime, 'เวลาเปิด');
     parseLocalTime(input.closesAtLocalTime, 'เวลาปิด');
     buildAttendanceRoundTimes('2026-01-01', input.opensAtLocalTime, input.closesAtLocalTime, input.timezone);

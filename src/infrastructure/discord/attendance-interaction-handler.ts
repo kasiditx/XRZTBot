@@ -164,7 +164,7 @@ export class AttendanceInteractionHandler {
       await interaction.reply({
         ...buildEvidenceMethodPrompt(
           `attendance:proof_method:${roundId}`,
-          round.mode === 'AIRDROP' ? 'หลักฐานเช็กชื่อ Airdrop' : 'หลักฐานเช็กชื่อเล่น Loop',
+          `หลักฐาน${attendanceModeLabel(round.mode)}`,
         ),
         flags: MessageFlags.Ephemeral,
       });
@@ -248,7 +248,7 @@ export class AttendanceInteractionHandler {
       const eventAt = new Date(now.getTime() + 10 * 60 * 1_000);
       const closesAt = new Date(now.getTime() + 60 * 60 * 1_000);
       await interaction.showModal(buildCreateRoundModal(mode, {
-        title: mode === 'AIRDROP' ? `Airdrop ${formatDateTimeInput(eventAt, settings.timezone).slice(-5)}` : 'เล่น Loop',
+        title: mode === 'AIRDROP' ? `Airdrop ${formatDateTimeInput(eventAt, settings.timezone).slice(-5)}` : attendanceModeLabel(mode),
         eventAt: formatDateTimeInput(eventAt, settings.timezone),
         opensAt: formatDateTimeInput(now, settings.timezone),
         closesAt: formatDateTimeInput(closesAt, settings.timezone),
@@ -538,7 +538,7 @@ export class AttendanceInteractionHandler {
     }
     await interaction.editReply(buildNotice(
       'success',
-      round.mode === 'AIRDROP' ? 'เช็กชื่อ Airdrop สำเร็จ' : 'เช็กชื่อเล่น Loop สำเร็จ',
+      `${attendanceModeLabel(round.mode)} สำเร็จ`,
       'บันทึกรูปหลักฐานแล้ว ระบบนับผลเป็นมาในรอบนี้',
       'Attendance',
     ));
@@ -819,10 +819,16 @@ function isAttendanceResult(value: string | undefined): value is AttendanceResul
 }
 
 function requireAttendanceMode(value: string | undefined): AttendanceMode {
-  if (value !== 'AIRDROP' && value !== 'GENERAL') {
+  if (value !== 'AIRDROP' && value !== 'GENERAL' && value !== 'LOOP') {
     throw new ValidationError('รูปแบบเช็กชื่อไม่ถูกต้อง');
   }
   return value;
+}
+
+function attendanceModeLabel(mode: AttendanceMode): string {
+  if (mode === 'AIRDROP') return 'เช็กชื่อ Airdrop';
+  if (mode === 'LOOP') return 'เช็กชื่อ Loop';
+  return 'เช็กชื่อปกติ';
 }
 
 function parseMinuteOffset(value: string, label: string): number {

@@ -637,7 +637,7 @@ describeWithDatabase('AttendanceService PostgreSQL integration', () => {
       guildId,
       requestId: 'loop-round-with-reserve-exemption',
       title: 'เล่น Loop',
-      mode: 'GENERAL',
+      mode: 'LOOP',
       ...buildAttendanceRoundTimes('2026-09-21', '19:00', '21:30', timezone),
       actorDiscordUserId: alpha,
       now: new Date('2026-09-21T12:00:00.000Z'),
