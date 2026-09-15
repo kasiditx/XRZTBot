@@ -20,7 +20,11 @@ import { buildWeeklyAnnouncement, buildWeeklyProofLog } from '../dist/infrastruc
 
 // Run only after deploying the matching handlers. Default is a read-only inventory.
 const apply = process.argv.includes('--apply');
-if (process.argv.slice(2).some((arg) => arg !== '--apply')) throw new Error('Supported option: --apply');
+const targetArgument = process.argv.slice(2).find((arg) => arg.startsWith('--target='));
+const targetName = targetArgument?.slice('--target='.length);
+if (process.argv.slice(2).some((arg) => arg !== '--apply' && !arg.startsWith('--target='))) {
+  throw new Error('Supported options: --apply, --target=<name>');
+}
 const guildId = required('DISCORD_GUILD_ID');
 const { db, pool } = createDatabase(process.env.DATABASE_URL_UNPOOLED ?? required('DATABASE_URL'));
 const rest = apply ? new REST({ version: '10' }).setToken(required('DISCORD_TOKEN')) : null;
@@ -49,7 +53,9 @@ try {
   const [settings] = await db.select({ guildId: guildSettings.guildId }).from(guildSettings).where(eq(guildSettings.guildId, guildId));
   if (settings === undefined) throw new Error('Guild is not configured');
   const bot = rest === null ? null : await rest.get(Routes.user('@me'));
-  for (const [name, table, channelKey, messageKey, getView, build] of targets) {
+  const selectedTargets = targetName === undefined ? targets : targets.filter(([name]) => name === targetName);
+  if (selectedTargets.length === 0) throw new Error(`Unknown target: ${targetName}`);
+  for (const [name, table, channelKey, messageKey, getView, build] of selectedTargets) {
     let cursor;
     let count = 0;
     let missing = 0;
