@@ -161,15 +161,13 @@ export class AttendanceInteractionHandler {
       await this.requireActiveMember(guild, interaction.user.id);
       const roundId = entityId(interaction.customId, 'attendance:check_in:');
       const round = await this.dependencies.attendance.getRound(guild.id, roundId);
-      if (round.mode === 'AIRDROP') {
-        await interaction.reply({
-          ...buildEvidenceMethodPrompt(`attendance:proof_method:${roundId}`, 'หลักฐานเช็กชื่อ Airdrop'),
-          flags: MessageFlags.Ephemeral,
-        });
-        return;
-      }
-      await this.dependencies.attendance.checkIn(guild.id, roundId, interaction.user.id, new Date());
-      await interaction.reply({ ...buildNotice('success', 'เช็กชื่อสำเร็จ', 'รายชื่อผู้มาเข้าร่วมจะอัปเดตอัตโนมัติ', 'Attendance'), flags: MessageFlags.Ephemeral });
+      await interaction.reply({
+        ...buildEvidenceMethodPrompt(
+          `attendance:proof_method:${roundId}`,
+          round.mode === 'AIRDROP' ? 'หลักฐานเช็กชื่อ Airdrop' : 'หลักฐานเช็กชื่อเล่น Loop',
+        ),
+        flags: MessageFlags.Ephemeral,
+      });
       return;
     }
     if (interaction.customId.startsWith('attendance:cancel:')) {
@@ -233,10 +231,10 @@ export class AttendanceInteractionHandler {
       await this.requireActiveMember(guild, interaction.user.id);
       const roundId = entityId(interaction.customId, 'attendance:proof_method:');
       const round = await this.dependencies.attendance.getRound(guild.id, roundId);
-      if (round.mode !== 'AIRDROP') throw new ValidationError('เช็กชื่อทั่วไปไม่ต้องแนบรูปหลักฐาน');
       await interaction.showModal(buildAttendanceProofModal(
         roundId,
         requireEvidenceInputMode(interaction.values[0]),
+        round.mode,
       ));
       return;
     }
@@ -245,12 +243,12 @@ export class AttendanceInteractionHandler {
       const settings = await this.requireSettings(guild.id);
       requireAttendanceChannels(settings);
       const mode = requireAttendanceMode(interaction.values[0]);
-      requireAttendanceProofChannel(settings, mode);
+      requireAttendanceProofChannel(settings);
       const now = new Date();
       const eventAt = new Date(now.getTime() + 10 * 60 * 1_000);
       const closesAt = new Date(now.getTime() + 60 * 60 * 1_000);
       await interaction.showModal(buildCreateRoundModal(mode, {
-        title: mode === 'AIRDROP' ? `Airdrop ${formatDateTimeInput(eventAt, settings.timezone).slice(-5)}` : 'เช็กชื่อทั่วไป',
+        title: mode === 'AIRDROP' ? `Airdrop ${formatDateTimeInput(eventAt, settings.timezone).slice(-5)}` : 'เล่น Loop',
         eventAt: formatDateTimeInput(eventAt, settings.timezone),
         opensAt: formatDateTimeInput(now, settings.timezone),
         closesAt: formatDateTimeInput(closesAt, settings.timezone),
@@ -261,7 +259,7 @@ export class AttendanceInteractionHandler {
       await this.requireAdmin(guild, interaction.user.id);
       const settings = await this.requireSettings(guild.id);
       const mode = requireAttendanceMode(interaction.values[0]);
-      requireAttendanceProofChannel(settings, mode);
+      requireAttendanceProofChannel(settings);
       await interaction.showModal(buildRecurringScheduleModal(mode));
       return;
     }
@@ -355,7 +353,7 @@ export class AttendanceInteractionHandler {
     await this.requireAdmin(guild, interaction.user.id);
     const settings = await this.requireSettings(guild.id);
     requireAttendanceChannels(settings);
-    requireAttendanceProofChannel(settings, mode);
+    requireAttendanceProofChannel(settings);
     const now = new Date();
     const eventAt = mode === 'AIRDROP'
       ? parseDateTimeInput(
@@ -408,7 +406,7 @@ export class AttendanceInteractionHandler {
     await this.requireAdmin(guild, interaction.user.id);
     const settings = await this.requireSettings(guild.id);
     requireAttendanceChannels(settings);
-    requireAttendanceProofChannel(settings, mode);
+    requireAttendanceProofChannel(settings);
     const common = {
       guildId: guild.id,
       requestId: interaction.id,
@@ -447,7 +445,7 @@ export class AttendanceInteractionHandler {
     await this.requireAdmin(guild, interaction.user.id);
     const settings = await this.requireSettings(guild.id);
     requireAttendanceChannels(settings);
-    requireAttendanceProofChannel(settings, mode);
+    requireAttendanceProofChannel(settings);
     const common = {
       guildId: guild.id,
       scheduleId,
@@ -504,9 +502,6 @@ export class AttendanceInteractionHandler {
     const file = files[0];
     if (file === undefined) throw new ValidationError('ต้องส่งรูปหลักฐาน 1 รูป');
     validateAttendanceProof({ contentType: file.contentType, size: file.size });
-    if (round.mode !== 'AIRDROP') {
-      throw new ValidationError('เช็กชื่อทั่วไปไม่ต้องแนบรูปหลักฐาน');
-    }
     if (member === null || member.status !== 'ACTIVE') {
       throw new AuthorizationError('ต้องเป็นสมาชิกที่มีสถานะใช้งาน');
     }
@@ -549,7 +544,7 @@ export class AttendanceInteractionHandler {
     }
     await interaction.editReply(buildNotice(
       'success',
-      'เช็กชื่อ Airdrop สำเร็จ',
+      round.mode === 'AIRDROP' ? 'เช็กชื่อ Airdrop สำเร็จ' : 'เช็กชื่อเล่น Loop สำเร็จ',
       'บันทึกรูปหลักฐานแล้ว ระบบนับผลเป็นมาในรอบนี้',
       'Attendance',
     ));
@@ -852,9 +847,9 @@ function requireAttendanceChannels(settings: GuildSettings): void {
   }
 }
 
-function requireAttendanceProofChannel(settings: GuildSettings, mode: AttendanceMode): void {
-  if (mode === 'AIRDROP' && settings.attendanceLogChannelId === null) {
-    throw new ValidationError('กรุณาตั้งค่า Channel รายการเช็กชื่อก่อนสร้างรอบ Airdrop');
+function requireAttendanceProofChannel(settings: GuildSettings): void {
+  if (settings.attendanceLogChannelId === null) {
+    throw new ValidationError('กรุณาตั้งค่า Channel รายการเช็กชื่อก่อนสร้างรอบ');
   }
 }
 

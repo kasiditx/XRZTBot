@@ -623,4 +623,42 @@ describeWithDatabase('AttendanceService PostgreSQL integration', () => {
     expect(after.leave).toEqual(before.leave);
     expect(after.absent).toEqual(before.absent);
   });
+
+  it('requires proof for Loop while exempting reserve members from attendance', async () => {
+    const reserveDiscordUserId = '200000000000000099';
+    await db.insert(members).values({
+      guildId,
+      discordUserId: reserveDiscordUserId,
+      inGameName: 'Reserve',
+      status: 'ACTIVE',
+      rosterTitle: 'RESERVE',
+    });
+    const loopRound = await service.createRound({
+      guildId,
+      requestId: 'loop-round-with-reserve-exemption',
+      title: 'เล่น Loop',
+      mode: 'GENERAL',
+      ...buildAttendanceRoundTimes('2026-09-21', '19:00', '21:30', timezone),
+      actorDiscordUserId: alpha,
+      now: new Date('2026-09-21T12:00:00.000Z'),
+    });
+
+    await service.checkInWithProof(guildId, loopRound.id, alpha, {
+      attachmentId: 'loop-proof-attachment',
+      channelId: 'loop-proof-channel',
+      messageId: 'loop-proof-message',
+      sha256: 'f'.repeat(64),
+    }, new Date('2026-09-21T12:05:00.000Z'));
+    await expect(service.checkInWithProof(guildId, loopRound.id, reserveDiscordUserId, {
+      attachmentId: 'reserve-proof-attachment',
+      channelId: 'loop-proof-channel',
+      messageId: 'reserve-proof-message',
+      sha256: '0'.repeat(64),
+    }, new Date('2026-09-21T12:06:00.000Z'))).rejects.toThrow('สมาชิกตำแหน่งสำรองได้รับการยกเว้น ไม่ต้องเช็กชื่อ');
+
+    const view = await service.getRoundView(guildId, loopRound.id);
+    expect(view.present.map((member) => member.discordUserId)).toContain(alpha);
+    expect([...view.present, ...view.pending].map((member) => member.discordUserId)).not.toContain(reserveDiscordUserId);
+    expect(await service.getReminderRecipients(guildId, loopRound.id)).not.toContain(reserveDiscordUserId);
+  });
 });

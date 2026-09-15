@@ -17,7 +17,7 @@ import {
 import type { AttendanceRoundView, AttendanceSchedule, LeaveView } from '../../src/modules/attendance/service.js';
 
 describe('attendance Discord components', () => {
-  it('lets Admin choose Airdrop or general for both Manual and Auto', () => {
+  it('lets Admin choose Airdrop or Loop for both Manual and Auto', () => {
     for (const purpose of ['MANUAL', 'AUTO'] as const) {
       const payload = buildAttendanceModeSelector(purpose);
       const options = payload.components[0]!.toJSON().components[0];
@@ -26,6 +26,7 @@ describe('attendance Discord components', () => {
         'AIRDROP',
         'GENERAL',
       ]);
+      expect(JSON.stringify(options)).toContain('เล่น Loop');
     }
   });
 
@@ -91,13 +92,14 @@ describe('attendance Discord components', () => {
     });
   });
 
-  it('asks for proof only on the Airdrop announcement', () => {
+  it('requires image proof on both Airdrop and Loop announcements', () => {
     const airdrop = buildAttendanceAnnouncement(roundView('AIRDROP'));
     const general = buildAttendanceAnnouncement(roundView('GENERAL'));
 
     expect(airdrop.embeds[0]?.toJSON().description).toContain('ตัวละครของตัวเอง');
     expect(airdrop.components[0]?.toJSON().components[0]).toMatchObject({ label: 'แนบรูปเช็กชื่อ' });
-    expect(general.components[0]?.toJSON().components[0]).toMatchObject({ label: 'เช็กชื่อ' });
+    expect(general.embeds[0]?.toJSON().description).toContain('ขณะเล่น Loop');
+    expect(general.components[0]?.toJSON().components[0]).toMatchObject({ label: 'แนบรูปเช็กชื่อ' });
   });
 
   it('adds round cancellation with a required reason and confirmation', () => {

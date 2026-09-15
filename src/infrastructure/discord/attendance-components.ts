@@ -136,13 +136,13 @@ export function buildAttendanceModeSelector(purpose: 'MANUAL' | 'AUTO') {
     .setPlaceholder('เลือกรูปแบบเช็กชื่อ')
     .addOptions(
       { label: 'รอบ Airdrop', value: 'AIRDROP', emoji: '🪂', description: 'สมาชิกต้องแนบรูปตัวละครและรายชื่อในวอ' },
-      { label: 'เช็กชื่อทั่วไป', value: 'GENERAL', emoji: '✅', description: 'ใช้กับซ้อม ประชุม หรือกิจกรรมทั่วไป' },
+      { label: 'เล่น Loop', value: 'GENERAL', emoji: '🔁', description: 'สมาชิกต้องแนบรูปขณะเล่น Loop' },
     );
   return {
     content: formatPanelText(
       '✅',
       isManual ? 'เปิดเช็กชื่อเอง' : 'ตั้ง Auto เช็กชื่อ',
-      'เลือกแบบรอบ Airdrop หรือแบบทั่วไป',
+      'เลือกแบบรอบ Airdrop หรือเล่น Loop',
       isManual ? 'รายการ Manual จะแยกจาก Auto' : 'สร้างได้หลายรายการในวันเดียวกัน',
     ),
     components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selector)],
@@ -159,7 +159,7 @@ export interface CreateRoundModalDefaults {
 export function buildCreateRoundModal(mode: AttendanceMode, defaults: CreateRoundModalDefaults): ModalBuilder {
   const modal = new ModalBuilder()
     .setCustomId(`${attendanceCreateModalPrefix}${mode}`)
-    .setTitle(mode === 'AIRDROP' ? 'เปิดรอบ Airdrop' : 'เปิดเช็กชื่อทั่วไป')
+    .setTitle(mode === 'AIRDROP' ? 'เปิดรอบ Airdrop' : 'เปิดเช็กชื่อเล่น Loop')
     .addComponents(inputRow(attendanceComponentIds.createTitle, 'ชื่อรายการ', 'Airdrop 21:00', 2, 100, defaults.title));
   if (mode === 'AIRDROP') {
     return modal.addComponents(
@@ -177,9 +177,9 @@ export function buildCreateRoundModal(mode: AttendanceMode, defaults: CreateRoun
 export function buildRecurringScheduleModal(mode: AttendanceMode, defaults?: AttendanceSchedule): ModalBuilder {
   const modal = new ModalBuilder()
     .setCustomId(`${attendanceRecurringModalPrefix}${mode}`)
-    .setTitle(mode === 'AIRDROP' ? 'ตั้ง Auto รอบ Airdrop' : 'ตั้ง Auto เช็กชื่อทั่วไป')
+    .setTitle(mode === 'AIRDROP' ? 'ตั้ง Auto รอบ Airdrop' : 'ตั้ง Auto เล่น Loop')
     .addComponents(
-      inputRow(attendanceComponentIds.recurringName, 'ชื่อ Auto', mode === 'AIRDROP' ? 'Airdrop 21:00' : 'ซ้อมไฟต์', 2, 100, defaults?.name),
+      inputRow(attendanceComponentIds.recurringName, 'ชื่อ Auto', mode === 'AIRDROP' ? 'Airdrop 21:00' : 'เล่น Loop', 2, 100, defaults?.name),
       inputRow(attendanceComponentIds.recurringWeekdays, 'วัน: 1=จันทร์ ... 7=อาทิตย์', '1,2,3,4,5,6,7', 1, 13, defaults?.weekdays.join(',')),
     );
   if (mode === 'AIRDROP') {
@@ -198,20 +198,20 @@ export function buildRecurringScheduleModal(mode: AttendanceMode, defaults?: Att
 export function buildScheduleEditModal(schedule: AttendanceSchedule): ModalBuilder {
   return buildRecurringScheduleModal(schedule.mode, schedule)
     .setCustomId(`${attendanceScheduleEditModalPrefix}${schedule.id}:${schedule.mode}`)
-    .setTitle(schedule.mode === 'AIRDROP' ? 'แก้ไข Auto รอบ Airdrop' : 'แก้ไข Auto เช็กชื่อทั่วไป');
+    .setTitle(schedule.mode === 'AIRDROP' ? 'แก้ไข Auto รอบ Airdrop' : 'แก้ไข Auto เล่น Loop');
 }
 
-export function buildAttendanceProofModal(roundId: string, evidenceMode: EvidenceInputMode): ModalBuilder {
+export function buildAttendanceProofModal(roundId: string, evidenceMode: EvidenceInputMode, mode: AttendanceMode = 'AIRDROP'): ModalBuilder {
   return new ModalBuilder()
     .setCustomId(`${attendanceProofModalPrefix}${evidenceMode}:${roundId}`)
-    .setTitle('แนบรูปเช็กชื่อ Airdrop')
+    .setTitle(mode === 'AIRDROP' ? 'แนบรูปเช็กชื่อ Airdrop' : 'แนบรูปเช็กชื่อเล่น Loop')
     .addLabelComponents(
       buildEvidenceInputLabel({
         mode: evidenceMode,
         fileCustomId: attendanceComponentIds.proofFile,
         linkCustomId: attendanceComponentIds.proofMediaLink,
         maximumImages: 1,
-        label: 'รูปตัวละครของตัวเองและรายชื่อในวอ',
+        label: mode === 'AIRDROP' ? 'รูปตัวละครของตัวเองและรายชื่อในวอ' : 'รูปตัวละครของตัวเองขณะเล่น Loop',
       }),
     );
 }
@@ -271,13 +271,14 @@ export function buildAttendanceProofLog(
 ) {
   const isRejected = review?.status === 'REJECTED';
   const isCancelled = round.status === 'CANCELLED';
+  const attendanceType = round.mode === 'AIRDROP' ? 'Airdrop' : 'เล่น Loop';
   const embed = new EmbedBuilder()
     .setColor(isRejected || isCancelled ? 0xed4245 : 0x57f287)
-    .setTitle(isCancelled ? '❌ ยกเลิกรอบเช็กชื่อ Airdrop' : isRejected ? '❌ ปฏิเสธหลักฐานเช็กชื่อ Airdrop' : '📸 หลักฐานเช็กชื่อ Airdrop')
+    .setTitle(isCancelled ? `❌ ยกเลิกรอบเช็กชื่อ ${attendanceType}` : isRejected ? `❌ ปฏิเสธหลักฐานเช็กชื่อ ${attendanceType}` : `📸 หลักฐานเช็กชื่อ ${attendanceType}`)
     .addFields(
       { name: 'รายการ', value: round.title },
       { name: 'สมาชิก', value: `<@${member.discordUserId}> (${member.inGameName})` },
-      { name: 'ข้อกำหนด', value: 'รูปต้องเห็นตัวละครของตัวเองและรายชื่อในวอ' },
+      { name: 'ข้อกำหนด', value: round.mode === 'AIRDROP' ? 'รูปต้องเห็นตัวละครของตัวเองและรายชื่อในวอ' : 'รูปต้องเห็นตัวละครของตัวเองขณะเล่น Loop' },
     )
     .setTimestamp(round.cancelledAt ?? review?.decidedAt ?? undefined);
   if (isCancelled) {
@@ -505,12 +506,15 @@ function buildAttendanceDescriptions(view: AttendanceRoundView): string[] {
   const { round } = view;
   const isClosed = round.status === 'CLOSED';
   const roundDetails = [
-    `**รูปแบบ:** ${round.mode === 'AIRDROP' ? 'รอบ Airdrop' : 'เช็กชื่อทั่วไป'}`,
+    `**รูปแบบ:** ${round.mode === 'AIRDROP' ? 'รอบ Airdrop' : 'เล่น Loop'}`,
     `**วันที่:** ${round.attendanceDate}`,
     ...(round.eventAt === null ? [] : [`**เวลา Airdrop:** ${discordTimestamp(round.eventAt, 'F')}`]),
     `**เปิด:** ${discordTimestamp(round.opensAt, 'F')}`,
     `**ปิด:** ${discordTimestamp(round.closesAt, 'F')}`,
-    ...(round.mode === 'AIRDROP' ? ['', '📸 แนบรูปที่เห็นตัวละครของตัวเองและรายชื่อในวอ รูปที่ใช้ในรอบอื่นแล้วจะส่งซ้ำไม่ได้'] : []),
+    '',
+    round.mode === 'AIRDROP'
+      ? '📸 แนบรูปที่เห็นตัวละครของตัวเองและรายชื่อในวอ รูปที่ใช้ในรอบอื่นแล้วจะส่งซ้ำไม่ได้'
+      : '📸 แนบรูปที่เห็นตัวละครของตัวเองขณะเล่น Loop รูปที่ใช้ในรอบอื่นแล้วจะส่งซ้ำไม่ได้',
   ];
   if (round.status === 'CANCELLED') {
     const cancelledBy = round.cancelledByDiscordUserId === null
@@ -572,7 +576,7 @@ function attendanceButtonLabel(round: AttendanceRound): string {
   if (round.status === 'CANCELLED') return 'ยกเลิกแล้ว';
   if (round.status === 'CLOSED') return 'ปิดแล้ว';
   if (round.status !== 'OPEN') return 'ยังไม่เปิด';
-  return round.mode === 'AIRDROP' ? 'แนบรูปเช็กชื่อ' : 'เช็กชื่อ';
+  return 'แนบรูปเช็กชื่อ';
 }
 
 function buildAttendanceCancellationButton(roundId: string, disabled: boolean): ButtonBuilder {

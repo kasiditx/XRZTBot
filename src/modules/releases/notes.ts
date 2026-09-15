@@ -17,13 +17,15 @@ export type ReleaseNotes = z.infer<typeof releaseNotesSchema>;
 // Change the ID only for a new announcement; keep summaries about member-visible changes.
 // Set to null for a deployment that should not announce anything.
 export const currentRelease: ReleaseNotes | null = {
-  id: '2026-09-14.8',
-  title: 'เพิ่ม Export ยอด Stock ล่าสุดเป็น CSV',
+  id: '2026-09-15.1',
+  title: 'เพิ่มเช็กชื่อเล่น Loop และใช้รูปหลักฐานทุกกิจกรรม',
   added: [
-    'เพิ่มปุ่ม Export CSV สำหรับดาวน์โหลดยอด Stock ปัจจุบันทั้งหมด แล้วนำไปอัปเดตและ Sync กลับเข้าระบบได้ทันที',
+    'เพิ่มรูปแบบเช็กชื่อสำหรับเล่น Loop ทั้งแบบ Manual และ Auto',
   ],
-  improved: [],
+  improved: [
+    'เช็กชื่อทุกประเภทต้องแนบรูปหลักฐาน และแสดงข้อกำหนดของรูปตามกิจกรรม',
+  ],
   fixed: [
-    'แก้ปุ่มขอเบิกของและส่งของเข้าแก๊งที่เปิดไม่ได้เมื่อ Stock มีเพียงหน้าเดียว',
+    'ยกเว้นสมาชิกตำแหน่งสำรองจากรายชื่อเช็กชื่อ การแจ้งเตือน และผลขาด',
   ],
 };

@@ -325,6 +325,7 @@ export class AttendanceService {
         throw new ValidationError('รอบ Airdrop ต้องแนบรูปตัวละครและรายชื่อในวอ');
       }
       const member = await findActiveMember(tx, guildId, discordUserId);
+      requireAttendanceEligibleMember(member);
       const activeLeaves = await findActiveMemberLeavesForRound(tx, guildId, member.id, round);
       if (activeLeaves.length > 0) {
         throw new ConflictError('คุณแจ้งลาในรอบนี้แล้ว ไม่สามารถเช็กชื่อทับได้');
@@ -368,10 +369,8 @@ export class AttendanceService {
       return await this.db.transaction(async (tx) => {
         const round = await lockRound(tx, guildId, roundId);
         validateCheckInWindow(round, now);
-        if (round.mode !== 'AIRDROP') {
-          throw new ValidationError('เช็กชื่อทั่วไปไม่ต้องแนบรูปหลักฐาน');
-        }
         const member = await findActiveMember(tx, guildId, discordUserId);
+        requireAttendanceEligibleMember(member);
         const activeLeaves = await findActiveMemberLeavesForRound(tx, guildId, member.id, round);
         if (activeLeaves.length > 0) {
           throw new ConflictError('คุณแจ้งลาในรอบนี้แล้ว ไม่สามารถเช็กชื่อทับได้');
@@ -575,7 +574,12 @@ export class AttendanceService {
         throw new ConflictError('ยังไม่ถึงเวลาปิดเช็กชื่อ');
       }
       await snapshotActiveMembers(tx, guildId, roundId);
-      const records = await tx.select().from(attendanceRecords).where(eq(attendanceRecords.roundId, roundId));
+      const records = await tx
+        .select({ record: attendanceRecords })
+        .from(attendanceRecords)
+        .innerJoin(members, eq(attendanceRecords.memberId, members.id))
+        .where(and(eq(attendanceRecords.roundId, roundId), attendanceRequiredCondition()))
+        .then((rows) => rows.map(({ record }) => record));
       const activeLeaves = await findActiveLeavesForRound(tx, guildId, round);
       const leavesByMember = groupLeavesByMember(activeLeaves);
 
@@ -861,7 +865,7 @@ export class AttendanceService {
       })
       .from(attendanceRecords)
       .innerJoin(members, eq(attendanceRecords.memberId, members.id))
-      .where(eq(attendanceRecords.roundId, roundId))
+      .where(and(eq(attendanceRecords.roundId, roundId), attendanceRequiredCondition()))
       .orderBy(asc(members.inGameName));
     const leaveRows = round.status === 'CLOSED' || round.status === 'CANCELLED'
       ? []
@@ -876,6 +880,7 @@ export class AttendanceService {
             lte(leaves.startsOn, round.attendanceDate),
             gte(leaves.endsOn, round.attendanceDate),
             leaveScopeCondition(round),
+            attendanceRequiredCondition(),
           ))
           .orderBy(asc(members.inGameName)))
           .map((row) => ({ ...row, schedules: [] }));
@@ -1199,7 +1204,7 @@ async function snapshotActiveMembers(tx: Transaction, guildId: string, roundId: 
   const activeMembers = await tx
     .select({ id: members.id })
     .from(members)
-    .where(and(eq(members.guildId, guildId), eq(members.status, 'ACTIVE')));
+    .where(and(eq(members.guildId, guildId), eq(members.status, 'ACTIVE'), attendanceRequiredCondition()));
   if (activeMembers.length === 0) {
     return;
   }
@@ -1207,6 +1212,16 @@ async function snapshotActiveMembers(tx: Transaction, guildId: string, roundId: 
     .insert(attendanceRecords)
     .values(activeMembers.map((member) => ({ roundId, memberId: member.id, result: 'PENDING' as const })))
     .onConflictDoNothing();
+}
+
+function attendanceRequiredCondition() {
+  return or(isNull(members.rosterTitle), ne(members.rosterTitle, 'RESERVE'));
+}
+
+function requireAttendanceEligibleMember(member: typeof members.$inferSelect): void {
+  if (member.rosterTitle === 'RESERVE') {
+    throw new ValidationError('สมาชิกตำแหน่งสำรองได้รับการยกเว้น ไม่ต้องเช็กชื่อ');
+  }
 }
 
 async function findActiveMember(tx: Transaction, guildId: string, discordUserId: string) {
