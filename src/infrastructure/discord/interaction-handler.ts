@@ -193,6 +193,7 @@ export class DiscordInteractionHandler {
   }
 
   private async setupRoles(interaction: ChatInputCommandInteraction, guild: Guild): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const settings = await this.requireSettings(guild.id);
     const actor = await guild.members.fetch(interaction.user.id);
 
@@ -214,10 +215,11 @@ export class DiscordInteractionHandler {
     };
     ensureDistinctRoleIds(roleIds);
     await this.dependencies.guildConfig.configureRoles(guild.id, roleIds);
-    await interaction.reply({ ...buildNotice('success', 'บันทึก Role สำเร็จ', 'ระบบบันทึก Role ทั้ง 5 รายการเรียบร้อยแล้ว', 'System Setup'), flags: MessageFlags.Ephemeral });
+    await interaction.editReply(buildNotice('success', 'บันทึก Role สำเร็จ', 'ระบบบันทึก Role ทั้ง 5 รายการเรียบร้อยแล้ว', 'System Setup'));
   }
 
   private async setChannel(interaction: ChatInputCommandInteraction, guild: Guild): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAuthority(guild, interaction.user.id, 'CHANNEL_CONFIGURE');
     const field = interaction.options.getString('type', true);
     if (!isConfigurableChannel(field)) {
@@ -249,18 +251,19 @@ export class DiscordInteractionHandler {
     await this.dependencies.guildConfig.configureChannel(guild.id, field, channel.id);
     if (field === 'registrationRequestChannelId') {
       const queued = await this.dependencies.members.queuePendingRegistrationRequestSync(guild.id);
-      await interaction.reply({ ...buildNotice(
+      await interaction.editReply(buildNotice(
         'success',
         'บันทึก Channel สำเร็จ',
         `คำขอลงทะเบียน: <#${channel.id}>\nกำลังส่งคำขอค้าง **${queued.toString()} รายการ**`,
         'Channel Setup',
-      ), flags: MessageFlags.Ephemeral });
+      ));
       return;
     }
-    await interaction.reply({ ...buildNotice('success', 'บันทึก Channel สำเร็จ', `ตั้งค่า **${field}** เป็น <#${channel.id}> แล้ว`, 'Channel Setup'), flags: MessageFlags.Ephemeral });
+    await interaction.editReply(buildNotice('success', 'บันทึก Channel สำเร็จ', `ตั้งค่า **${field}** เป็น <#${channel.id}> แล้ว`, 'Channel Setup'));
   }
 
   private async publishControlPanel(interaction: ChatInputCommandInteraction, guild: Guild): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAuthority(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const settings = await this.requireSettings(guild.id);
     if (settings.controlChannelId === null) {
@@ -284,24 +287,26 @@ export class DiscordInteractionHandler {
           throw error;
         }
         await existing.delete().catch(() => undefined);
-        await interaction.reply({ ...buildNotice('success', 'รีเฟรช Control Panel แล้ว', 'ย้าย Control Panel ลงท้าย Channel เพื่อไม่ต้องเลื่อนหาข้อความเดิม', 'Management Control'), flags: MessageFlags.Ephemeral });
+        await interaction.editReply(buildNotice('success', 'รีเฟรช Control Panel แล้ว', 'ย้าย Control Panel ลงท้าย Channel เพื่อไม่ต้องเลื่อนหาข้อความเดิม', 'Management Control'));
         return;
       }
     }
     const message = await interaction.channel.send(buildControlPanel());
     await this.dependencies.guildConfig.saveControlPanelMessage(guild.id, message.id);
-    await interaction.reply({ ...buildNotice('success', 'สร้าง Control Panel แล้ว', 'ศูนย์ควบคุมสำหรับหัวแก๊ง/รองแก๊งพร้อมใช้งาน', 'Management Control'), flags: MessageFlags.Ephemeral });
+    await interaction.editReply(buildNotice('success', 'สร้าง Control Panel แล้ว', 'ศูนย์ควบคุมสำหรับหัวแก๊ง/รองแก๊งพร้อมใช้งาน', 'Management Control'));
   }
 
   private async publishRegistration(interaction: ChatInputCommandInteraction, guild: Guild): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAuthority(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const settings = await this.requireSettings(guild.id);
     const channel = await fetchSendableChannel(this.dependencies.client, settings.memberChannelId, 'Channel สมาชิก');
     await channel.send(buildRegistrationPanel());
-    await interaction.reply({ ...buildNotice('success', 'ส่งแผงลงทะเบียนแล้ว', `ปลายทาง: <#${channel.id}>`, 'Member Registration'), flags: MessageFlags.Ephemeral });
+    await interaction.editReply(buildNotice('success', 'ส่งแผงลงทะเบียนแล้ว', `ปลายทาง: <#${channel.id}>`, 'Member Registration'));
   }
 
   private async publishMemberRoster(interaction: ChatInputCommandInteraction, guild: Guild): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAuthority(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const settings = await this.requireSettings(guild.id);
     const channel = await fetchSendableChannel(
@@ -315,49 +320,53 @@ export class DiscordInteractionHandler {
       const existing = await channel.messages.fetch(settings.memberRosterMessageId).catch(() => null);
       if (existing !== null) {
         await existing.edit(roster);
-        await interaction.reply({ ...buildNotice('success', 'อัปเดตรายชื่อสมาชิกแล้ว', `ปลายทาง: <#${channel.id}>`, 'Member Roster'), flags: MessageFlags.Ephemeral });
+        await interaction.editReply(buildNotice('success', 'อัปเดตรายชื่อสมาชิกแล้ว', `ปลายทาง: <#${channel.id}>`, 'Member Roster'));
         return;
       }
     }
 
     const message = await channel.send(roster);
     await this.dependencies.guildConfig.saveMemberRosterMessage(guild.id, message.id);
-    await interaction.reply({ ...buildNotice('success', 'ส่งรายชื่อสมาชิกแล้ว', `ปลายทาง: <#${channel.id}>`, 'Member Roster'), flags: MessageFlags.Ephemeral });
+    await interaction.editReply(buildNotice('success', 'ส่งรายชื่อสมาชิกแล้ว', `ปลายทาง: <#${channel.id}>`, 'Member Roster'));
   }
 
   private async addMember(interaction: ChatInputCommandInteraction, guild: Guild): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAuthority(guild, interaction.user.id, 'MEMBER_MANAGE');
     const settings = await this.requireSettings(guild.id);
     const roleIds = requireMemberRoleIds(settings);
     const target = interaction.options.getUser('user', true);
     const inGameName = interaction.options.getString('name', true);
     const member = await this.dependencies.members.addDirectly(guild.id, target.id, inGameName, interaction.user.id, roleIds);
-    await interaction.reply({ ...buildNotice('success', 'เพิ่มสมาชิกสำเร็จ', `<@${target.id}> • **${member.inGameName}**\nระบบกำลังซิงก์ Role อัตโนมัติ`, 'Member Management'), flags: MessageFlags.Ephemeral });
+    await interaction.editReply(buildNotice('success', 'เพิ่มสมาชิกสำเร็จ', `<@${target.id}> • **${member.inGameName}**\nระบบกำลังซิงก์ Role อัตโนมัติ`, 'Member Management'));
   }
 
   private async removeMember(interaction: ChatInputCommandInteraction, guild: Guild): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAuthority(guild, interaction.user.id, 'MEMBER_MANAGE');
     const settings = await this.requireSettings(guild.id);
     const roleIds = requireMemberRoleIds(settings);
     const target = interaction.options.getUser('user', true);
     const reason = interaction.options.getString('reason', true);
     await this.dependencies.members.markFormer(guild.id, target.id, interaction.user.id, reason, roleIds);
-    await interaction.reply({ ...buildNotice('success', 'อัปเดตสถานะสมาชิกแล้ว', `<@${target.id}> ถูกเปลี่ยนเป็นอดีตสมาชิก/พี่น้อง\nระบบกำลังซิงก์ Role อัตโนมัติ`, 'Member Management'), flags: MessageFlags.Ephemeral });
+    await interaction.editReply(buildNotice('success', 'อัปเดตสถานะสมาชิกแล้ว', `<@${target.id}> ถูกเปลี่ยนเป็นอดีตสมาชิก/พี่น้อง\nระบบกำลังซิงก์ Role อัตโนมัติ`, 'Member Management'));
   }
 
   private async showHealth(interaction: ChatInputCommandInteraction, guild: Guild): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAuthority(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const databaseHealthy = await this.dependencies.checkDatabase();
     const websocketPing = this.dependencies.client.ws.ping;
-    await interaction.reply({ ...buildNotice(
+    await interaction.editReply(buildNotice(
       databaseHealthy ? 'success' : 'danger',
       'สถานะระบบ MiruBot',
       `**Discord** • ${websocketPing.toString()} ms ✅\n**Database** • ${databaseHealthy ? 'พร้อมใช้งาน ✅' : 'ผิดปกติ ❌'}`,
       'Health Check',
-    ), flags: MessageFlags.Ephemeral });
+    ));
   }
 
   private async updateBotStatus(interaction: ChatInputCommandInteraction, guild: Guild): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAuthority(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const settings = await this.requireSettings(guild.id);
     if (settings.headRoleId === null || settings.deputyRoleId === null || settings.activeMemberRoleId === null) {
@@ -387,7 +396,6 @@ export class DiscordInteractionHandler {
         'Bot ยังแท็ก Role สถานะได้ไม่ครบ กรุณาอนุญาต Mention @everyone, @here, and All Roles ใน Channel สถานะ Bot',
       );
     }
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     this.botStatusUpdates.add(guild.id);
     try {
       const result = await publishBotStatus({
@@ -451,11 +459,13 @@ export class DiscordInteractionHandler {
     }
 
     if (interaction.customId.startsWith('member:approve:')) {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       await this.requireAuthority(guild, interaction.user.id, 'MEMBER_MANAGE');
       const memberId = requireEntityId(interaction.customId, 'member:approve:');
       const settings = await this.requireSettings(guild.id);
       const member = await this.dependencies.members.approve(guild.id, memberId, interaction.user.id, requireMemberRoleIds(settings));
-      await interaction.update(buildMemberRegistrationRequest(member));
+      await interaction.message.edit(buildMemberRegistrationRequest(member));
+      await interaction.editReply(buildNotice('success', 'อนุมัติสมาชิกแล้ว', 'สถานะคำขอและ Role กำลังซิงก์อัตโนมัติ', 'Member Registration'));
       return;
     }
 
@@ -488,6 +498,7 @@ export class DiscordInteractionHandler {
       if (verified.length === 0) {
         throw new ValidationError('สมาชิกนี้ยังไม่ได้รับยศใน Discord กรุณาเลือกรายชื่อใหม่');
       }
+      await interaction.deferUpdate();
       const updated = await this.dependencies.members.assignRosterTitle(
         guild.id,
         member.id,
@@ -497,7 +508,7 @@ export class DiscordInteractionHandler {
       );
       const display = rosterTitleDisplay(updated.rosterTitle);
       const next = buildRosterTitleSelector();
-      await interaction.update({
+      await interaction.editReply({
         ...buildNotice('success', 'บันทึกตำแหน่งสมาชิกแล้ว', `${display.emoji} **${updated.inGameName}** → **${display.label}**\nระบบกำลังซิงก์ Role อัตโนมัติ`, 'Member Roles'),
         components: next.components,
       });
@@ -518,10 +529,11 @@ export class DiscordInteractionHandler {
 
   private async handleModal(interaction: ModalSubmitInteraction): Promise<void> {
     const guild = requireGuild(interaction.guild);
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     if (interaction.customId === componentIds.registerModal) {
       const inGameName = interaction.fields.getTextInputValue(componentIds.registerNameInput);
       const member = await this.dependencies.members.register(guild.id, interaction.user.id, inGameName);
-      await interaction.reply({ ...buildNotice('success', 'ส่งคำขอลงทะเบียนแล้ว', `ชื่อในเมือง: **${member.inGameName}**\nสถานะ: ⏳ รอหัวแก๊ง/รองแก๊งตรวจสอบ`, 'Member Registration'), flags: MessageFlags.Ephemeral });
+      await interaction.editReply(buildNotice('success', 'ส่งคำขอลงทะเบียนแล้ว', `ชื่อในเมือง: **${member.inGameName}**\nสถานะ: ⏳ รอหัวแก๊ง/รองแก๊งตรวจสอบ`, 'Member Registration'));
       return;
     }
 
@@ -530,7 +542,7 @@ export class DiscordInteractionHandler {
       const memberId = requireEntityId(interaction.customId, 'member:reject_modal:');
       const reason = interaction.fields.getTextInputValue(componentIds.rejectReasonInput);
       const member = await this.dependencies.members.reject(guild.id, memberId, interaction.user.id, reason);
-      await interaction.reply({ ...buildNotice('success', 'ปฏิเสธคำขอแล้ว', `คำขอของ <@${member.discordUserId}> ถูกปิดเรียบร้อย`, 'Member Registration'), flags: MessageFlags.Ephemeral });
+      await interaction.editReply(buildNotice('success', 'ปฏิเสธคำขอแล้ว', `คำขอของ <@${member.discordUserId}> ถูกปิดเรียบร้อย`, 'Member Registration'));
     }
   }
 

@@ -17,13 +17,13 @@ export type ReleaseNotes = z.infer<typeof releaseNotesSchema>;
 // Change the ID only for a new announcement; keep summaries about member-visible changes.
 // Set to null for a deployment that should not announce anything.
 export const currentRelease: ReleaseNotes | null = {
-  id: '2026-09-15.2',
-  title: 'แก้การกดอนุมัติเงินแล้ว Discord แจ้งว่า Bot ไม่ตอบสนอง',
+  id: '2026-09-15.3',
+  title: 'ปรับการตอบสนองของปุ่มและแบบฟอร์มทุกระบบ',
   added: [],
   improved: [
-    'ปุ่มและแบบฟอร์มระบบส่งเงินตอบรับ Discord ทันทีระหว่างประมวลผล ลดข้อความแจ้งเตือนสีแดงเมื่อรายการใช้เวลานาน',
+    'ปุ่มอนุมัติและแบบฟอร์มที่บันทึกข้อมูลในระบบสมาชิก กิจกรรม เช็กชื่อ ใบลา ค่าปรับ เงินกองกลาง ส่งเงิน Stock และตำแหน่ง Fight ตอบรับ Discord ก่อนเริ่มงานที่อาจใช้เวลานาน',
   ],
   fixed: [
-    'หลังอนุมัติหลักฐาน ระบบปิดปุ่มจากสถานะล่าสุดและสร้างงานอัปเดตข้อความสำรอง แม้การตอบกลับ Discord รอบแรกมีปัญหา',
+    'แก้อาการรายการบันทึกสำเร็จแล้วแต่ Discord แจ้งว่า Bot ไม่ตอบสนอง และลดกรณีปุ่มเก่าค้างให้กดซ้ำหลังดำเนินการแล้ว',
   ],
 };

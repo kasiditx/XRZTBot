@@ -235,8 +235,8 @@ export class ActivityInteractionHandler {
     const guild = requireGuild(interaction.guild);
     if (interaction.customId.startsWith('activity:cancel_modal:')) {
       requireCancellationConfirmation(interaction);
-      const isAdmin = await this.requireMemberOrAdmin(guild, interaction.user.id);
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const isAdmin = await this.requireMemberOrAdmin(guild, interaction.user.id);
       const view = await this.dependencies.activities.cancelSubmission(guild.id,
         entityId(interaction.customId, 'activity:cancel_modal:'), interaction.user.id, isAdmin, new Date(),
         interaction.fields.getTextInputValue('cancellation:reason'));
@@ -275,6 +275,7 @@ export class ActivityInteractionHandler {
   }
 
   private async createActivity(interaction: ModalSubmitInteraction, guild: Guild, mode: ActivityMode): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAdmin(guild, interaction.user.id);
     const settings = await this.requireSettings(guild.id);
     requireConfiguredActivityChannels(settings);
@@ -302,10 +303,11 @@ export class ActivityInteractionHandler {
       actorDiscordUserId: interaction.user.id,
       now: new Date(),
     });
-    await interaction.reply({ ...buildNotice('success', 'สร้างกิจกรรมแล้ว', `🏆 **${result.activity.title}**\nระบบจะประกาศ เปิด และปิดอัตโนมัติตามเวลาที่ตั้ง`, 'Activities'), flags: MessageFlags.Ephemeral });
+    await interaction.editReply(buildNotice('success', 'สร้างกิจกรรมแล้ว', `🏆 **${result.activity.title}**\nระบบจะประกาศ เปิด และปิดอัตโนมัติตามเวลาที่ตั้ง`, 'Activities'));
   }
 
   private async addScore(interaction: ModalSubmitInteraction, guild: Guild, activityId: string): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAdmin(guild, interaction.user.id);
     const score = await this.dependencies.activities.addScoreItem(
       guild.id,
@@ -315,10 +317,11 @@ export class ActivityInteractionHandler {
       interaction.user.id,
     );
     await this.refreshAnnouncement(guild.id, activityId);
-    await interaction.reply({ ...buildNotice('success', 'เพิ่มรายการคะแนนแล้ว', `**${score.name}** • ${score.points.toLocaleString('th-TH')} คะแนน`, 'Activities'), flags: MessageFlags.Ephemeral });
+    await interaction.editReply(buildNotice('success', 'เพิ่มรายการคะแนนแล้ว', `**${score.name}** • ${score.points.toLocaleString('th-TH')} คะแนน`, 'Activities'));
   }
 
   private async editScore(interaction: ModalSubmitInteraction, guild: Guild): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAdmin(guild, interaction.user.id);
     const ids = parseTwoEntityIds(interaction.customId, 'activity:score_edit_modal:');
     const status = interaction.fields.getTextInputValue(activityComponentIds.scoreActive).trim().toUpperCase();
@@ -335,7 +338,7 @@ export class ActivityInteractionHandler {
       interaction.user.id,
     );
     await this.refreshAnnouncement(guild.id, ids.first);
-    await interaction.reply({ ...buildNotice('success', 'อัปเดตรายการคะแนนแล้ว', `**${score.name}**\nSubmission เดิมถูกคำนวณใหม่อัตโนมัติ`, 'Activities'), flags: MessageFlags.Ephemeral });
+    await interaction.editReply(buildNotice('success', 'อัปเดตรายการคะแนนแล้ว', `**${score.name}**\nSubmission เดิมถูกคำนวณใหม่อัตโนมัติ`, 'Activities'));
   }
 
   private async submitActivity(
@@ -344,6 +347,7 @@ export class ActivityInteractionHandler {
     activityId: string,
     evidenceMode: EvidenceInputMode,
   ): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireActiveMember(guild, interaction.user.id);
     const cooldownKey = `${guild.id}:${interaction.user.id}`;
     enforceCooldown(this.lastSubmissionAt, cooldownKey);
@@ -364,7 +368,6 @@ export class ActivityInteractionHandler {
       }
       const participantIds = selectedStringValuesByPrefix(interaction, activityComponentIds.submitParticipants);
       const note = interaction.fields.getTextInputValue(activityComponentIds.submitNote);
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const evidenceImages = await resolveEvidenceImages({
         mode: evidenceMode,
         ...evidenceInput,
@@ -422,6 +425,7 @@ export class ActivityInteractionHandler {
   }
 
   private async editParticipants(interaction: ModalSubmitInteraction, guild: Guild, submissionId: string): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const isAdmin = await this.requireMemberOrAdmin(guild, interaction.user.id);
     const operation = interaction.fields.getStringSelectValues(activityComponentIds.participantOperation)[0];
     if (operation !== 'ADD' && operation !== 'REMOVE') {
@@ -438,10 +442,11 @@ export class ActivityInteractionHandler {
       new Date(),
     );
     await this.updateSubmissionLog(view);
-    await interaction.reply({ ...buildNotice('success', 'อัปเดตผู้ร่วมแล้ว', `ผู้ร่วมปัจจุบัน **${String(view.participants.length)} คน**`, 'Activities'), flags: MessageFlags.Ephemeral });
+    await interaction.editReply(buildNotice('success', 'อัปเดตผู้ร่วมแล้ว', `ผู้ร่วมปัจจุบัน **${String(view.participants.length)} คน**`, 'Activities'));
   }
 
   private async changeSubmissionScore(interaction: ModalSubmitInteraction, guild: Guild, submissionId: string): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const isAdmin = await this.requireMemberOrAdmin(guild, interaction.user.id);
     const scoreItemId = interaction.fields.getStringSelectValues(activityComponentIds.changeScore)[0];
     if (scoreItemId === undefined) {
@@ -459,7 +464,7 @@ export class ActivityInteractionHandler {
       throw new ValidationError('รายการนี้ไม่มีคะแนนให้เปลี่ยน');
     }
     await this.updateSubmissionLog(view);
-    await interaction.reply({ ...buildNotice('success', 'เปลี่ยนรายการคะแนนแล้ว', `**${view.scoreItem.name}** • ${view.scoreItem.points.toLocaleString('th-TH')} คะแนน`, 'Activities'), flags: MessageFlags.Ephemeral });
+    await interaction.editReply(buildNotice('success', 'เปลี่ยนรายการคะแนนแล้ว', `**${view.scoreItem.name}** • ${view.scoreItem.points.toLocaleString('th-TH')} คะแนน`, 'Activities'));
   }
 
   private async assertSubmissionActor(guild: Guild, discordUserId: string, submissionId: string): Promise<void> {

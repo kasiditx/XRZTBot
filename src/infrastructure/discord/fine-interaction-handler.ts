@@ -113,10 +113,12 @@ export class FineInteractionHandler {
       return;
     }
     if (interaction.customId.startsWith('fine:approve:')) {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
       const proofId = entityId(interaction.customId, 'fine:approve:');
       const view = await this.dependencies.fines.approvePayment(guild.id, proofId, interaction.user.id, new Date());
-      await interaction.update(buildFineProofLog(view));
+      await interaction.message.edit(buildFineProofLog(view));
+      await interaction.editReply(buildNotice('success', 'อนุมัติแล้ว', 'บันทึกการชำระและปิดปุ่มรายการนี้เรียบร้อย', 'Fines'));
       return;
     }
     if (interaction.customId.startsWith('fine:reject:')) {
@@ -173,6 +175,7 @@ export class FineInteractionHandler {
   }
 
   private async createFine(interaction: ModalSubmitInteraction, guild: Guild): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const settings = await this.requireSettings(guild.id);
     requireFineChannel(settings);
@@ -201,10 +204,7 @@ export class FineInteractionHandler {
       actorDiscordUserId: interaction.user.id,
       now: new Date(),
     });
-    await interaction.reply({
-      ...buildNotice('success', 'สร้างค่าปรับแล้ว', `สมาชิก: <@${view.member.discordUserId}>\nยอดตั้งต้น: **${view.fine.principalAmount.toLocaleString('th-TH')}**`, 'Fines'),
-      flags: MessageFlags.Ephemeral,
-    });
+    await interaction.editReply(buildNotice('success', 'สร้างค่าปรับแล้ว', `สมาชิก: <@${view.member.discordUserId}>\nยอดตั้งต้น: **${view.fine.principalAmount.toLocaleString('th-TH')}**`, 'Fines'));
   }
 
   private async submitPayment(
@@ -213,6 +213,7 @@ export class FineInteractionHandler {
     fineId: string,
     evidenceMode: EvidenceInputMode,
   ): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireActiveMember(guild, interaction.user.id);
     const settings = await this.requireSettings(guild.id);
     const channel = await fetchSendableChannel(
@@ -226,7 +227,6 @@ export class FineInteractionHandler {
       fineComponentIds.paymentFile,
       fineComponentIds.paymentMediaLink,
     );
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const [attachment] = await resolveEvidenceImages({
       mode: evidenceMode,
       ...evidenceInput,
@@ -275,8 +275,8 @@ export class FineInteractionHandler {
 
   private async rejectPayment(interaction: ModalSubmitInteraction, guild: Guild, proofId: string): Promise<void> {
     requireCancellationConfirmation(interaction);
-    await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const view = await this.dependencies.fines.rejectPayment(
       guild.id,
       proofId,
@@ -291,8 +291,8 @@ export class FineInteractionHandler {
 
   private async cancelFine(interaction: ModalSubmitInteraction, guild: Guild, fineId: string): Promise<void> {
     requireCancellationConfirmation(interaction);
-    await this.requireCapability(guild, interaction.user.id, 'FINANCIAL_REVERSE');
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await this.requireCapability(guild, interaction.user.id, 'FINANCIAL_REVERSE');
     const view = await this.dependencies.fines.cancelFine(
       guild.id,
       fineId,

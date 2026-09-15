@@ -332,6 +332,7 @@ export class StockInteractionHandler {
   }
 
   private async applyCsv(interaction: ModalSubmitInteraction, guild: Guild, kind: 'OPENING' | 'MOVEMENT' | 'SYNC'): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, kind === 'MOVEMENT' ? 'ROUTINE_ADMIN' : 'STOCK_REVERSE');
     const settings = await this.requireSettings(guild.id);
     const channel = await fetchSendableChannel(
@@ -343,7 +344,6 @@ export class StockInteractionHandler {
     const attachment = uploads[0];
     if (attachment === undefined || uploads.length !== 1) throw new ValidationError('ต้องแนบ CSV 1 ไฟล์');
     validateStockCsvAttachment({ name: attachment.name, contentType: attachment.contentType, size: attachment.size });
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const content = await downloadCsv(attachment);
     const logMessage = await this.dependencies.dailyLogs.send(channel, {
       guildId: guild.id,
@@ -395,6 +395,7 @@ export class StockInteractionHandler {
   }
 
   private async createWithdrawal(interaction: ModalSubmitInteraction, guild: Guild, sessionToken: string): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const session = await this.requireSelectionSession(guild, interaction.user.id, {
       action: 'WITHDRAWAL',
       token: sessionToken,
@@ -415,7 +416,7 @@ export class StockInteractionHandler {
       now: new Date(),
     });
     this.completeSelectionSession(session);
-    await interaction.reply({ ...buildNotice('success', 'ส่งคำขอเบิกของแล้ว', `จำนวน: **${view.items.length.toString()} รายการ**\nสถานะ: ⏳ รอหัวแก๊ง/รองแก๊งจ่ายของ`, 'Stock Withdrawal'), flags: MessageFlags.Ephemeral });
+    await interaction.editReply(buildNotice('success', 'ส่งคำขอเบิกของแล้ว', `จำนวน: **${view.items.length.toString()} รายการ**\nสถานะ: ⏳ รอหัวแก๊ง/รองแก๊งจ่ายของ`, 'Stock Withdrawal'));
   }
 
   private async createDeposit(
@@ -424,6 +425,7 @@ export class StockInteractionHandler {
     sessionToken: string,
     evidenceMode: EvidenceInputMode,
   ): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const session = await this.requireSelectionSession(guild, interaction.user.id, {
       action: 'DEPOSIT',
       token: sessionToken,
@@ -453,7 +455,6 @@ export class StockInteractionHandler {
       items.map((item, index) => ({ itemName: item.itemName, quantity: quantities[index] ?? 0 })),
     );
 
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const [attachment] = await resolveEvidenceImages({
       mode: evidenceMode,
       ...evidenceInput,
@@ -503,19 +504,21 @@ export class StockInteractionHandler {
   }
 
   private async approveDeposit(interaction: ButtonInteraction, guild: Guild, requestId: string): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const view = await this.dependencies.deposits.approve(guild.id, requestId, interaction.user.id, new Date());
     const attachment = interaction.message.attachments.get(view.request.attachmentId);
     const imageUrl = attachment === undefined
       ? interaction.message.embeds[0]?.image?.url
       : attachmentReference(attachment);
-    await interaction.update(buildDepositLog(view, imageUrl));
+    await interaction.message.edit(buildDepositLog(view, imageUrl));
+    await interaction.editReply(buildNotice('success', 'อนุมัติแล้ว', 'รับของเข้า Stock และปิดปุ่มรายการนี้เรียบร้อย', 'Stock Deposit'));
   }
 
   private async rejectDeposit(interaction: ModalSubmitInteraction, guild: Guild, requestId: string): Promise<void> {
     requireCancellationConfirmation(interaction);
-    await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const view = await this.dependencies.deposits.reject(
       guild.id,
       requestId,
@@ -529,8 +532,8 @@ export class StockInteractionHandler {
   }
 
   private async fulfillWithdrawal(interaction: ModalSubmitInteraction, guild: Guild, requestId: string): Promise<void> {
-    await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const current = await this.dependencies.withdrawals.get(guild.id, requestId);
     const pendingItems = current.items.filter(({ requestedQuantity, fulfilledQuantity }) => fulfilledQuantity < requestedQuantity);
     const quantities = parseSelectedInventoryQuantities(
@@ -551,8 +554,8 @@ export class StockInteractionHandler {
 
   private async rejectWithdrawal(interaction: ModalSubmitInteraction, guild: Guild, requestId: string): Promise<void> {
     requireCancellationConfirmation(interaction);
-    await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const view = await this.dependencies.withdrawals.reject({
       guildId: guild.id,
       withdrawalRequestId: requestId,
@@ -566,8 +569,8 @@ export class StockInteractionHandler {
   }
 
   private async reverseBatch(interaction: ModalSubmitInteraction, guild: Guild, batchId: string): Promise<void> {
-    await this.requireCapability(guild, interaction.user.id, 'STOCK_REVERSE');
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await this.requireCapability(guild, interaction.user.id, 'STOCK_REVERSE');
     const reversal = await this.dependencies.inventory.reverseBatch(
       guild.id,
       interaction.id,
@@ -580,6 +583,7 @@ export class StockInteractionHandler {
   }
 
   private async publishDashboard(interaction: ButtonInteraction, guild: Guild): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const settings = await this.requireSettings(guild.id);
     const channel = await fetchSendableChannel(this.dependencies.client, settings.stockChannelId, 'Channel Stock');
@@ -588,13 +592,13 @@ export class StockInteractionHandler {
       const existing = await channel.messages.fetch(settings.stockPanelMessageId).catch(() => null);
       if (existing !== null) {
         await existing.edit(content);
-        await interaction.reply({ ...buildNotice('success', 'อัปเดตหน้า Stock แล้ว', `ปลายทาง: <#${channel.id}>`, 'Stock'), flags: MessageFlags.Ephemeral });
+        await interaction.editReply(buildNotice('success', 'อัปเดตหน้า Stock แล้ว', `ปลายทาง: <#${channel.id}>`, 'Stock'));
         return;
       }
     }
     const message = await channel.send(content);
     await this.dependencies.guildConfig.saveStockPanelMessage(guild.id, message.id);
-    await interaction.reply({ ...buildNotice('success', 'ส่งหน้า Stock แล้ว', `ปลายทาง: <#${channel.id}>`, 'Stock'), flags: MessageFlags.Ephemeral });
+    await interaction.editReply(buildNotice('success', 'ส่งหน้า Stock แล้ว', `ปลายทาง: <#${channel.id}>`, 'Stock'));
   }
 
   private async updateDepositLog(view: DepositRequestView): Promise<void> {
