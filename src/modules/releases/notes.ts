@@ -17,15 +17,13 @@ export type ReleaseNotes = z.infer<typeof releaseNotesSchema>;
 // Change the ID only for a new announcement; keep summaries about member-visible changes.
 // Set to null for a deployment that should not announce anything.
 export const currentRelease: ReleaseNotes | null = {
-  id: '2026-09-15.1',
-  title: 'เพิ่มเช็กชื่อเล่น Loop และใช้รูปหลักฐานทุกกิจกรรม',
-  added: [
-    'เพิ่มรูปแบบเช็กชื่อสำหรับเล่น Loop ทั้งแบบ Manual และ Auto',
-  ],
+  id: '2026-09-15.2',
+  title: 'แก้การกดอนุมัติเงินแล้ว Discord แจ้งว่า Bot ไม่ตอบสนอง',
+  added: [],
   improved: [
-    'เช็กชื่อทุกประเภทต้องแนบรูปหลักฐาน และแสดงข้อกำหนดของรูปตามกิจกรรม',
+    'ปุ่มและแบบฟอร์มระบบส่งเงินตอบรับ Discord ทันทีระหว่างประมวลผล ลดข้อความแจ้งเตือนสีแดงเมื่อรายการใช้เวลานาน',
   ],
   fixed: [
-    'ยกเว้นสมาชิกตำแหน่งสำรองจากรายชื่อเช็กชื่อ การแจ้งเตือน และผลขาด',
+    'หลังอนุมัติหลักฐาน ระบบปิดปุ่มจากสถานะล่าสุดและสร้างงานอัปเดตข้อความสำรอง แม้การตอบกลับ Discord รอบแรกมีปัญหา',
   ],
 };

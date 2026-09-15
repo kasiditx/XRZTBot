@@ -104,9 +104,11 @@ export class WeeklyDuesInteractionHandler {
       return;
     }
     if (interaction.customId.startsWith('weekly:approve:')) {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
       const view = await this.dependencies.weeklyDues.approvePayment(guild.id, entityId(interaction.customId, 'weekly:approve:'), interaction.user.id, new Date());
-      await interaction.update(buildWeeklyProofLog(view));
+      await interaction.message.edit(buildWeeklyProofLog(view));
+      await interaction.editReply(buildNotice('success', 'อนุมัติแล้ว', 'บันทึกยอดและปิดปุ่มของรายการนี้เรียบร้อย', 'Weekly Dues'));
       return;
     }
     if (interaction.customId.startsWith('weekly:reject:')) {
@@ -183,6 +185,7 @@ export class WeeklyDuesInteractionHandler {
   }
 
   private async createCollection(interaction: ModalSubmitInteraction, guild: Guild): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const settings = await this.requireSettings(guild.id);
     requireWeeklyChannel(settings);
@@ -207,7 +210,7 @@ export class WeeklyDuesInteractionHandler {
       actorDiscordUserId: interaction.user.id,
       now: new Date(),
     });
-    await interaction.reply({ ...buildNotice('success', 'สร้างรอบส่งเงินแล้ว', `🗓️ **${view.collection.title}**\nสมาชิกที่ต้องส่ง: **${view.obligations.length.toString()} คน**`, 'Weekly Dues'), flags: MessageFlags.Ephemeral });
+    await interaction.editReply(buildNotice('success', 'สร้างรอบส่งเงินแล้ว', `🗓️ **${view.collection.title}**\nสมาชิกที่ต้องส่ง: **${view.obligations.length.toString()} คน**`, 'Weekly Dues'));
   }
 
   private async submitPayment(
@@ -216,6 +219,7 @@ export class WeeklyDuesInteractionHandler {
     collectionId: string,
     evidenceMode: EvidenceInputMode,
   ): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireActiveMember(guild, interaction.user.id);
     const settings = await this.requireSettings(guild.id);
     const channel = await fetchSendableChannel(
@@ -229,7 +233,6 @@ export class WeeklyDuesInteractionHandler {
       weeklyComponentIds.paymentFile,
       weeklyComponentIds.paymentMediaLink,
     );
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const [attachment] = await resolveEvidenceImages({
       mode: evidenceMode,
       ...evidenceInput,
@@ -278,8 +281,8 @@ export class WeeklyDuesInteractionHandler {
 
   private async rejectPayment(interaction: ModalSubmitInteraction, guild: Guild, proofId: string): Promise<void> {
     requireCancellationConfirmation(interaction);
-    await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const view = await this.dependencies.weeklyDues.rejectPayment(
       guild.id,
       proofId,
@@ -293,6 +296,7 @@ export class WeeklyDuesInteractionHandler {
   }
 
   private async overrideAmount(interaction: ModalSubmitInteraction, guild: Guild, collectionId: string): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const memberId = interaction.fields.getStringSelectValues(weeklyComponentIds.overrideMember)[0];
     if (memberId === undefined) throw new ValidationError('กรุณาเลือกสมาชิก');
@@ -316,7 +320,7 @@ export class WeeklyDuesInteractionHandler {
       interaction.user.id,
       new Date(),
     );
-    await interaction.reply({ ...buildNotice('success', 'บันทึกยอดเฉพาะสมาชิกแล้ว', `สมาชิก: <@${memberId}>`, 'Weekly Dues'), flags: MessageFlags.Ephemeral });
+    await interaction.editReply(buildNotice('success', 'บันทึกยอดเฉพาะสมาชิกแล้ว', `สมาชิก: <@${memberId}>`, 'Weekly Dues'));
   }
 
   private async cancelCollection(
@@ -325,8 +329,8 @@ export class WeeklyDuesInteractionHandler {
     collectionId: string,
   ): Promise<void> {
     requireCancellationConfirmation(interaction);
-    await this.requireCapability(guild, interaction.user.id, 'FINANCIAL_REVERSE');
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await this.requireCapability(guild, interaction.user.id, 'FINANCIAL_REVERSE');
     const view = await this.dependencies.weeklyDues.cancelCollection(
       guild.id,
       collectionId,

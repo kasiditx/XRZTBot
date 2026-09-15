@@ -387,6 +387,7 @@ export class WeeklyDuesService {
         .set({ status: 'PAID', decidedAt: now, decidedByDiscordUserId: actorDiscordUserId, rejectionReason: null, updatedAt: now })
         .where(eq(weeklyObligations.id, context.obligation.id));
       await queueWeeklyRefresh(tx, guildId, context.collection.id, now);
+      await queueWeeklyProofRefresh(tx, guildId, proofId, now);
       await writeAudit(tx, guildId, actorDiscordUserId, 'WEEKLY_PAYMENT_APPROVED', 'WEEKLY_PAYMENT_PROOF', proofId, context.proof, { status: 'APPROVED' });
     });
     return this.getProof(guildId, proofId);

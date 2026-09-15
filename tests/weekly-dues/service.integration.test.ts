@@ -108,6 +108,11 @@ describeWithDatabase('WeeklyDuesService PostgreSQL integration', () => {
       eq(treasuryEntries.sourceId, proof.proof.id),
     ));
     expect(entry?.amount).toBe(100_000);
+    const proofRefreshJobs = await db.select().from(scheduledJobs).where(and(
+      eq(scheduledJobs.guildId, guildId),
+      eq(scheduledJobs.jobType, 'WEEKLY_PROOF_REFRESH'),
+    ));
+    expect(proofRefreshJobs.some((job) => (job.payload as { proofId?: string }).proofId === proof.proof.id)).toBe(true);
   });
 
   it('skips pending evidence at close, converts unpaid balances, and starts recurring fine after 24 hours', async () => {
