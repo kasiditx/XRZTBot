@@ -81,6 +81,22 @@ describeWithDatabase('WeeklyDuesService PostgreSQL integration', () => {
       .rejects.toBeInstanceOf(ConflictError);
     await expect(service.overrideAmount(guildId, created.collection.id, reserveMember, 100_000, actor, input.now))
       .rejects.toBeInstanceOf(ConflictError);
+    const requiredReserve = await service.setMemberRule(
+      guildId, created.collection.id, reserveMember, 'REQUIRED', 90_000, null, actor, input.now,
+    );
+    expect(requiredReserve.obligations.find(({ member }) => member.discordUserId === reserveMember)?.obligation).toMatchObject({
+      amount: 90_000,
+      status: 'UNPAID',
+      rejectionReason: null,
+    });
+    const exemptedReserve = await service.setMemberRule(
+      guildId, created.collection.id, reserveMember, 'EXEMPT', 0, 'ยกเว้นรอบนี้', actor, input.now,
+    );
+    expect(exemptedReserve.obligations.find(({ member }) => member.discordUserId === reserveMember)?.obligation).toMatchObject({
+      amount: 0,
+      status: 'EXEMPT',
+      rejectionReason: 'ยกเว้นรอบนี้',
+    });
     expect(created.collection.conversionAt.toISOString()).toBe('2026-08-30T17:00:00.000Z');
     await expect(service.preparePayment(
       guildId,
@@ -102,6 +118,9 @@ describeWithDatabase('WeeklyDuesService PostgreSQL integration', () => {
     const approved = await service.approvePayment(guildId, proof.proof.id, actor, new Date('2026-08-26T01:00:00.000Z'));
     expect(approved.proof.status).toBe('APPROVED');
     expect(approved.obligation.status).toBe('PAID');
+    await expect(service.setMemberRule(
+      guildId, collection!.collection.id, firstMember, 'EXEMPT', 0, null, actor, new Date('2026-08-26T01:01:00.000Z'),
+    )).rejects.toBeInstanceOf(ConflictError);
 
     const [entry] = await db.select().from(treasuryEntries).where(and(
       eq(treasuryEntries.sourceType, 'WEEKLY_PAYMENT'),

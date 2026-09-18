@@ -16,7 +16,6 @@ import type {
   WeeklyCollectionView,
   WeeklyPaymentProofView,
 } from '../../modules/weekly-dues/service.js';
-import { WEEKLY_RESERVE_EXEMPTION_REASON } from '../../modules/weekly-dues/service.js';
 import type { MemberSelectionOption } from './role-verified-members.js';
 
 export const weeklyComponentIds = {
@@ -32,6 +31,10 @@ export const weeklyComponentIds = {
   paymentMediaLink: 'weekly:payment_media_link',
   overrideMember: 'weekly:override_member',
   overrideAmount: 'weekly:override_amount',
+  memberRuleMember: 'weekly:member_rule_member',
+  memberRuleAction: 'weekly:member_rule_action',
+  memberRuleAmount: 'weekly:member_rule_amount',
+  memberRuleReason: 'weekly:member_rule_reason',
   rejectionReason: 'weekly:rejection_reason',
   cancellationReason: 'weekly:cancellation_reason',
 } as const;
@@ -50,14 +53,14 @@ export function buildWeeklyAdminPanel(values: readonly WeeklyCollectionView[]) {
   }
   const select = new StringSelectMenuBuilder()
     .setCustomId(weeklyComponentIds.adminSelect)
-    .setPlaceholder('เลือกรอบเพื่อดูหรือกำหนดยอดเฉพาะคน')
+    .setPlaceholder('เลือกรอบเพื่อจัดการผู้ส่ง ยกเว้น หรือยอด')
     .addOptions(values.slice(0, 25).map(({ collection }) => ({
       label: collection.title.slice(0, 100),
       description: `${collection.startsOn}–${collection.endsOn} · ${weeklyCollectionState(collection)}`.slice(0, 100),
       value: collection.id,
     })));
   return {
-    content: formatPanelText('🗓️', 'ระบบส่งเงินรายสัปดาห์', 'จัดการรอบเรียกเก็บและยอดเฉพาะสมาชิก', 'เลือกรอบด้านล่างเพื่อดูสถานะ'),
+    content: formatPanelText('🗓️', 'ระบบส่งเงินรายสัปดาห์', 'จัดการผู้ที่ต้องส่ง ผู้ได้รับยกเว้น และยอดเฉพาะสมาชิก', 'เลือกรอบด้านล่างเพื่อดูสถานะ'),
     components: [create, new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
   };
 }
@@ -97,12 +100,8 @@ export function buildWeeklyAnnouncement(view: WeeklyCollectionView) {
 
 function buildWeeklyDescriptions(view: WeeklyCollectionView): string[] {
   const { collection, obligations } = view;
-  const reserveExemptions = obligations.filter(({ obligation }) => (
-    obligation.status === 'EXEMPT' && obligation.rejectionReason === WEEKLY_RESERVE_EXEMPTION_REASON
-  ));
-  const paymentStatuses = obligations.filter(({ obligation }) => (
-    obligation.status !== 'EXEMPT' || obligation.rejectionReason !== WEEKLY_RESERVE_EXEMPTION_REASON
-  ));
+  const exemptions = obligations.filter(({ obligation }) => obligation.status === 'EXEMPT');
+  const paymentStatuses = obligations.filter(({ obligation }) => obligation.status !== 'EXEMPT');
   const lines = [
     `ช่วงวันที่ **${collection.startsOn} – ${collection.endsOn}**`,
     `ยอดมาตรฐาน **${collection.standardAmount.toLocaleString('th-TH')}**`,
@@ -118,13 +117,13 @@ function buildWeeklyDescriptions(view: WeeklyCollectionView): string[] {
     `**สถานะสมาชิกที่ต้องส่ง (${paymentStatuses.length.toString()} คน)**`,
     ...paymentStatuses.map(({ obligation, member }) =>
       `${statusEmoji(obligation.status)} <@${member.discordUserId}> — ${obligation.amount.toLocaleString('th-TH')} · ${thaiStatus(obligation.status)}`),
-    ...(reserveExemptions.length === 0
+    ...(exemptions.length === 0
       ? []
       : [
           '',
-          `**สมาชิกที่ได้รับการยกเว้น (${reserveExemptions.length.toString()} คน)**`,
-          ...reserveExemptions.map(({ member }) =>
-            `🛡️ <@${member.discordUserId}> — ${WEEKLY_RESERVE_EXEMPTION_REASON}`),
+          `**สมาชิกที่ได้รับการยกเว้น (${exemptions.length.toString()} คน)**`,
+          ...exemptions.map(({ obligation, member }) =>
+            `🛡️ <@${member.discordUserId}> — ${obligation.rejectionReason ?? 'ยกเว้นโดย Admin'}`),
         ]),
   ];
   return splitWeeklyDescription(lines);
@@ -155,11 +154,16 @@ export function buildWeeklyManagement(view: WeeklyCollectionView) {
     .setLabel('กำหนดยอดเฉพาะสมาชิก')
     .setStyle(ButtonStyle.Secondary)
     .setDisabled(view.collection.isClosed);
+  const memberRule = new ButtonBuilder()
+    .setCustomId(`weekly:member_rule:${view.collection.id}`)
+    .setLabel('จัดการผู้ส่ง/ยกเว้น')
+    .setStyle(ButtonStyle.Primary)
+    .setDisabled(view.collection.isClosed);
   const cancel = buildWeeklyCancellationButton(
     view.collection.id,
     view.collection.cancelledAt !== null,
   );
-  return { embeds: content.embeds, components: [new ActionRowBuilder<ButtonBuilder>().addComponents(override, cancel)] };
+  return { embeds: content.embeds, components: [new ActionRowBuilder<ButtonBuilder>().addComponents(memberRule, override, cancel)] };
 }
 
 export function buildWeeklyCancellationModal(collectionId: string): ModalBuilder {
@@ -193,6 +197,50 @@ export function buildWeeklyOverrideModal(collectionId: string, members: readonly
     .addLabelComponents(
       new LabelBuilder().setLabel('สมาชิก').setStringSelectMenuComponent(member),
       labelText('ยอดใหม่', weeklyComponentIds.overrideAmount, '100000', 1, 15),
+    );
+}
+
+export function buildWeeklyMemberRuleModal(
+  collectionId: string,
+  members: readonly MemberSelectionOption[],
+  standardAmount: number,
+): ModalBuilder {
+  const member = new StringSelectMenuBuilder()
+    .setCustomId(weeklyComponentIds.memberRuleMember)
+    .setPlaceholder('เลือกสมาชิกในรอบ')
+    .setMinValues(1)
+    .setMaxValues(1)
+    .addOptions(memberOptions(members));
+  const action = new StringSelectMenuBuilder()
+    .setCustomId(weeklyComponentIds.memberRuleAction)
+    .setPlaceholder('เลือกสถานะที่ต้องการ')
+    .setMinValues(1)
+    .setMaxValues(1)
+    .addOptions(
+      { label: 'ต้องส่งเงิน', value: 'REQUIRED', emoji: '💰', description: 'เรียกเก็บยอดที่ระบุด้านล่าง' },
+      { label: 'ยกเว้นส่งเงิน', value: 'EXEMPT', emoji: '🛡️', description: 'ไม่ต้องส่งเงินในรอบนี้' },
+    );
+  const amount = new TextInputBuilder()
+    .setCustomId(weeklyComponentIds.memberRuleAmount)
+    .setStyle(TextInputStyle.Short)
+    .setValue(String(standardAmount))
+    .setMinLength(1)
+    .setMaxLength(15)
+    .setRequired(false);
+  const reason = new TextInputBuilder()
+    .setCustomId(weeklyComponentIds.memberRuleReason)
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('เว้นว่างเพื่อใช้ “ยกเว้นโดย Admin”')
+    .setMaxLength(200)
+    .setRequired(false);
+  return new ModalBuilder()
+    .setCustomId(`weekly:member_rule_modal:${collectionId}`)
+    .setTitle('จัดการผู้ส่งเงินรายสัปดาห์')
+    .addLabelComponents(
+      new LabelBuilder().setLabel('สมาชิก').setStringSelectMenuComponent(member),
+      new LabelBuilder().setLabel('สถานะ').setStringSelectMenuComponent(action),
+      new LabelBuilder().setLabel('ยอดที่ต้องส่ง (ใช้เมื่อเลือกต้องส่ง)').setTextInputComponent(amount),
+      new LabelBuilder().setLabel('เหตุผลยกเว้น').setTextInputComponent(reason),
     );
 }
 

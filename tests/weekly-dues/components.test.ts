@@ -1,6 +1,8 @@
 import {
   buildWeeklyAnnouncement,
   buildWeeklyCancellationModal,
+  buildWeeklyManagement,
+  buildWeeklyMemberRuleModal,
   buildWeeklyPaymentModal,
 } from '../../src/infrastructure/discord/weekly-dues-components.js';
 import type { WeeklyCollectionView } from '../../src/modules/weekly-dues/service.js';
@@ -151,6 +153,24 @@ describe('weekly dues Discord components', () => {
     expect(modal.components[1]).toMatchObject({
       components: [{ custom_id: 'cancellation:confirm', required: true }],
     });
+  });
+
+  it('lets Admin choose a member and switch between required and exempt', () => {
+    const management = buildWeeklyManagement(weeklyView());
+    const modal = buildWeeklyMemberRuleModal(
+      '11111111-1111-4111-8111-111111111111',
+      [{ discordUserId: '700000000000000002', inGameName: 'สมาชิกทดสอบ' }],
+      100_000,
+    ).toJSON();
+
+    expect(management.components[0]?.toJSON().components[0]).toMatchObject({
+      custom_id: 'weekly:member_rule:11111111-1111-4111-8111-111111111111',
+      label: 'จัดการผู้ส่ง/ยกเว้น',
+    });
+    expect(modal.custom_id).toBe('weekly:member_rule_modal:11111111-1111-4111-8111-111111111111');
+    expect(JSON.stringify(modal.components)).toContain('REQUIRED');
+    expect(JSON.stringify(modal.components)).toContain('EXEMPT');
+    expect(JSON.stringify(modal.components)).toContain('100000');
   });
 });
 

@@ -16,7 +16,7 @@ import { hasCapability, resolveAuthority, type AuthorityLevel, type Capability }
 import type { GuildConfigService } from '../../modules/guild-config/service.js';
 import type { MemberService } from '../../modules/members/service.js';
 import { validateWeeklyPaymentImage } from '../../modules/weekly-dues/rules.js';
-import type { WeeklyDuesService, WeeklyPaymentProofView } from '../../modules/weekly-dues/service.js';
+import type { WeeklyDuesService, WeeklyMemberRule, WeeklyPaymentProofView } from '../../modules/weekly-dues/service.js';
 import type { GuildSettings } from '../db/schema.js';
 import { componentIds } from './components.js';
 import {
@@ -26,6 +26,7 @@ import {
   buildWeeklyAnnouncement,
   buildWeeklyCancellationModal,
   buildWeeklyManagement,
+  buildWeeklyMemberRuleModal,
   buildWeeklyOverrideModal,
   buildWeeklyPaymentModal,
   buildWeeklyProofLog,
@@ -135,6 +136,26 @@ export class WeeklyDuesInteractionHandler {
       );
       if (members.length === 0) throw new ValidationError('ไม่มีสมาชิกที่รับยศแล้วในรอบนี้');
       await interaction.showModal(buildWeeklyOverrideModal(collectionId, members));
+      return;
+    }
+    if (interaction.customId.startsWith('weekly:member_rule:')) {
+      await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
+      const collectionId = entityId(interaction.customId, 'weekly:member_rule:');
+      const [settings, view] = await Promise.all([
+        this.requireSettings(guild.id),
+        this.dependencies.weeklyDues.get(guild.id, collectionId),
+      ]);
+      const members = await filterRoleVerifiedActiveMembers(
+        guild,
+        settings,
+        view.obligations.map(({ member }) => member),
+      );
+      if (members.length === 0) throw new ValidationError('ไม่มีสมาชิกที่รับยศแล้วในรอบนี้');
+      await interaction.showModal(buildWeeklyMemberRuleModal(
+        collectionId,
+        members,
+        view.collection.standardAmount,
+      ));
     }
   }
 
@@ -181,6 +202,10 @@ export class WeeklyDuesInteractionHandler {
     }
     if (interaction.customId.startsWith('weekly:override_modal:')) {
       await this.overrideAmount(interaction, guild, entityId(interaction.customId, 'weekly:override_modal:'));
+      return;
+    }
+    if (interaction.customId.startsWith('weekly:member_rule_modal:')) {
+      await this.setMemberRule(interaction, guild, entityId(interaction.customId, 'weekly:member_rule_modal:'));
     }
   }
 
@@ -323,6 +348,48 @@ export class WeeklyDuesInteractionHandler {
     await interaction.editReply(buildNotice('success', 'บันทึกยอดเฉพาะสมาชิกแล้ว', `สมาชิก: <@${memberId}>`, 'Weekly Dues'));
   }
 
+  private async setMemberRule(interaction: ModalSubmitInteraction, guild: Guild, collectionId: string): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
+    const memberId = interaction.fields.getStringSelectValues(weeklyComponentIds.memberRuleMember)[0];
+    if (memberId === undefined) throw new ValidationError('กรุณาเลือกสมาชิก');
+    const rule = requireWeeklyMemberRule(
+      interaction.fields.getStringSelectValues(weeklyComponentIds.memberRuleAction)[0],
+    );
+    const [settings, current] = await Promise.all([
+      this.requireSettings(guild.id),
+      this.dependencies.weeklyDues.get(guild.id, collectionId),
+    ]);
+    const members = await filterRoleVerifiedActiveMembers(
+      guild,
+      settings,
+      current.obligations.map(({ member }) => member),
+    );
+    if (!members.some((member) => member.discordUserId === memberId)) {
+      throw new ValidationError('สมาชิกนี้ยังไม่ได้รับยศหรือไม่มีสถานะใช้งาน');
+    }
+    const amount = rule === 'REQUIRED'
+      ? parseMoney(interaction.fields.getTextInputValue(weeklyComponentIds.memberRuleAmount), false)
+      : 0;
+    const view = await this.dependencies.weeklyDues.setMemberRule(
+      guild.id,
+      collectionId,
+      memberId,
+      rule,
+      amount,
+      interaction.fields.getTextInputValue(weeklyComponentIds.memberRuleReason),
+      interaction.user.id,
+      new Date(),
+    );
+    await this.refreshCollection(view);
+    await interaction.editReply(buildNotice(
+      'success',
+      rule === 'EXEMPT' ? 'ยกเว้นสมาชิกแล้ว' : 'กำหนดให้สมาชิกต้องส่งเงินแล้ว',
+      `สมาชิก: <@${memberId}>${rule === 'REQUIRED' ? `\nยอดที่ต้องส่ง: **${amount.toLocaleString('th-TH')}**` : ''}`,
+      'Weekly Dues',
+    ));
+  }
+
   private async cancelCollection(
     interaction: ModalSubmitInteraction,
     guild: Guild,
@@ -420,6 +487,11 @@ function parseMoney(value: string, allowZero: boolean): number {
     throw new ValidationError(`จำนวนเงินต้องเป็นจำนวนเต็มตั้งแต่ ${String(minimum)} ขึ้นไป`);
   }
   return amount;
+}
+
+function requireWeeklyMemberRule(value: string | undefined): WeeklyMemberRule {
+  if (value !== 'REQUIRED' && value !== 'EXEMPT') throw new ValidationError('สถานะสมาชิกไม่ถูกต้อง');
+  return value;
 }
 
 function requireWeeklyChannel(settings: GuildSettings): void {

@@ -17,6 +17,8 @@ import { appendTreasuryEntryWithTransaction, reverseSourcedTreasuryEntry } from 
 import { buildWeeklyOverdueFine } from './rules.js';
 
 export const WEEKLY_RESERVE_EXEMPTION_REASON = 'ยกเว้นเนื่องจากเป็นตำแหน่งสำรอง';
+export const WEEKLY_ADMIN_EXEMPTION_REASON = 'ยกเว้นโดย Admin';
+export type WeeklyMemberRule = 'REQUIRED' | 'EXEMPT';
 
 export type WeeklyCollection = typeof weeklyCollections.$inferSelect;
 export type WeeklyObligation = typeof weeklyObligations.$inferSelect;
@@ -258,6 +260,80 @@ export class WeeklyDuesService {
         .returning();
       await queueWeeklyRefresh(tx, guildId, collectionId, now);
       await writeAudit(tx, guildId, actorDiscordUserId, 'WEEKLY_AMOUNT_OVERRIDDEN', 'WEEKLY_OBLIGATION', row.obligation.id, row.obligation, updated);
+    });
+    return this.get(guildId, collectionId);
+  }
+
+  public async setMemberRule(
+    guildId: string,
+    collectionId: string,
+    memberDiscordUserId: string,
+    rule: WeeklyMemberRule,
+    amount: number,
+    exemptionReason: string | null,
+    actorDiscordUserId: string,
+    now: Date,
+  ): Promise<WeeklyCollectionView> {
+    if (rule === 'REQUIRED') validateAmount(amount, 'ยอดที่ต้องส่ง', false);
+    let reason: string | null = null;
+    if (rule === 'EXEMPT') {
+      reason = exemptionReason === null || exemptionReason.trim().length === 0
+        ? WEEKLY_ADMIN_EXEMPTION_REASON
+        : requireText(exemptionReason, 'เหตุผลยกเว้น', 2, 200);
+    }
+    await this.db.transaction(async (tx) => {
+      const collection = await lockCollection(tx, guildId, collectionId);
+      if (collection.isClosed || collection.cancelledAt !== null || now >= collection.conversionAt) {
+        throw new ConflictError('แก้ไขสมาชิกได้เฉพาะรอบส่งเงินที่ยังเปิดอยู่');
+      }
+      const [row] = await tx
+        .select({ obligation: weeklyObligations })
+        .from(weeklyObligations)
+        .innerJoin(members, eq(weeklyObligations.memberId, members.id))
+        .where(and(
+          eq(weeklyObligations.collectionId, collectionId),
+          eq(members.discordUserId, memberDiscordUserId),
+        ))
+        .limit(1)
+        .for('update');
+      if (row === undefined) throw new NotFoundError('สมาชิกนี้ไม่ได้อยู่ในรอบส่งเงิน');
+      if (row.obligation.status !== 'UNPAID' && row.obligation.status !== 'EXEMPT') {
+        throw new ConflictError('แก้ไขได้เฉพาะสมาชิกที่ยังไม่ส่งหลักฐานหรือได้รับการยกเว้น');
+      }
+      const [updated] = await tx
+        .update(weeklyObligations)
+        .set(rule === 'EXEMPT'
+          ? {
+              amount: 0,
+              status: 'EXEMPT',
+              rejectionReason: reason,
+              decidedAt: now,
+              decidedByDiscordUserId: actorDiscordUserId,
+              updatedAt: now,
+            }
+          : {
+              amount,
+              status: 'UNPAID',
+              rejectionReason: null,
+              decidedAt: null,
+              decidedByDiscordUserId: null,
+              updatedAt: now,
+            })
+        .where(eq(weeklyObligations.id, row.obligation.id))
+        .returning();
+      if (updated === undefined) throw new Error('Weekly member rule update did not return a row');
+      await queueWeeklyRefresh(tx, guildId, collectionId, now);
+      await writeAudit(
+        tx,
+        guildId,
+        actorDiscordUserId,
+        rule === 'EXEMPT' ? 'WEEKLY_MEMBER_EXEMPTED' : 'WEEKLY_MEMBER_REQUIRED',
+        'WEEKLY_OBLIGATION',
+        row.obligation.id,
+        row.obligation,
+        updated,
+        reason ?? undefined,
+      );
     });
     return this.get(guildId, collectionId);
   }
