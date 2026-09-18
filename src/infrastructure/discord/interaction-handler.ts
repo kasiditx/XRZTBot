@@ -27,6 +27,7 @@ import type { AttendanceInteractionHandler } from './attendance-interaction-hand
 import type { FineInteractionHandler } from './fine-interaction-handler.js';
 import type { TreasuryInteractionHandler } from './treasury-interaction-handler.js';
 import type { WeeklyDuesInteractionHandler } from './weekly-dues-interaction-handler.js';
+import type { WeeklyItemsInteractionHandler } from './weekly-items-interaction-handler.js';
 import type { StockInteractionHandler } from './stock-interaction-handler.js';
 import type { FightPositionInteractionHandler } from './fight-position-interaction-handler.js';
 import { listMissingBotChannelPermissions } from './channel-permissions.js';
@@ -71,6 +72,8 @@ const channelFields: readonly ConfigurableChannel[] = [
   'treasuryWithdrawalLogChannelId',
   'weeklyDuesChannelId',
   'weeklyDuesLogChannelId',
+  'weeklyItemsChannelId',
+  'weeklyItemsLogChannelId',
   'stockChannelId',
   'stockLogChannelId',
   'withdrawalLogChannelId',
@@ -92,6 +95,7 @@ export interface InteractionHandlerDependencies {
   readonly fineInteractions: FineInteractionHandler;
   readonly treasuryInteractions: TreasuryInteractionHandler;
   readonly weeklyDuesInteractions: WeeklyDuesInteractionHandler;
+  readonly weeklyItemsInteractions: WeeklyItemsInteractionHandler;
   readonly stockInteractions: StockInteractionHandler;
   readonly fightPositionInteractions: FightPositionInteractionHandler;
   readonly logger: pino.Logger;
@@ -118,6 +122,9 @@ export class DiscordInteractionHandler {
         return;
       }
       if (await this.dependencies.weeklyDuesInteractions.handle(interaction)) {
+        return;
+      }
+      if (await this.dependencies.weeklyItemsInteractions.handle(interaction)) {
         return;
       }
       if (await this.dependencies.stockInteractions.handle(interaction)) {
@@ -165,6 +172,9 @@ export class DiscordInteractionHandler {
         return;
       case 'set-channel':
         await this.setChannel(interaction, guild);
+        return;
+      case 'setup-weekly-items':
+        await this.setupWeeklyItemsChannels(interaction, guild);
         return;
       case 'panel':
         await this.publishControlPanel(interaction, guild);
@@ -226,28 +236,7 @@ export class DiscordInteractionHandler {
       throw new ValidationError('ประเภท Channel ไม่ถูกต้อง');
     }
     const selectedChannel = interaction.options.getChannel('channel', true);
-    let channel;
-    try {
-      channel = await guild.channels.fetch(selectedChannel.id);
-    } catch (error: unknown) {
-      if (error instanceof DiscordAPIError && error.code === DISCORD_MISSING_ACCESS_ERROR) {
-        throw new ValidationError(
-          'Bot มองไม่เห็น Channel นี้ กรุณาอนุญาต View Channel ให้ Role ของ Bot ก่อน',
-        );
-      }
-      throw error;
-    }
-    if (channel === null || !channel.isTextBased() || !channel.isSendable()) {
-      throw new ValidationError('Channel นี้ไม่ใช่ Text Channel ที่ Bot ส่งข้อความได้');
-    }
-    const botMember = guild.members.me ?? await guild.members.fetchMe();
-    const botPermissions = channel.permissionsFor(botMember);
-    const missingPermissions = listMissingBotChannelPermissions(botPermissions);
-    if (missingPermissions.length > 0) {
-      throw new ValidationError(
-        `Bot ยังใช้ Channel นี้ไม่ได้ กรุณาอนุญาต: ${missingPermissions.join(', ')}`,
-      );
-    }
+    const channel = await fetchWritableGuildChannel(guild, selectedChannel.id);
     await this.dependencies.guildConfig.configureChannel(guild.id, field, channel.id);
     if (field === 'registrationRequestChannelId') {
       const queued = await this.dependencies.members.queuePendingRegistrationRequestSync(guild.id);
@@ -260,6 +249,27 @@ export class DiscordInteractionHandler {
       return;
     }
     await interaction.editReply(buildNotice('success', 'บันทึก Channel สำเร็จ', `ตั้งค่า **${field}** เป็น <#${channel.id}> แล้ว`, 'Channel Setup'));
+  }
+
+  private async setupWeeklyItemsChannels(interaction: ChatInputCommandInteraction, guild: Guild): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await this.requireAuthority(guild, interaction.user.id, 'CHANNEL_CONFIGURE');
+    const weeklySelection = interaction.options.getChannel('weekly', true);
+    const recordsSelection = interaction.options.getChannel('records', true);
+    if (weeklySelection.id === recordsSelection.id) {
+      throw new ValidationError('Channel ส่งของและ Channel รายการต้องเป็นคนละ Channel');
+    }
+    const [weeklyChannel, recordsChannel] = await Promise.all([
+      fetchWritableGuildChannel(guild, weeklySelection.id),
+      fetchWritableGuildChannel(guild, recordsSelection.id),
+    ]);
+    await this.dependencies.guildConfig.configureWeeklyItemsChannels(guild.id, weeklyChannel.id, recordsChannel.id);
+    await interaction.editReply(buildNotice(
+      'success',
+      'ตั้งค่า Channel ส่งของประจำสัปดาห์แล้ว',
+      `ส่งของประจำสัปดาห์: <#${weeklyChannel.id}>\nรายการส่งของประจำสัปดาห์: <#${recordsChannel.id}>`,
+      'Channel Setup',
+    ));
   }
 
   private async publishControlPanel(interaction: ChatInputCommandInteraction, guild: Guild): Promise<void> {
@@ -755,6 +765,27 @@ async function fetchGuildMember(guild: Guild, discordUserId: string): Promise<Gu
   } catch {
     throw new ValidationError('ดึงข้อมูลสมาชิก Discord ไม่สำเร็จ กรุณาลองใหม่ (หากเป็นกับทุกคน แจ้ง Dev ตรวจสอบ Server Members Intent)');
   }
+}
+
+async function fetchWritableGuildChannel(guild: Guild, channelId: string): Promise<GuildTextBasedChannel> {
+  let channel;
+  try {
+    channel = await guild.channels.fetch(channelId);
+  } catch (error: unknown) {
+    if (error instanceof DiscordAPIError && error.code === DISCORD_MISSING_ACCESS_ERROR) {
+      throw new ValidationError('Bot มองไม่เห็น Channel นี้ กรุณาอนุญาต View Channel ให้ Role ของ Bot ก่อน');
+    }
+    throw error;
+  }
+  if (channel === null || !channel.isTextBased() || !channel.isSendable()) {
+    throw new ValidationError('Channel นี้ไม่ใช่ Text Channel ที่ Bot ส่งข้อความได้');
+  }
+  const botMember = guild.members.me ?? await guild.members.fetchMe();
+  const missingPermissions = listMissingBotChannelPermissions(channel.permissionsFor(botMember));
+  if (missingPermissions.length > 0) {
+    throw new ValidationError(`Bot ยังใช้ Channel นี้ไม่ได้ กรุณาอนุญาต: ${missingPermissions.join(', ')}`);
+  }
+  return channel;
 }
 
 async function fetchSendableChannel(client: Client, channelId: string | null, label: string): Promise<GuildTextBasedChannel> {

@@ -8,6 +8,7 @@ import { AttendanceInteractionHandler } from '../infrastructure/discord/attendan
 import { FineInteractionHandler } from '../infrastructure/discord/fine-interaction-handler.js';
 import { TreasuryInteractionHandler } from '../infrastructure/discord/treasury-interaction-handler.js';
 import { WeeklyDuesInteractionHandler } from '../infrastructure/discord/weekly-dues-interaction-handler.js';
+import { WeeklyItemsInteractionHandler } from '../infrastructure/discord/weekly-items-interaction-handler.js';
 import { StockInteractionHandler } from '../infrastructure/discord/stock-interaction-handler.js';
 import { FightPositionInteractionHandler } from '../infrastructure/discord/fight-position-interaction-handler.js';
 import { registerGuildCommands } from '../infrastructure/discord/commands.js';
@@ -23,6 +24,7 @@ import { FineService } from '../modules/fines/service.js';
 import { TreasuryService } from '../modules/treasury/service.js';
 import { TreasuryWithdrawalService } from '../modules/treasury-withdrawals/service.js';
 import { WeeklyDuesService } from '../modules/weekly-dues/service.js';
+import { WeeklyItemsService } from '../modules/weekly-items/service.js';
 import { InventoryService } from '../modules/inventory/service.js';
 import { DepositService } from '../modules/deposits/service.js';
 import { WithdrawalService } from '../modules/withdrawals/service.js';
@@ -53,6 +55,7 @@ export async function bootstrap(): Promise<RunningApplication> {
   const treasuryService = new TreasuryService(db);
   const treasuryWithdrawalService = new TreasuryWithdrawalService(db);
   const weeklyDuesService = new WeeklyDuesService(db);
+  const weeklyItemsService = new WeeklyItemsService(db);
   const inventoryService = new InventoryService(db);
   const withdrawalService = new WithdrawalService(db);
   const depositService = new DepositService(db);
@@ -108,6 +111,15 @@ export async function bootstrap(): Promise<RunningApplication> {
     dailyLogs,
     logger,
   });
+  const weeklyItemsInteractions = new WeeklyItemsInteractionHandler({
+    client,
+    weeklyItems: weeklyItemsService,
+    inventory: inventoryService,
+    guildConfig,
+    members: memberService,
+    dailyLogs,
+    logger,
+  });
   const stockInteractions = new StockInteractionHandler({
     client,
     inventory: inventoryService,
@@ -133,6 +145,7 @@ export async function bootstrap(): Promise<RunningApplication> {
     fineInteractions,
     treasuryInteractions,
     weeklyDuesInteractions,
+    weeklyItemsInteractions,
     stockInteractions,
     fightPositionInteractions,
     logger,
@@ -164,6 +177,7 @@ export async function bootstrap(): Promise<RunningApplication> {
         treasuryService,
         treasuryWithdrawalService,
         weeklyDuesService,
+        weeklyItemsService,
         inventoryService,
         withdrawalService,
         auditService,

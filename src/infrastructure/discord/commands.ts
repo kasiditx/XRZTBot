@@ -72,6 +72,21 @@ const adminCommand = new SlashCommandBuilder()
           .setRequired(true),
       ),
   )
+  .addSubcommand((command) =>
+    command
+      .setName('setup-weekly-items')
+      .setDescription('กำหนด 2 Channel สำหรับระบบส่งของประจำสัปดาห์')
+      .addChannelOption((option) => option
+        .setName('weekly')
+        .setDescription('Channel ส่งของประจำสัปดาห์')
+        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+        .setRequired(true))
+      .addChannelOption((option) => option
+        .setName('records')
+        .setDescription('Channel รายการส่งของประจำสัปดาห์')
+        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+        .setRequired(true)),
+  )
   .addSubcommand((command) => command.setName('panel').setDescription('สร้างหรืออัปเดต Control Panel ใน Channel นี้'))
   .addSubcommand((command) => command.setName('publish-registration').setDescription('ส่งแผงลงทะเบียนไปยัง Channel สมาชิก'))
   .addSubcommand((command) => command.setName('publish-member-roster').setDescription('สร้างหรืออัปเดตรายชื่อสมาชิกปัจจุบัน'))

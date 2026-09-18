@@ -21,6 +21,8 @@ export type ConfigurableChannel =
   | 'treasuryWithdrawalLogChannelId'
   | 'weeklyDuesChannelId'
   | 'weeklyDuesLogChannelId'
+  | 'weeklyItemsChannelId'
+  | 'weeklyItemsLogChannelId'
   | 'stockChannelId'
   | 'stockLogChannelId'
   | 'withdrawalLogChannelId'
@@ -118,6 +120,14 @@ export class GuildConfigService {
       .set({ [field]: channelId, updatedAt: new Date() })
       .where(eq(guildSettings.guildId, guildId));
     if (field === 'releaseChannelId') await queueCurrentRelease(this.db, guildId);
+  }
+
+  public async configureWeeklyItemsChannels(guildId: string, channelId: string, logChannelId: string): Promise<void> {
+    await this.db.update(guildSettings).set({
+      weeklyItemsChannelId: channelId,
+      weeklyItemsLogChannelId: logChannelId,
+      updatedAt: new Date(),
+    }).where(eq(guildSettings.guildId, guildId));
   }
 
   public async saveControlPanelMessage(guildId: string, messageId: string): Promise<void> {

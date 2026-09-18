@@ -64,7 +64,7 @@ export class InventoryService {
   public async getDashboard(guildId: string, requestedPage = 1, pageSize?: number): Promise<StockDashboard> {
     if (!Number.isSafeInteger(requestedPage) || requestedPage < 1) throw new ValidationError('หน้า stock ไม่ถูกต้อง');
     if (pageSize === undefined) {
-      const items = await this.listActiveDashboardItems(guildId);
+      const items = await this.listActiveItems(guildId);
       const pages = paginateStockDashboardItems(items);
       const totalPages = pages.length;
       const page = Math.min(requestedPage, totalPages);
@@ -95,7 +95,7 @@ export class InventoryService {
     return { items, page, pageSize, totalItems, totalPages };
   }
 
-  private async listActiveDashboardItems(guildId: string): Promise<InventoryItem[]> {
+  public async listActiveItems(guildId: string): Promise<InventoryItem[]> {
     return this.db
       .select()
       .from(inventoryItems)

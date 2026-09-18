@@ -8,6 +8,7 @@ import type { FineService } from '../../modules/fines/service.js';
 import type { TreasuryService } from '../../modules/treasury/service.js';
 import type { TreasuryWithdrawalService } from '../../modules/treasury-withdrawals/service.js';
 import type { WeeklyDuesService } from '../../modules/weekly-dues/service.js';
+import type { WeeklyItemsService } from '../../modules/weekly-items/service.js';
 import type { InventoryService } from '../../modules/inventory/service.js';
 import type { WithdrawalService } from '../../modules/withdrawals/service.js';
 import type { DepositService } from '../../modules/deposits/service.js';
@@ -31,6 +32,7 @@ import {
   buildTreasuryWithdrawalRequestLog,
 } from './treasury-components.js';
 import { buildWeeklyAnnouncement, buildWeeklyProofLog } from './weekly-dues-components.js';
+import { buildWeeklyItemsAnnouncement, buildWeeklyItemsProofLog } from './weekly-items-components.js';
 import { buildBatchLog, buildDepositLog, buildStockDashboard, buildWithdrawalLog } from './stock-components.js';
 import { buildControlPanel, buildMemberRegistrationRequest, buildMemberRoster } from './components.js';
 import { buildAuditLogMessage } from './audit-components.js';
@@ -79,6 +81,7 @@ export function createDiscordJobHandlers(
   treasury: TreasuryService,
   treasuryWithdrawals: TreasuryWithdrawalService,
   weeklyDues: WeeklyDuesService,
+  weeklyItems: WeeklyItemsService,
   inventory: InventoryService,
   withdrawals: WithdrawalService,
   audits: AuditService,
@@ -118,6 +121,16 @@ export function createDiscordJobHandlers(
         const channel = await fetchSendableChannel(client, view.proof.logChannelId, 'Channel Log เงินรายสัปดาห์');
         const message = await channel.messages.fetch(view.proof.logMessageId);
         await message.edit(buildWeeklyProofLog(view));
+      },
+    ],
+    [
+      'WEEKLY_ITEMS_PROOF_REFRESH',
+      async (job) => {
+        const { proofId } = z.object({ proofId: z.string().uuid() }).parse(job.payload);
+        const view = await weeklyItems.getProof(job.guildId, proofId);
+        const channel = await fetchSendableChannel(client, view.proof.logChannelId, 'Channel รายการส่งของประจำสัปดาห์');
+        const message = await channel.messages.fetch(view.proof.logMessageId).catch(() => null);
+        if (message !== null) await message.edit(buildWeeklyItemsProofLog(view));
       },
     ],
     [
@@ -642,6 +655,40 @@ export function createDiscordJobHandlers(
       },
     ],
     [
+      'WEEKLY_ITEMS_PUBLISH',
+      async (job) => {
+        const { collectionId } = weeklyJobSchema.parse(job.payload);
+        const view = await weeklyItems.get(job.guildId, collectionId);
+        if (view.collection.publicChannelId !== null && view.collection.publicMessageId !== null) {
+          await refreshWeeklyItems(client, weeklyItems, job.guildId, collectionId);
+          return;
+        }
+        const settings = await guildConfig.get(job.guildId);
+        const channel = await fetchSendableChannel(client, settings?.weeklyItemsChannelId ?? null, 'Channel ส่งของประจำสัปดาห์');
+        const message = await channel.send({
+          ...buildWeeklyItemsAnnouncement(view),
+          nonce: nonceFor(collectionId, 'weekly-items-publish'),
+          enforceNonce: true,
+        });
+        await weeklyItems.markPublished(job.guildId, collectionId, channel.id, message.id);
+      },
+    ],
+    [
+      'WEEKLY_ITEMS_PENALTY',
+      async (job) => {
+        const { collectionId } = weeklyJobSchema.parse(job.payload);
+        await weeklyItems.processPenalty(job.guildId, collectionId, new Date());
+        await refreshWeeklyItems(client, weeklyItems, job.guildId, collectionId);
+      },
+    ],
+    [
+      'WEEKLY_ITEMS_REFRESH',
+      async (job) => {
+        const { collectionId } = weeklyJobSchema.parse(job.payload);
+        await refreshWeeklyItems(client, weeklyItems, job.guildId, collectionId);
+      },
+    ],
+    [
       'STOCK_BATCH_PUBLISH',
       async (job) => {
         const { batchId } = stockBatchJobSchema.parse(job.payload);
@@ -880,6 +927,24 @@ async function refreshWeekly(
   }
   const replacement = await channel.send(buildWeeklyAnnouncement(view));
   await weeklyDues.markPublished(guildId, collectionId, channel.id, replacement.id);
+}
+
+async function refreshWeeklyItems(
+  client: Client,
+  weeklyItems: WeeklyItemsService,
+  guildId: string,
+  collectionId: string,
+): Promise<void> {
+  const view = await weeklyItems.get(guildId, collectionId);
+  if (view.collection.publicChannelId === null || view.collection.publicMessageId === null) return;
+  const channel = await fetchSendableChannel(client, view.collection.publicChannelId, 'Channel ส่งของประจำสัปดาห์');
+  const message = await channel.messages.fetch(view.collection.publicMessageId).catch(() => null);
+  if (message !== null) {
+    await message.edit(buildWeeklyItemsAnnouncement(view));
+    return;
+  }
+  const replacement = await channel.send(buildWeeklyItemsAnnouncement(view));
+  await weeklyItems.markPublished(guildId, collectionId, channel.id, replacement.id);
 }
 
 async function refreshAnnouncement(

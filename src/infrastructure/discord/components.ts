@@ -21,6 +21,7 @@ export const componentIds = {
   controlFinance: 'control:finance',
   controlTreasury: 'control:treasury',
   controlWeekly: 'control:weekly',
+  controlWeeklyItems: 'control:weekly_items',
   controlStock: 'control:stock',
   controlFightPositions: 'control:fight_positions',
   pendingMemberSelect: 'member:pending_select',
@@ -280,6 +281,7 @@ export function buildControlPanel() {
           '📦 **Stock/เบิกของ** — จัดการ Stock, CSV, คำขอเบิก ส่งของ และหลักฐานนำของเข้าแบบแนบรูปหรือ Media Link',
           '🏦 **เงินกองกลาง** — บันทึกรายรับ–รายจ่าย ยอดตั้งต้น ย้อนรายการ คำขอเบิก และหลักฐานแบบแนบรูปหรือ Media Link',
           '🗓️ **เงินรายสัปดาห์** — สร้างรอบ กำหนดยอดรายคน รับหลักฐานแบบแนบรูปหรือ Media Link และตรวจการชำระ',
+          '📥 **ของรายสัปดาห์** — กำหนดของที่ต้องส่ง ค่าปรับ รับหลักฐาน และเพิ่มของเข้า Stock หลังอนุมัติ',
         ].join('\n'),
       },
     )
@@ -296,6 +298,7 @@ export function buildControlPanel() {
   const secondRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(componentIds.controlTreasury).setLabel('เงินกองกลาง').setEmoji('🏦').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(componentIds.controlWeekly).setLabel('เงินรายสัปดาห์').setEmoji('🗓️').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(componentIds.controlWeeklyItems).setLabel('ของรายสัปดาห์').setEmoji('📥').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(componentIds.controlFightPositions).setLabel('ตำแหน่ง Fight').setEmoji('⚔️').setStyle(ButtonStyle.Secondary),
   );
 

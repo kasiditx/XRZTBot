@@ -36,6 +36,7 @@ export const leaveStatusEnum = pgEnum('leave_status', ['ACTIVE', 'CANCELLED']);
 export const fineStatusEnum = pgEnum('fine_status', ['UNPAID', 'PENDING_VERIFICATION', 'PAID', 'CANCELLED']);
 export const treasuryEntryTypeEnum = pgEnum('treasury_entry_type', ['OPENING_BALANCE', 'INCOME', 'EXPENSE', 'REVERSAL']);
 export const weeklyObligationStatusEnum = pgEnum('weekly_obligation_status', ['UNPAID', 'EXEMPT', 'PENDING_VERIFICATION', 'PAID', 'CONVERTED_TO_FINE']);
+export const weeklyItemObligationStatusEnum = pgEnum('weekly_item_obligation_status', ['UNPAID', 'EXEMPT', 'PENDING_VERIFICATION', 'FULFILLED']);
 export const inventoryActionEnum = pgEnum('inventory_action', ['OPENING', 'ADD', 'REMOVE', 'WITHDRAWAL', 'DEPOSIT', 'REVERSAL']);
 export const withdrawalStatusEnum = pgEnum('withdrawal_status', ['PENDING', 'PARTIALLY_FULFILLED', 'FULFILLED', 'CANCELLED']);
 export const botOperationalStatusEnum = pgEnum('bot_operational_status', ['OPERATIONAL', 'UPDATING']);
@@ -69,6 +70,8 @@ export const guildSettings = pgTable('guild_settings', {
   treasuryWithdrawalPanelMessageId: text('treasury_withdrawal_panel_message_id'),
   weeklyDuesChannelId: text('weekly_dues_channel_id'),
   weeklyDuesLogChannelId: text('weekly_dues_log_channel_id'),
+  weeklyItemsChannelId: text('weekly_items_channel_id'),
+  weeklyItemsLogChannelId: text('weekly_items_log_channel_id'),
   stockChannelId: text('stock_channel_id'),
   stockPanelMessageId: text('stock_panel_message_id'),
   stockLogChannelId: text('stock_log_channel_id'),
@@ -857,6 +860,118 @@ export const depositRequestItems = pgTable(
     quantity: bigint('quantity', { mode: 'number' }).notNull(),
   },
   (table) => [primaryKey({ columns: [table.requestId, table.itemId] }), check('deposit_request_items_quantity_positive', sql`${table.quantity} > 0`)],
+);
+
+export const weeklyItemCollections = pgTable(
+  'weekly_item_collections',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    guildId: text('guild_id').notNull().references(() => guildSettings.guildId, { onDelete: 'cascade' }),
+    requestId: text('request_id').notNull(),
+    title: text('title').notNull(),
+    startsOn: text('starts_on').notNull(),
+    endsOn: text('ends_on').notNull(),
+    firstPenaltyAt: timestamp('first_penalty_at', { withTimezone: true, mode: 'date' }).notNull(),
+    penaltyRunCount: integer('penalty_run_count').notNull().default(0),
+    isClosed: boolean('is_closed').notNull().default(false),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true, mode: 'date' }),
+    cancelledByDiscordUserId: text('cancelled_by_discord_user_id'),
+    cancellationReason: text('cancellation_reason'),
+    createdByDiscordUserId: text('created_by_discord_user_id').notNull(),
+    publicChannelId: text('public_channel_id'),
+    publicMessageId: text('public_message_id'),
+    ...auditColumns,
+  },
+  (table) => [
+    uniqueIndex('weekly_item_collections_guild_request_uq').on(table.guildId, table.requestId),
+    index('weekly_item_collections_penalty_idx').on(table.guildId, table.isClosed, table.firstPenaltyAt),
+    check('weekly_item_collections_valid_dates', sql`${table.endsOn} >= ${table.startsOn}`),
+    check('weekly_item_collections_title_not_blank', sql`length(trim(${table.title})) > 0`),
+    check('weekly_item_collections_penalty_count_non_negative', sql`${table.penaltyRunCount} >= 0`),
+  ],
+);
+
+export const weeklyItemRequirements = pgTable(
+  'weekly_item_requirements',
+  {
+    collectionId: uuid('collection_id').notNull().references(() => weeklyItemCollections.id, { onDelete: 'cascade' }),
+    itemId: uuid('item_id').notNull().references(() => inventoryItems.id, { onDelete: 'restrict' }),
+    requiredQuantity: bigint('required_quantity', { mode: 'number' }).notNull(),
+    initialPenaltyQuantity: bigint('initial_penalty_quantity', { mode: 'number' }).notNull().default(0),
+    recurringPenaltyQuantity: bigint('recurring_penalty_quantity', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    primaryKey({ columns: [table.collectionId, table.itemId] }),
+    check('weekly_item_requirements_quantities_valid', sql`${table.requiredQuantity} > 0 and ${table.initialPenaltyQuantity} >= 0 and ${table.recurringPenaltyQuantity} >= 0`),
+  ],
+);
+
+export const weeklyItemObligations = pgTable(
+  'weekly_item_obligations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    guildId: text('guild_id').notNull().references(() => guildSettings.guildId, { onDelete: 'cascade' }),
+    collectionId: uuid('collection_id').notNull().references(() => weeklyItemCollections.id, { onDelete: 'cascade' }),
+    memberId: uuid('member_id').notNull().references(() => members.id, { onDelete: 'restrict' }),
+    status: weeklyItemObligationStatusEnum('status').notNull().default('UNPAID'),
+    decidedAt: timestamp('decided_at', { withTimezone: true, mode: 'date' }),
+    decidedByDiscordUserId: text('decided_by_discord_user_id'),
+    exemptionReason: text('exemption_reason'),
+    fulfilledAt: timestamp('fulfilled_at', { withTimezone: true, mode: 'date' }),
+    ...auditColumns,
+  },
+  (table) => [uniqueIndex('weekly_item_obligations_collection_member_uq').on(table.collectionId, table.memberId)],
+);
+
+export const weeklyItemObligationItems = pgTable(
+  'weekly_item_obligation_items',
+  {
+    obligationId: uuid('obligation_id').notNull().references(() => weeklyItemObligations.id, { onDelete: 'cascade' }),
+    itemId: uuid('item_id').notNull().references(() => inventoryItems.id, { onDelete: 'restrict' }),
+    quantity: bigint('quantity', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.obligationId, table.itemId] }),
+    check('weekly_item_obligation_items_quantity_positive', sql`${table.quantity} > 0`),
+  ],
+);
+
+export const weeklyItemProofs = pgTable(
+  'weekly_item_proofs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    guildId: text('guild_id').notNull().references(() => guildSettings.guildId, { onDelete: 'cascade' }),
+    requestId: text('request_id').notNull(),
+    obligationId: uuid('obligation_id').notNull().references(() => weeklyItemObligations.id, { onDelete: 'cascade' }),
+    submittedByDiscordUserId: text('submitted_by_discord_user_id').notNull(),
+    attachmentId: text('attachment_id').notNull(),
+    logChannelId: text('log_channel_id').notNull(),
+    logMessageId: text('log_message_id').notNull(),
+    inventoryBatchId: uuid('inventory_batch_id').references(() => inventoryBatches.id, { onDelete: 'restrict' }),
+    status: requestStatusEnum('status').notNull().default('PENDING'),
+    submittedAt: timestamp('submitted_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow(),
+    decidedAt: timestamp('decided_at', { withTimezone: true, mode: 'date' }),
+    decidedByDiscordUserId: text('decided_by_discord_user_id'),
+    rejectionReason: text('rejection_reason'),
+    ...auditColumns,
+  },
+  (table) => [
+    uniqueIndex('weekly_item_proofs_guild_request_uq').on(table.guildId, table.requestId),
+    uniqueIndex('weekly_item_proofs_one_pending_uq').on(table.obligationId).where(sql`${table.status} = 'PENDING'`),
+  ],
+);
+
+export const weeklyItemProofItems = pgTable(
+  'weekly_item_proof_items',
+  {
+    proofId: uuid('proof_id').notNull().references(() => weeklyItemProofs.id, { onDelete: 'cascade' }),
+    itemId: uuid('item_id').notNull().references(() => inventoryItems.id, { onDelete: 'restrict' }),
+    quantity: bigint('quantity', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.proofId, table.itemId] }),
+    check('weekly_item_proof_items_quantity_positive', sql`${table.quantity} > 0`),
+  ],
 );
 
 export type GuildSettings = typeof guildSettings.$inferSelect;
