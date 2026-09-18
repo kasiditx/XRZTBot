@@ -1,7 +1,7 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { ConflictError } from '../../src/domain/errors.js';
 import { createDatabase, type Database } from '../../src/infrastructure/db/client.js';
-import { guildSettings, inventoryItems, members, weeklyItemCollections } from '../../src/infrastructure/db/schema.js';
+import { guildSettings, inventoryItems, members, scheduledJobs, weeklyItemCollections } from '../../src/infrastructure/db/schema.js';
 import { WeeklyItemsService } from '../../src/modules/weekly-items/service.js';
 
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -86,5 +86,22 @@ describeWithDatabase('WeeklyItemsService PostgreSQL integration', () => {
     expect((await db.select().from(inventoryItems).where(eq(inventoryItems.id, stockItemId)))[0]?.quantity).toBe(140);
     await expect(service.setMemberRule(guildId, collection.collection.id, memberId, 'EXEMPT', null, actor, new Date()))
       .rejects.toBeInstanceOf(ConflictError);
+  });
+
+  it('queues a refresh for each published open collection after startup', async () => {
+    const collection = (await service.list(guildId))[0];
+    if (collection === undefined) throw new Error('Missing collection');
+    await service.markPublished(guildId, collection.collection.id, 'weekly-items-channel', 'weekly-items-message');
+    const refreshFilter = and(
+      eq(scheduledJobs.guildId, guildId),
+      eq(scheduledJobs.jobType, 'WEEKLY_ITEMS_REFRESH'),
+    );
+    const before = await db.select({ id: scheduledJobs.id }).from(scheduledJobs).where(refreshFilter);
+
+    const queued = await service.ensurePublishedAnnouncementRefreshes(guildId, new Date('2026-09-25T22:00:00.000Z'));
+    const after = await db.select({ id: scheduledJobs.id }).from(scheduledJobs).where(refreshFilter);
+
+    expect(queued).toBe(1);
+    expect(after).toHaveLength(before.length + 1);
   });
 });

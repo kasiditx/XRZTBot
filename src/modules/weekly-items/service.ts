@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { DateTime } from 'luxon';
-import { and, asc, desc, eq, inArray, like } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, like } from 'drizzle-orm';
 import { AuthorizationError, ConflictError, NotFoundError, ValidationError } from '../../domain/errors.js';
 import type { Database } from '../../infrastructure/db/client.js';
 import {
@@ -177,6 +177,20 @@ export class WeeklyItemsService {
     const collections = await this.db.select({ id: weeklyItemCollections.id }).from(weeklyItemCollections)
       .where(eq(weeklyItemCollections.guildId, guildId)).orderBy(desc(weeklyItemCollections.createdAt)).limit(limit);
     return Promise.all(collections.map(({ id }) => this.get(guildId, id)));
+  }
+
+  public async ensurePublishedAnnouncementRefreshes(guildId: string, now: Date): Promise<number> {
+    const collections = await this.db.select({ id: weeklyItemCollections.id }).from(weeklyItemCollections).where(and(
+      eq(weeklyItemCollections.guildId, guildId),
+      eq(weeklyItemCollections.isClosed, false),
+      isNotNull(weeklyItemCollections.publicChannelId),
+      isNotNull(weeklyItemCollections.publicMessageId),
+    ));
+    if (collections.length === 0) return 0;
+    await this.db.transaction(async (tx) => {
+      for (const collection of collections) await queueRefresh(tx, guildId, collection.id, now);
+    });
+    return collections.length;
   }
 
   public async get(guildId: string, collectionId: string): Promise<WeeklyItemCollectionView> {

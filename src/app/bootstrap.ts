@@ -164,6 +164,11 @@ export async function bootstrap(): Promise<RunningApplication> {
 
   const queuedFineReminders = await fineService.ensureDailyReminders(env.DISCORD_GUILD_ID, new Date());
   logger.info({ queuedFineReminders }, 'ensured daily unpaid fine reminders');
+  const queuedWeeklyItemRefreshes = await weeklyItemsService.ensurePublishedAnnouncementRefreshes(
+    env.DISCORD_GUILD_ID,
+    new Date(),
+  );
+  logger.info({ queuedWeeklyItemRefreshes }, 'queued open weekly item announcement refreshes');
 
   const scheduler = new DurableScheduler(
     db,
