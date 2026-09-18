@@ -69,7 +69,14 @@ export function buildCreateWeeklyItemsModal(items: readonly InventoryItem[], sta
     .setCustomId('weekly-items:create_modal')
     .setTitle('สร้างรอบส่งของประจำสัปดาห์')
     .addLabelComponents(
-      textLabel('ชื่อรอบ', weeklyItemsComponentIds.createTitle, 'เช่น ส่งของประจำสัปดาห์ 18/09–24/09', 2, 100),
+      textLabel(
+        'ชื่อรอบ',
+        weeklyItemsComponentIds.createTitle,
+        'เช่น ส่งของประจำสัปดาห์ 18/09–24/09',
+        2,
+        100,
+        'ส่งของประจำสัปดาห์',
+      ),
       textLabel('วันที่เริ่ม (DD/MM/YYYY)', weeklyItemsComponentIds.createStartsOn, '18/09/2569', 8, 10, startsOn),
       textLabel('วันที่สิ้นสุด (DD/MM/YYYY)', weeklyItemsComponentIds.createEndsOn, '24/09/2569', 8, 10, endsOn),
       new LabelBuilder()

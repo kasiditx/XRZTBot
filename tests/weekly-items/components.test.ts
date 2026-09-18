@@ -18,6 +18,7 @@ describe('weekly items Discord components', () => {
     const create = buildCreateWeeklyItemsModal([item], '18/09/2569', '24/09/2569').toJSON();
     const proof = buildWeeklyItemsProofModal('22222222-2222-4222-8222-222222222222', 'FILE').toJSON();
     expect(create.custom_id).toBe('weekly-items:create_modal');
+    expect(JSON.stringify(create.components)).toContain('"value":"ส่งของประจำสัปดาห์"');
     expect(JSON.stringify(create.components)).toContain('MR-001 เหล็ก = 1 | 0 | 0');
     expect(proof.custom_id).toBe('weekly-items:submit_modal:FILE:22222222-2222-4222-8222-222222222222');
     expect(JSON.stringify(proof.components)).not.toContain('quantity');
