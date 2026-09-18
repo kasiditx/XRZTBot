@@ -335,15 +335,20 @@ export function createDiscordJobHandlers(
         const { roundId } = attendanceJobSchema.parse(job.payload);
         const view = await attendance.getRoundView(job.guildId, roundId);
         if (view.round.announcementMessageId !== null) {
-          await refreshAttendance(client, attendance, job.guildId, roundId);
+          await refreshAttendance(client, attendance, guildConfig, dailyLogs, job.guildId, roundId);
           return;
         }
         const settings = await guildConfig.get(job.guildId);
-        const channel = await fetchSendableChannel(client, settings?.attendanceChannelId ?? null, 'Channel เช็กชื่อ');
-        const message = await channel.send({
-          ...buildAttendanceAnnouncement(view),
-          nonce: nonceFor(roundId, 'att-publish'),
-          enforceNonce: true,
+        if (settings === null) throw new ValidationError('ไม่พบการตั้งค่า Server');
+        const channel = await fetchSendableChannel(client, settings.attendanceChannelId, 'Channel เช็กชื่อ');
+        const message = await dailyLogs.send(channel, {
+          guildId: job.guildId,
+          timezone: settings.timezone,
+          message: {
+            ...buildAttendanceAnnouncement(view),
+            nonce: nonceFor(roundId, 'att-publish'),
+            enforceNonce: true,
+          },
         });
         await attendance.markRoundPublished(job.guildId, roundId, channel.id, message.id);
       },
@@ -353,7 +358,7 @@ export function createDiscordJobHandlers(
       async (job) => {
         const { roundId } = attendanceJobSchema.parse(job.payload);
         await attendance.openRound(job.guildId, roundId, new Date());
-        await refreshAttendance(client, attendance, job.guildId, roundId);
+        await refreshAttendance(client, attendance, guildConfig, dailyLogs, job.guildId, roundId);
       },
     ],
     [
@@ -387,14 +392,14 @@ export function createDiscordJobHandlers(
       async (job) => {
         const { roundId } = attendanceJobSchema.parse(job.payload);
         await attendance.closeRound(job.guildId, roundId, new Date());
-        await refreshAttendance(client, attendance, job.guildId, roundId);
+        await refreshAttendance(client, attendance, guildConfig, dailyLogs, job.guildId, roundId);
       },
     ],
     [
       'ATTENDANCE_REFRESH',
       async (job) => {
         const { roundId } = attendanceJobSchema.parse(job.payload);
-        await refreshAttendance(client, attendance, job.guildId, roundId);
+        await refreshAttendance(client, attendance, guildConfig, dailyLogs, job.guildId, roundId);
       },
     ],
     [
@@ -895,6 +900,8 @@ async function refreshAnnouncement(
 async function refreshAttendance(
   client: Client,
   attendance: AttendanceService,
+  guildConfig: GuildConfigService,
+  dailyLogs: DailyLogPublisher,
   guildId: string,
   roundId: string,
 ): Promise<void> {
@@ -906,7 +913,13 @@ async function refreshAttendance(
     await message.edit(buildAttendanceAnnouncement(view));
     return;
   }
-  const replacement = await channel.send(buildAttendanceAnnouncement(view));
+  const settings = await guildConfig.get(guildId);
+  if (settings === null) throw new ValidationError('ไม่พบการตั้งค่า Server');
+  const replacement = await dailyLogs.send(channel, {
+    guildId,
+    timezone: settings.timezone,
+    message: buildAttendanceAnnouncement(view),
+  });
   await attendance.markRoundPublished(guildId, roundId, channel.id, replacement.id);
 }
 

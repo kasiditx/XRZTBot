@@ -17,10 +17,11 @@ export type ReleaseNotes = z.infer<typeof releaseNotesSchema>;
 // Change the ID only for a new announcement; keep summaries about member-visible changes.
 // Set to null for a deployment that should not announce anything.
 export const currentRelease: ReleaseNotes | null = {
-  id: '2026-09-18.1',
-  title: 'แจ้งเตือนค่าปรับค้างชำระรายวัน',
+  id: '2026-09-18.2',
+  title: 'แจ้งเตือนค่าปรับและคั่นวันเช็กชื่อ',
   added: [
     'เพิ่มการแจ้งเตือนรายวันพร้อมแท็กสมาชิกสำหรับค่าปรับที่ยังไม่ได้ชำระ',
+    'เพิ่มเส้นคั่นวันที่ในช่องเช็กชื่อประจำวันก่อนรายการแรกของแต่ละวัน',
   ],
   improved: [
     'รายการค่าปรับค้างชำระจะกลับมาอยู่ด้านล่างของช่องพร้อมคั่นวันที่และปุ่มส่งหลักฐาน โดยลบข้อความเก่าเมื่อย้ายสำเร็จ',
