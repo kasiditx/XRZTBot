@@ -24,7 +24,7 @@ import {
   buildSubmissionLog,
 } from './activity-components.js';
 import { buildAttendanceAnnouncement, buildAttendanceProofLog, buildLeaveLog } from './attendance-components.js';
-import { buildFineAnnouncement, buildFineProofLog } from './fine-components.js';
+import { buildFineAnnouncement, buildFineDailyReminder, buildFineProofLog } from './fine-components.js';
 import {
   buildTreasuryDashboard,
   buildTreasuryEntryLog,
@@ -62,6 +62,7 @@ const attendanceProofJobSchema = z.object({ proofId: z.string().uuid() });
 const attendanceScheduleJobSchema = z.object({ scheduleId: z.string().uuid() });
 const leaveJobSchema = z.object({ leaveId: z.string().uuid() });
 const fineJobSchema = z.object({ fineId: z.string().uuid() });
+const fineReminderJobSchema = fineJobSchema.extend({ localDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) });
 const treasuryJobSchema = z.object({ entryId: z.string().uuid() });
 const treasuryWithdrawalJobSchema = z.object({ requestId: z.string().uuid() });
 const weeklyJobSchema = z.object({ collectionId: z.string().uuid() });
@@ -443,13 +444,54 @@ export function createDiscordJobHandlers(
           return;
         }
         const settings = await guildConfig.get(job.guildId);
-        const channel = await fetchSendableChannel(client, settings?.fineChannelId ?? null, 'Channel ค่าปรับ');
-        const message = await channel.send({
-          ...buildFineAnnouncement(view),
-          nonce: nonceFor(fineId, 'fine-publish'),
-          enforceNonce: true,
+        if (settings === null) throw new ValidationError('ไม่พบการตั้งค่า Server');
+        const channel = await fetchSendableChannel(client, settings.fineChannelId, 'Channel ค่าปรับ');
+        const message = await dailyLogs.send(channel, {
+          guildId: job.guildId,
+          timezone: settings.timezone,
+          message: {
+            ...buildFineAnnouncement(view),
+            nonce: nonceFor(fineId, 'fine-publish'),
+            enforceNonce: true,
+          },
         });
         await fines.markPublished(job.guildId, fineId, channel.id, message.id);
+      },
+    ],
+    [
+      'FINE_REMINDER',
+      async (job) => {
+        const { fineId, localDate } = fineReminderJobSchema.parse(job.payload);
+        const view = await fines.processDailyReminder(job.guildId, fineId, new Date());
+        if (view === null) return;
+        const settings = await guildConfig.get(job.guildId);
+        if (settings === null) throw new ValidationError('ไม่พบการตั้งค่า Server');
+        const channel = await fetchSendableChannel(client, settings.fineChannelId, 'Channel ค่าปรับ');
+        const previous = view.fine.publicChannelId === null || view.fine.publicMessageId === null
+          ? null
+          : await fetchFineMessage(client, view.fine.publicChannelId, view.fine.publicMessageId);
+        const message = await dailyLogs.send(channel, {
+          guildId: job.guildId,
+          timezone: settings.timezone,
+          message: {
+            ...buildFineDailyReminder(view),
+            nonce: fineReminderNonce(fineId, localDate),
+            enforceNonce: true,
+          },
+        });
+        try {
+          await fines.markPublished(job.guildId, fineId, channel.id, message.id);
+        } catch (error: unknown) {
+          await message.delete().catch((cleanupError: unknown) => {
+            logger.error({ err: cleanupError, messageId: message.id }, 'failed to remove untracked fine reminder');
+          });
+          throw error;
+        }
+        if (previous !== null && previous.id !== message.id) {
+          await previous.delete().catch((error: unknown) => {
+            logger.warn({ err: error, messageId: previous.id }, 'failed to remove previous fine reminder');
+          });
+        }
       },
     ],
     [
@@ -879,11 +921,17 @@ async function refreshFine(
   const channel = await fetchSendableChannel(client, view.fine.publicChannelId, 'Channel ค่าปรับ');
   const message = await channel.messages.fetch(view.fine.publicMessageId).catch(() => null);
   if (message !== null) {
-    await message.edit(buildFineAnnouncement(view));
+    await message.edit({ content: null, ...buildFineAnnouncement(view) });
     return;
   }
   const replacement = await channel.send(buildFineAnnouncement(view));
   await fines.markPublished(guildId, fineId, channel.id, replacement.id);
+}
+
+async function fetchFineMessage(client: Client, channelId: string, messageId: string) {
+  const channel = await client.channels.fetch(channelId).catch(() => null);
+  if (channel === null || !channel.isTextBased() || !channel.isSendable()) return null;
+  return channel.messages.fetch(messageId).catch(() => null);
 }
 
 async function refreshTreasuryDashboard(
@@ -965,6 +1013,10 @@ async function moveControlPanelToChannelBottom(
 
 function nonceFor(activityId: string, suffix: string): string {
   return `${activityId.replaceAll('-', '').slice(0, 18)}-${suffix}`.slice(0, 25);
+}
+
+function fineReminderNonce(fineId: string, localDate: string): string {
+  return `${fineId.replaceAll('-', '').slice(0, 12)}-fr-${localDate.replaceAll('-', '')}`;
 }
 
 function discordTimestamp(value: Date, style: 'R'): string {

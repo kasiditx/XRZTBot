@@ -149,6 +149,9 @@ export async function bootstrap(): Promise<RunningApplication> {
   await ready;
   logger.info({ botUserId: client.user?.id, guildId: env.DISCORD_GUILD_ID }, 'Discord client ready');
 
+  const queuedFineReminders = await fineService.ensureDailyReminders(env.DISCORD_GUILD_ID, new Date());
+  logger.info({ queuedFineReminders }, 'ensured daily unpaid fine reminders');
+
   const scheduler = new DurableScheduler(
     db,
     new Map([

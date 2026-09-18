@@ -62,7 +62,29 @@ describeWithDatabase('FineService PostgreSQL integration', () => {
     const jobs = await db.select().from(scheduledJobs).where(eq(scheduledJobs.guildId, guildId));
     expect(jobs.filter((job) => (job.payload as { fineId?: string }).fineId === created.fine.id).map((job) => job.jobType).sort()).toEqual([
       'FINE_PUBLISH',
+      'FINE_REMINDER',
       'FINE_SURCHARGE',
+    ]);
+    const reminder = jobs.find((job) => job.jobType === 'FINE_REMINDER');
+    expect(reminder).toMatchObject({
+      payload: { fineId: created.fine.id, localDate: '2026-08-28' },
+      runAt: new Date('2026-08-28T02:00:00.000Z'),
+    });
+    await db.delete(scheduledJobs).where(eq(scheduledJobs.id, reminder!.id));
+  });
+
+  it('backfills old unpaid fines and queues one reminder per local day', async () => {
+    const firstReminderAt = new Date('2026-08-28T02:00:00.000Z');
+    await expect(service.ensureDailyReminders(guildId, firstReminderAt)).resolves.toBe(1);
+    await expect(service.ensureDailyReminders(guildId, firstReminderAt)).resolves.toBe(0);
+    await expect(service.processDailyReminder(guildId, created.fine.id, firstReminderAt)).resolves.not.toBeNull();
+
+    const reminders = (await db.select().from(scheduledJobs).where(eq(scheduledJobs.guildId, guildId)))
+      .filter((job) => job.jobType === 'FINE_REMINDER' && (job.payload as { fineId?: string }).fineId === created.fine.id);
+    expect(reminders).toHaveLength(2);
+    expect(reminders.map((job) => job.payload).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))).toEqual([
+      { fineId: created.fine.id, localDate: '2026-08-28' },
+      { fineId: created.fine.id, localDate: '2026-08-29' },
     ]);
   });
 
@@ -131,6 +153,7 @@ describeWithDatabase('FineService PostgreSQL integration', () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]?.amount).toBe(250_000);
     expect(entries[0]?.entryType).toBe('INCOME');
+    await expect(service.processDailyReminder(guildId, created.fine.id, new Date('2026-08-31T02:00:00.000Z'))).resolves.toBeNull();
     const proofs = await db.select().from(finePaymentProofs).where(eq(finePaymentProofs.fineId, created.fine.id));
     expect(proofs.map((item) => item.status).sort()).toEqual(['APPROVED', 'REJECTED']);
   });

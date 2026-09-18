@@ -1,4 +1,4 @@
-import { buildFineAnnouncement, buildFinePaymentModal } from '../../src/infrastructure/discord/fine-components.js';
+import { buildFineAnnouncement, buildFineDailyReminder, buildFinePaymentModal } from '../../src/infrastructure/discord/fine-components.js';
 import type { Fine, FineView } from '../../src/modules/fines/service.js';
 
 describe('fine Discord components', () => {
@@ -55,6 +55,26 @@ describe('fine Discord components', () => {
     expect(button).toEqual(expect.objectContaining({ label: 'ชำระแล้ว', disabled: true }));
     expect(payload.components[0]?.toJSON().components[1]).toMatchObject({
       custom_id: 'fine:cancel:00000000-0000-4000-8000-000000000001', disabled: false,
+    });
+  });
+
+  it('mentions the fined member in the daily unpaid reminder', () => {
+    const reminder = buildFineDailyReminder({
+      fine: fine(),
+      member: {
+        id: '00000000-0000-4000-8000-000000000002',
+        discordUserId: '700000000000000002',
+        inGameName: 'สมาชิกทดสอบ',
+      },
+      pendingProof: null,
+    });
+
+    expect(reminder.content).toContain('<@700000000000000002>');
+    expect(reminder.content).toContain('แจ้งเตือนค่าปรับค้างชำระประจำวัน');
+    expect(reminder.allowedMentions).toEqual({ users: ['700000000000000002'] });
+    expect(reminder.components[0]?.toJSON().components[0]).toMatchObject({
+      custom_id: 'fine:pay:00000000-0000-4000-8000-000000000001',
+      disabled: false,
     });
   });
 });

@@ -17,15 +17,13 @@ export type ReleaseNotes = z.infer<typeof releaseNotesSchema>;
 // Change the ID only for a new announcement; keep summaries about member-visible changes.
 // Set to null for a deployment that should not announce anything.
 export const currentRelease: ReleaseNotes | null = {
-  id: '2026-09-15.4',
-  title: 'แยกเช็กชื่อปกติและเช็กชื่อ Loop',
+  id: '2026-09-18.1',
+  title: 'แจ้งเตือนค่าปรับค้างชำระรายวัน',
   added: [
-    'เพิ่มเช็กชื่อปกติกลับมาเป็นตัวเลือกแยกจาก Airdrop และ Loop ทั้งแบบ Manual และ Auto',
+    'เพิ่มการแจ้งเตือนรายวันพร้อมแท็กสมาชิกสำหรับค่าปรับที่ยังไม่ได้ชำระ',
   ],
   improved: [
-    'เช็กชื่อ Loop เปลี่ยนข้อกำหนดรูปเป็นหลักฐานว่าอยู่ในประเทศและเข้าวอเรียบร้อย',
+    'รายการค่าปรับค้างชำระจะกลับมาอยู่ด้านล่างของช่องพร้อมคั่นวันที่และปุ่มส่งหลักฐาน โดยลบข้อความเก่าเมื่อย้ายสำเร็จ',
   ],
-  fixed: [
-    'แก้ตัวเลือกเช็กชื่อปกติหายไปหลังเพิ่มเช็กชื่อ Loop',
-  ],
+  fixed: [],
 };

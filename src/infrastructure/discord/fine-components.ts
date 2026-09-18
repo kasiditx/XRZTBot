@@ -108,6 +108,14 @@ export function buildFineAnnouncement(view: FineView) {
   return { embeds: [embed], components: [new ActionRowBuilder<ButtonBuilder>().addComponents(button, cancel)] };
 }
 
+export function buildFineDailyReminder(view: FineView) {
+  return {
+    content: `<@${view.member.discordUserId}> ⏰ **แจ้งเตือนค่าปรับค้างชำระประจำวัน**`,
+    allowedMentions: { users: [view.member.discordUserId] },
+    ...buildFineAnnouncement(view),
+  };
+}
+
 export function buildFineManagement(view: FineView) {
   const announcement = buildFineAnnouncement(view);
   const cancelRow = new ActionRowBuilder<ButtonBuilder>().addComponents(

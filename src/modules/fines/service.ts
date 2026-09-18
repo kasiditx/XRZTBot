@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { and, desc, eq } from 'drizzle-orm';
+import { DateTime } from 'luxon';
+import { and, desc, eq, lt } from 'drizzle-orm';
 import { AuthorizationError, ConflictError, NotFoundError, ValidationError } from '../../domain/errors.js';
 import type { Database } from '../../infrastructure/db/client.js';
 import {
   finePaymentProofs,
   fines,
+  guildSettings,
   members,
   scheduledJobs,
 } from '../../infrastructure/db/schema.js';
@@ -130,6 +132,31 @@ export class FineService {
       member: toMemberIdentity(row.member),
       pendingProof: pendingByFine.get(row.fine.id) ?? null,
     }));
+  }
+
+  /** Backfills today's reminder for fines created before the current local day. */
+  public async ensureDailyReminders(guildId: string, now: Date): Promise<number> {
+    return this.db.transaction(async (tx) => {
+      const timezone = await findGuildTimezone(tx, guildId);
+      const localToday = DateTime.fromJSDate(now, { zone: timezone }).startOf('day');
+      if (!localToday.isValid) throw new Error(`Invalid guild timezone: ${timezone}`);
+      const localDate = localToday.toISODate();
+      if (localDate === null) throw new Error(`Unable to resolve local date for timezone: ${timezone}`);
+
+      const unpaid = await tx
+        .select({ id: fines.id })
+        .from(fines)
+        .where(and(
+          eq(fines.guildId, guildId),
+          eq(fines.status, 'UNPAID'),
+          lt(fines.createdAt, localToday.toJSDate()),
+        ));
+      let queued = 0;
+      for (const fine of unpaid) {
+        if (await queueFineReminderForDate(tx, guildId, fine.id, localDate, now)) queued += 1;
+      }
+      return queued;
+    });
   }
 
   public async get(guildId: string, fineId: string): Promise<FineView> {
@@ -293,7 +320,8 @@ export class FineService {
         .where(eq(fines.id, context.fine.id))
         .returning();
       if (unpaid === undefined) throw new Error('Fine rejection did not return a row');
-      await accrueFineWithTransaction(tx, unpaid, now, actorDiscordUserId);
+      const accrued = await accrueFineWithTransaction(tx, unpaid, now, actorDiscordUserId);
+      await queueNextFineReminder(tx, accrued, now);
       await queueFineProofRefresh(tx, guildId, proofId, now);
       await queueFineRefresh(tx, guildId, context.fine.id, now);
       await writeFineAudit(tx, guildId, actorDiscordUserId, 'FINE_PAYMENT_REJECTED', 'FINE_PAYMENT_PROOF', proofId, context.proof, { status: 'REJECTED', rejectionReason }, rejectionReason);
@@ -311,6 +339,19 @@ export class FineService {
       }
     });
     return this.get(guildId, fineId);
+  }
+
+  /** Confirms that the debt is still unpaid and queues the next local-day reminder. */
+  public async processDailyReminder(guildId: string, fineId: string, now: Date): Promise<FineView | null> {
+    const shouldPublish = await this.db.transaction(async (tx) => {
+      const fine = await lockFine(tx, guildId, fineId);
+      if (fine.status !== 'UNPAID') return false;
+      await queueNextFineReminder(tx, fine, now);
+      return true;
+    });
+    if (!shouldPublish) return null;
+    const view = await this.get(guildId, fineId);
+    return view.fine.status === 'UNPAID' ? view : null;
   }
 
   public async cancelFine(
@@ -390,6 +431,7 @@ export async function createSourcedFineWithTransaction(
 
   await queueFinePublish(tx, input.guildId, created.id, input.now);
   await queueFineSurcharge(tx, created);
+  await queueNextFineReminder(tx, created, input.now);
   await writeFineAudit(tx, input.guildId, input.actorDiscordUserId, 'FINE_CREATED', 'FINE', created.id, null, created);
   return created;
 }
@@ -533,6 +575,16 @@ async function findFineMember(tx: Transaction, memberId: string) {
   return member;
 }
 
+async function findGuildTimezone(tx: Transaction, guildId: string): Promise<string> {
+  const [settings] = await tx
+    .select({ timezone: guildSettings.timezone })
+    .from(guildSettings)
+    .where(eq(guildSettings.guildId, guildId))
+    .limit(1);
+  if (settings === undefined) throw new NotFoundError('ไม่พบการตั้งค่า Server');
+  return settings.timezone;
+}
+
 function toMemberIdentity(member: typeof members.$inferSelect): FineView['member'] {
   return { id: member.id, discordUserId: member.discordUserId, inGameName: member.inGameName };
 }
@@ -599,6 +651,36 @@ async function queueFineSurcharge(tx: Transaction, fine: Fine): Promise<void> {
     payload: { fineId: fine.id },
     runAt: fine.nextSurchargeAt,
   }).onConflictDoNothing();
+}
+
+async function queueNextFineReminder(tx: Transaction, fine: Fine, now: Date): Promise<void> {
+  if (fine.status !== 'UNPAID') return;
+  const timezone = await findGuildTimezone(tx, fine.guildId);
+  const nextReminder = DateTime.fromJSDate(now, { zone: timezone })
+    .plus({ days: 1 })
+    .startOf('day')
+    .plus({ hours: 9 });
+  if (!nextReminder.isValid) throw new Error(`Invalid guild timezone: ${timezone}`);
+  const localDate = nextReminder.toISODate();
+  if (localDate === null) throw new Error(`Unable to resolve next reminder date for timezone: ${timezone}`);
+  await queueFineReminderForDate(tx, fine.guildId, fine.id, localDate, nextReminder.toJSDate());
+}
+
+async function queueFineReminderForDate(
+  tx: Transaction,
+  guildId: string,
+  fineId: string,
+  localDate: string,
+  runAt: Date,
+): Promise<boolean> {
+  const inserted = await tx.insert(scheduledJobs).values({
+    guildId,
+    jobType: 'FINE_REMINDER',
+    deduplicationKey: `fine:${fineId}:reminder:${localDate}`,
+    payload: { fineId, localDate },
+    runAt,
+  }).onConflictDoNothing().returning({ id: scheduledJobs.id });
+  return inserted.length === 1;
 }
 
 async function writeFineAudit(
