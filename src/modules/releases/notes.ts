@@ -17,10 +17,10 @@ export type ReleaseNotes = z.infer<typeof releaseNotesSchema>;
 // Change the ID only for a new announcement; keep summaries about member-visible changes.
 // Set to null for a deployment that should not announce anything.
 export const currentRelease: ReleaseNotes | null = {
-  id: '2026-09-18.5',
-  title: 'ตั้งชื่อรอบส่งของให้อัตโนมัติ',
+  id: '2026-09-18.6',
+  title: 'ปรับรายการส่งของให้อ่านต่อเนื่อง',
   added: [
-    'ช่องชื่อรอบส่งของจะแสดงค่าเริ่มต้นเป็น “ส่งของประจำสัปดาห์” และยังแก้ไขได้ก่อนสร้างรอบ',
+    'รายการส่งของประจำสัปดาห์จะแสดงสมาชิกที่ต้องส่งและสมาชิกที่ได้รับการยกเว้นเป็นกล่องยาวต่อเนื่องแบบรายการส่งเงิน',
   ],
   improved: [],
   fixed: [],

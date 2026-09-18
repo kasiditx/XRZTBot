@@ -99,31 +99,12 @@ export function buildWeeklyItemsAnnouncement(view: WeeklyItemCollectionView) {
     view.obligations.find(({ obligation }) => obligation.status === 'UNPAID')
       ?? view.obligations.find(({ obligation }) => obligation.status === 'PENDING_VERIFICATION')
   )?.items ?? [];
-  const statusLines = view.obligations.map((obligation) => obligationStatusLine(obligation));
-  const chunks = chunkLines(statusLines, 12);
-  const embeds = [new EmbedBuilder()
+  const descriptions = buildWeeklyItemsDescriptions(view, requirementLines, currentItems);
+  const embeds = descriptions.map((description, index) => new EmbedBuilder()
     .setColor(view.collection.cancelledAt !== null ? 0xed4245 : view.collection.isClosed ? 0x57f287 : 0x5865f2)
-    .setTitle(`📦 ${view.collection.title}`)
-    .setDescription([
-      `ช่วงวันที่ **${view.collection.startsOn} – ${view.collection.endsOn}**`,
-      'สมาชิกต้องส่งของครบตามยอดทั้งหมดในครั้งเดียว',
-      '',
-      '**รายการที่ต้องส่งต่อสมาชิก**',
-      ...requirementLines,
-      ...(currentItems.length === 0 ? [] : [
-        '',
-        `**ยอดปัจจุบันที่ต้องส่งครบในครั้งเดียว**${view.collection.penaltyRunCount > 0 ? ` · ค่าปรับแล้ว ${view.collection.penaltyRunCount.toString()} รอบ` : ''}`,
-        ...currentItems.map(({ item, quantity }) => `**${escapeMarkdown(item.itemName)}** — **${formatQuantity(quantity)} ชิ้น**`),
-      ]),
-      '',
-      `**สถานะสมาชิก (${view.obligations.length.toString()} คน)**`,
-      ...(chunks[0] ?? []),
-      ...(view.collection.cancelledAt === null ? [] : ['', `🚫 ยกเลิกรอบ: ${escapeMarkdown(view.collection.cancellationReason ?? '-')}`]),
-    ].join('\n'))
-    .setTimestamp(view.collection.updatedAt)];
-  for (const [index, chunk] of chunks.slice(1).entries()) {
-    embeds.push(new EmbedBuilder().setColor(0x5865f2).setTitle(`สถานะสมาชิก • ต่อ ${(index + 2).toString()}`).setDescription(chunk.join('\n')));
-  }
+    .setTitle(`📦 ${view.collection.title}${index === 0 ? '' : ' (ต่อ)'}`)
+    .setDescription(description)
+    .setTimestamp(view.collection.updatedAt));
   const actions = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId(`weekly-items:submit:${view.collection.id}`)
@@ -133,6 +114,55 @@ export function buildWeeklyItemsAnnouncement(view: WeeklyItemCollectionView) {
       .setDisabled(view.collection.isClosed),
   );
   return { embeds, components: [actions] };
+}
+
+function buildWeeklyItemsDescriptions(
+  view: WeeklyItemCollectionView,
+  requirementLines: readonly string[],
+  currentItems: WeeklyItemObligationView['items'],
+): string[] {
+  const exemptions = view.obligations.filter(({ obligation }) => obligation.status === 'EXEMPT');
+  const requiredMembers = view.obligations.filter(({ obligation }) => obligation.status !== 'EXEMPT');
+  const lines = [
+    `ช่วงวันที่ **${view.collection.startsOn} – ${view.collection.endsOn}**`,
+    'สมาชิกต้องส่งของครบตามยอดทั้งหมดในครั้งเดียว',
+    '',
+    '**รายการที่ต้องส่งต่อสมาชิก**',
+    ...requirementLines,
+    ...(currentItems.length === 0 ? [] : [
+      '',
+      `**ยอดปัจจุบันที่ต้องส่งครบในครั้งเดียว**${view.collection.penaltyRunCount > 0 ? ` · ค่าปรับแล้ว ${view.collection.penaltyRunCount.toString()} รอบ` : ''}`,
+      ...currentItems.map(({ item, quantity }) => `**${escapeMarkdown(item.itemName)}** — **${formatQuantity(quantity)} ชิ้น**`),
+    ]),
+    ...(view.collection.cancelledAt === null ? [] : ['', `🚫 ยกเลิกรอบ: ${escapeMarkdown(view.collection.cancellationReason ?? '-')}`]),
+    '',
+    `**สถานะสมาชิกที่ต้องส่ง (${requiredMembers.length.toString()} คน)**`,
+    ...requiredMembers.map((obligation) => obligationStatusLine(obligation)),
+    ...(exemptions.length === 0 ? [] : [
+      '',
+      `**สมาชิกที่ได้รับการยกเว้น (${exemptions.length.toString()} คน)**`,
+      ...exemptions.map((obligation) => obligationStatusLine(obligation)),
+    ]),
+  ];
+  return splitWeeklyItemsDescription(lines);
+}
+
+function splitWeeklyItemsDescription(lines: readonly string[]): string[] {
+  // MiruEmbedBuilder decorates every line before sending it to Discord.
+  const maximumLength = 3_200;
+  const descriptions: string[] = [];
+  let current = '';
+  for (const line of lines) {
+    const candidate = current.length === 0 ? line : `${current}\n${line}`;
+    if (current.length > 0 && candidate.length > maximumLength) {
+      descriptions.push(current);
+      current = `**สถานะสมาชิก (ต่อ)**\n${line}`;
+      continue;
+    }
+    current = candidate;
+  }
+  if (current.length > 0) descriptions.push(current);
+  return descriptions.length === 0 ? ['—'] : descriptions;
 }
 
 export function buildWeeklyItemsManagement(view: WeeklyItemCollectionView) {
@@ -248,12 +278,6 @@ function obligationStatusLine(view: WeeklyItemObligationView): string {
   if (view.obligation.status === 'FULFILLED') return `✅ <@${view.member.discordUserId}> — ส่งครบแล้ว`;
   if (view.obligation.status === 'PENDING_VERIFICATION') return `⏳ <@${view.member.discordUserId}> — รอตรวจ`;
   return `❌ <@${view.member.discordUserId}> — ยังไม่ส่ง`;
-}
-
-function chunkLines(lines: readonly string[], size: number): string[][] {
-  const chunks: string[][] = [];
-  for (let index = 0; index < lines.length; index += size) chunks.push(lines.slice(index, index + size));
-  return chunks.length === 0 ? [[]] : chunks;
 }
 
 function formatQuantity(quantity: number): string {

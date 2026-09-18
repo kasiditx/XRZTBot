@@ -32,6 +32,34 @@ describe('weekly items Discord components', () => {
     expect(JSON.stringify(announcement)).toContain('weekly-items:submit:');
     expect(JSON.stringify(management)).toContain('weekly-items:member_rule:');
   });
+
+  it('shows required members and exemptions in one continuous announcement', () => {
+    const view = weeklyItemsView();
+    const obligations = Array.from({ length: 26 }, (_, index) => ({
+      obligation: {
+        ...view.obligations[0]!.obligation,
+        id: `obligation-${String(index + 1)}`,
+        memberId: `member-${String(index + 1)}`,
+        status: index < 20 ? 'UNPAID' as const : 'EXEMPT' as const,
+        exemptionReason: index < 20 ? null : 'ยกเว้นเนื่องจากเป็นตำแหน่งสำรอง',
+      },
+      member: {
+        id: `member-${String(index + 1)}`,
+        discordUserId: `7000000000000000${String(index + 1).padStart(2, '0')}`,
+        inGameName: `Member ${String(index + 1)}`,
+      },
+      items: view.obligations[0]!.items,
+    }));
+    const payload = buildWeeklyItemsAnnouncement({ ...view, obligations });
+    const description = payload.embeds[0]?.toJSON().description ?? '';
+
+    expect(payload.embeds).toHaveLength(1);
+    expect(description).toContain('สถานะสมาชิกที่ต้องส่ง (20 คน)');
+    expect(description).toContain('<@700000000000000020> — ยังไม่ส่ง');
+    expect(description).toContain('สมาชิกที่ได้รับการยกเว้น (6 คน)');
+    expect(description).toContain('<@700000000000000026> — ยกเว้นเนื่องจากเป็นตำแหน่งสำรอง');
+    expect(description.indexOf('สมาชิกที่ได้รับการยกเว้น')).toBeGreaterThan(description.indexOf('สถานะสมาชิกที่ต้องส่ง'));
+  });
 });
 
 function weeklyItemsView(): WeeklyItemCollectionView {
