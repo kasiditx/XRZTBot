@@ -11,6 +11,7 @@ const envSchema = z.object({
   TIMEZONE: z.string().default('Asia/Bangkok'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   SCHEDULER_POLL_MS: z.coerce.number().int().min(1_000).max(60_000).default(5_000),
+  SCHEDULER_IDLE_POLL_MS: z.coerce.number().int().min(60_000).max(86_400_000).default(3_600_000),
   HEALTH_PORT: z.coerce.number().int().min(1).max(65_535).default(3_000),
 });
 

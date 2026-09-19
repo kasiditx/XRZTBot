@@ -17,12 +17,14 @@ export type ReleaseNotes = z.infer<typeof releaseNotesSchema>;
 // Change the ID only for a new announcement; keep summaries about member-visible changes.
 // Set to null for a deployment that should not announce anything.
 export const currentRelease: ReleaseNotes | null = {
-  id: '2026-09-19.1',
-  title: 'แก้บอทล่มและแจ้งสถานะอัตโนมัติ',
+  id: '2026-09-19.2',
+  title: 'ลดการใช้ฐานข้อมูลและแจ้งสถานะอัตโนมัติ',
   added: [
     'เมื่อ process พบข้อผิดพลาดร้ายแรง ระบบจะเปลี่ยนสถานะเป็น “ระบบขัดข้อง” และแท็ก Leader, Deputy และ Member ก่อนเริ่มการทำงานใหม่',
   ],
-  improved: [],
+  improved: [
+    'Scheduler จะรอถึงเวลางานถัดไปและตื่นทันทีเมื่อมีคำสั่งใหม่ ลดการใช้ compute ของฐานข้อมูลขณะไม่มีงาน',
+  ],
   fixed: [
     'ป้องกันบอทหยุดทั้งระบบเมื่อ PostgreSQL ปิด idle connection โดยระบบจะบันทึกข้อผิดพลาดและสร้าง connection ใหม่เมื่อมีงานถัดไป',
   ],

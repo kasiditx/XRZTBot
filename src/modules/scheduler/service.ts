@@ -12,49 +12,97 @@ const MAX_BACKOFF_MS = 15 * 60 * 1_000;
 export class DurableScheduler {
   private timer: NodeJS.Timeout | null = null;
   private activeTick: Promise<void> | null = null;
+  private started = false;
+  private wakeRequested = false;
   private readonly workerId = crypto.randomUUID();
 
   public constructor(
     private readonly db: Database,
     private readonly handlers: ReadonlyMap<string, JobHandler>,
     private readonly guildId: string,
-    private readonly pollIntervalMs: number,
+    private readonly retryIntervalMs: number,
+    private readonly idlePollIntervalMs: number,
     private readonly logger: pino.Logger,
   ) {}
 
   public async start(): Promise<void> {
-    if (this.timer !== null) {
+    if (this.started) {
       return;
     }
 
     await this.recoverStaleJobs();
-    this.timer = setInterval(() => {
-      this.runTick();
-    }, this.pollIntervalMs);
-    this.timer.unref();
+    this.started = true;
     this.runTick();
   }
 
   public async stop(): Promise<void> {
+    this.started = false;
     if (this.timer !== null) {
-      clearInterval(this.timer);
+      clearTimeout(this.timer);
       this.timer = null;
     }
     await this.activeTick;
   }
 
-  private runTick(): void {
-    if (this.activeTick !== null) {
+  public wake(): void {
+    if (!this.started) {
       return;
     }
 
-    this.activeTick = this.processDueJobs()
+    if (this.timer !== null) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+
+    if (this.activeTick !== null) {
+      this.wakeRequested = true;
+      return;
+    }
+
+    this.scheduleNextTick(0);
+  }
+
+  private runTick(): void {
+    if (!this.started || this.activeTick !== null) {
+      return;
+    }
+
+    let nextDelayMs = this.retryIntervalMs;
+    this.activeTick = this.processDueJobsAndGetNextDelay()
+      .then((delayMs) => {
+        nextDelayMs = delayMs;
+      })
       .catch((error: unknown) => {
         this.logger.error({ err: error }, 'scheduler tick failed');
       })
       .finally(() => {
         this.activeTick = null;
+        if (!this.started) {
+          return;
+        }
+
+        const delayMs = this.wakeRequested ? 0 : nextDelayMs;
+        this.wakeRequested = false;
+        this.scheduleNextTick(delayMs);
       });
+  }
+
+  private scheduleNextTick(delayMs: number): void {
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      this.runTick();
+    }, delayMs);
+    this.timer.unref();
+  }
+
+  private async processDueJobsAndGetNextDelay(): Promise<number> {
+    await this.processDueJobs();
+    const nextRunAt = await this.findNextPendingJobRunAt();
+    if (nextRunAt === null) {
+      return this.idlePollIntervalMs;
+    }
+
+    return Math.min(Math.max(nextRunAt.getTime() - Date.now(), 0), this.idlePollIntervalMs);
   }
 
   private async processDueJobs(): Promise<void> {
@@ -103,6 +151,20 @@ export class DurableScheduler {
 
       return claimed ?? null;
     });
+  }
+
+  private async findNextPendingJobRunAt(): Promise<Date | null> {
+    const [job] = await this.db
+      .select({ runAt: scheduledJobs.runAt })
+      .from(scheduledJobs)
+      .where(and(
+        eq(scheduledJobs.guildId, this.guildId),
+        eq(scheduledJobs.status, 'PENDING'),
+      ))
+      .orderBy(asc(scheduledJobs.runAt))
+      .limit(1);
+
+    return job?.runAt ?? null;
   }
 
   private async executeJob(job: ScheduledJob): Promise<void> {

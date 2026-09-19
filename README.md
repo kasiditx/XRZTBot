@@ -106,7 +106,8 @@ Environment variables:
 | `DATABASE_URL_UNPOOLED` | no | Direct PostgreSQL URL สำหรับ migration; ถ้าไม่ตั้งจะใช้ `DATABASE_URL` |
 | `TIMEZONE` | no | ค่าเริ่มต้น `Asia/Bangkok` |
 | `LOG_LEVEL` | no | ค่าเริ่มต้น `info` |
-| `SCHEDULER_POLL_MS` | no | ค่าเริ่มต้น `5000`, ต่ำสุด `1000` |
+| `SCHEDULER_POLL_MS` | no | ช่วง retry เมื่อ scheduler ติดต่อฐานข้อมูลไม่ได้ ค่าเริ่มต้น `5000`, ต่ำสุด `1000` |
+| `SCHEDULER_IDLE_POLL_MS` | no | ช่วงตรวจสำรองเมื่อไม่มีงาน โดย interaction จะปลุก scheduler ทันที ค่าเริ่มต้น `3600000`, ต่ำสุด `60000` |
 | `HEALTH_PORT` | no | ค่าเริ่มต้น `3000` |
 
 ## First-time Discord commands

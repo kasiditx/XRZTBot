@@ -153,10 +153,15 @@ export async function bootstrap(): Promise<RunningApplication> {
     logger,
     checkDatabase,
   });
+  let wakeScheduler: (() => void) | undefined;
   client.on(Events.InteractionCreate, (interaction) => {
-    void interactionHandler.handle(interaction).catch((error: unknown) => {
-      logger.error({ err: error, interactionId: interaction.id }, 'unhandled interaction failure');
-    });
+    void interactionHandler.handle(interaction)
+      .catch((error: unknown) => {
+        logger.error({ err: error, interactionId: interaction.id }, 'unhandled interaction failure');
+      })
+      .finally(() => {
+        wakeScheduler?.();
+      });
   });
 
   const ready = once(client, Events.ClientReady);
@@ -198,9 +203,11 @@ export async function bootstrap(): Promise<RunningApplication> {
     ]),
     env.DISCORD_GUILD_ID,
     env.SCHEDULER_POLL_MS,
+    env.SCHEDULER_IDLE_POLL_MS,
     logger,
   );
   await scheduler.start();
+  wakeScheduler = () => scheduler.wake();
 
   let healthServer: Server | null = null;
   try {
@@ -237,6 +244,7 @@ export async function bootstrap(): Promise<RunningApplication> {
       }
       stopped = true;
       logger.info('shutting down');
+      wakeScheduler = undefined;
       await scheduler.stop();
       await client.destroy();
       await closeServer(healthServer);
