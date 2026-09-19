@@ -675,11 +675,19 @@ export const weeklyObligations = pgTable(
     decidedByDiscordUserId: text('decided_by_discord_user_id'),
     rejectionReason: text('rejection_reason'),
     convertedFineId: uuid('converted_fine_id').references(() => fines.id, { onDelete: 'set null' }),
+    fineConversionAt: timestamp('fine_conversion_at', { withTimezone: true, mode: 'date' }),
+    overdueFineAmountOverride: bigint('overdue_fine_amount_override', { mode: 'number' }),
+    recurringFineAmountOverride: bigint('recurring_fine_amount_override', { mode: 'number' }),
     ...auditColumns,
   },
   (table) => [
     uniqueIndex('weekly_obligations_collection_member_uq').on(table.collectionId, table.memberId),
     check('weekly_obligations_amount_non_negative', sql`${table.amount} >= 0`),
+    check('weekly_obligations_fine_overrides_non_negative', sql`(
+      ${table.overdueFineAmountOverride} IS NULL OR ${table.overdueFineAmountOverride} >= 0
+    ) AND (
+      ${table.recurringFineAmountOverride} IS NULL OR ${table.recurringFineAmountOverride} >= 0
+    )`),
   ],
 );
 

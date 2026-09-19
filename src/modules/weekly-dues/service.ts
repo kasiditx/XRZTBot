@@ -5,6 +5,7 @@ import { AuthorizationError, ConflictError, NotFoundError, ValidationError } fro
 import type { Database } from '../../infrastructure/db/client.js';
 import {
   guildSettings,
+  fines,
   members,
   scheduledJobs,
   weeklyCollections,
@@ -12,7 +13,11 @@ import {
   weeklyPaymentProofs,
 } from '../../infrastructure/db/schema.js';
 import { writeAudit as persistAudit } from '../audit/service.js';
-import { cancelFineWithTransaction, createSourcedFineWithTransaction } from '../fines/service.js';
+import {
+  adjustUnpaidFineWithTransaction,
+  cancelFineWithTransaction,
+  createSourcedFineWithTransaction,
+} from '../fines/service.js';
 import { appendTreasuryEntryWithTransaction, reverseSourcedTreasuryEntry } from '../treasury/service.js';
 import { buildWeeklyOverdueFine } from './rules.js';
 
@@ -134,6 +139,9 @@ export class WeeklyDuesService {
         amount: member.rosterTitle === 'RESERVE' ? 0 : input.standardAmount,
         status: member.rosterTitle === 'RESERVE' ? 'EXEMPT' as const : 'UNPAID' as const,
         rejectionReason: member.rosterTitle === 'RESERVE' ? WEEKLY_RESERVE_EXEMPTION_REASON : null,
+        fineConversionAt: collection.conversionAt,
+        overdueFineAmountOverride: input.overdueFineAmount,
+        recurringFineAmountOverride: input.recurringFineAmount,
         createdAt: input.now,
         updatedAt: input.now,
       })));
@@ -283,9 +291,8 @@ export class WeeklyDuesService {
     }
     await this.db.transaction(async (tx) => {
       const collection = await lockCollection(tx, guildId, collectionId);
-      if (collection.isClosed || collection.cancelledAt !== null || now >= collection.conversionAt) {
-        throw new ConflictError('แก้ไขสมาชิกได้เฉพาะรอบส่งเงินที่ยังเปิดอยู่');
-      }
+      if (collection.cancelledAt !== null) throw new ConflictError('รอบส่งเงินนี้ถูกยกเลิกแล้ว');
+      const isPastDeadline = collection.isClosed || now >= collection.conversionAt;
       const [row] = await tx
         .select({ obligation: weeklyObligations })
         .from(weeklyObligations)
@@ -297,8 +304,32 @@ export class WeeklyDuesService {
         .limit(1)
         .for('update');
       if (row === undefined) throw new NotFoundError('สมาชิกนี้ไม่ได้อยู่ในรอบส่งเงิน');
-      if (row.obligation.status !== 'UNPAID' && row.obligation.status !== 'EXEMPT') {
-        throw new ConflictError('แก้ไขได้เฉพาะสมาชิกที่ยังไม่ส่งหลักฐานหรือได้รับการยกเว้น');
+      const canEdit = row.obligation.status === 'UNPAID'
+        || row.obligation.status === 'EXEMPT'
+        || (rule === 'EXEMPT' && row.obligation.status === 'CONVERTED_TO_FINE');
+      if (!canEdit) {
+        throw new ConflictError('แก้ไขไม่ได้ เพราะรายการนี้มีหลักฐานรอตรวจหรือชำระแล้ว');
+      }
+      if (row.obligation.status === 'CONVERTED_TO_FINE') {
+        if (row.obligation.convertedFineId === null) throw new Error('Converted weekly obligation has no fine reference');
+        const [fine] = await tx
+          .select()
+          .from(fines)
+          .where(and(eq(fines.guildId, guildId), eq(fines.id, row.obligation.convertedFineId)))
+          .limit(1)
+          .for('update');
+        if (fine === undefined) throw new NotFoundError('ไม่พบค่าปรับของสมาชิกนี้');
+        if (fine.status !== 'UNPAID') {
+          throw new ConflictError('ยกเว้นไม่ได้ เพราะค่าปรับมีหลักฐานรอตรวจหรือชำระแล้ว');
+        }
+        await cancelFineWithTransaction(
+          tx,
+          guildId,
+          fine.id,
+          actorDiscordUserId,
+          reason ?? WEEKLY_ADMIN_EXEMPTION_REASON,
+          now,
+        );
       }
       const [updated] = await tx
         .update(weeklyObligations)
@@ -307,6 +338,7 @@ export class WeeklyDuesService {
               amount: 0,
               status: 'EXEMPT',
               rejectionReason: reason,
+              convertedFineId: null,
               decidedAt: now,
               decidedByDiscordUserId: actorDiscordUserId,
               updatedAt: now,
@@ -322,6 +354,21 @@ export class WeeklyDuesService {
         .where(eq(weeklyObligations.id, row.obligation.id))
         .returning();
       if (updated === undefined) throw new Error('Weekly member rule update did not return a row');
+      if (rule === 'REQUIRED' && isPastDeadline) {
+        const fineConversionAt = updated.fineConversionAt ?? collection.conversionAt;
+        if (now >= fineConversionAt) {
+          await convertObligation(tx, collection, updated, actorDiscordUserId, now);
+        } else {
+          await queueWeeklyJob(
+            tx,
+            guildId,
+            'WEEKLY_CONVERT',
+            collectionId,
+            fineConversionAt,
+            `convert:${updated.id}:${String(fineConversionAt.getTime())}`,
+          );
+        }
+      }
       await queueWeeklyRefresh(tx, guildId, collectionId, now);
       await writeAudit(
         tx,
@@ -333,6 +380,95 @@ export class WeeklyDuesService {
         row.obligation,
         updated,
         reason ?? undefined,
+      );
+    });
+    return this.get(guildId, collectionId);
+  }
+
+  public async setMemberFinePolicy(
+    guildId: string,
+    collectionId: string,
+    memberDiscordUserId: string,
+    fineConversionAt: Date,
+    overdueFineAmount: number,
+    recurringFineAmount: number,
+    reason: string,
+    actorDiscordUserId: string,
+    now: Date,
+  ): Promise<WeeklyCollectionView> {
+    validateAmount(overdueFineAmount, 'ค่าปรับครั้งแรก', true);
+    validateAmount(recurringFineAmount, 'ค่าปรับเพิ่มทุก 24 ชั่วโมง', true);
+    const adjustmentReason = requireText(reason, 'เหตุผลที่เลื่อนหรือแก้ค่าปรับ', 2, 200);
+    if (Number.isNaN(fineConversionAt.getTime())) throw new ValidationError('เวลาเริ่มค่าปรับไม่ถูกต้อง');
+    if (fineConversionAt <= now) throw new ValidationError('เวลาเริ่มค่าปรับใหม่ต้องอยู่ในอนาคต');
+
+    await this.db.transaction(async (tx) => {
+      const collection = await lockCollection(tx, guildId, collectionId);
+      if (collection.cancelledAt !== null) throw new ConflictError('รอบส่งเงินนี้ถูกยกเลิกแล้ว');
+      if (fineConversionAt < collection.conversionAt) {
+        throw new ValidationError('เวลาเริ่มค่าปรับรายคนต้องไม่อยู่ก่อนกำหนดเดิมของรอบ');
+      }
+      const [row] = await tx
+        .select({ obligation: weeklyObligations })
+        .from(weeklyObligations)
+        .innerJoin(members, eq(weeklyObligations.memberId, members.id))
+        .where(and(
+          eq(weeklyObligations.collectionId, collectionId),
+          eq(members.discordUserId, memberDiscordUserId),
+        ))
+        .limit(1)
+        .for('update');
+      if (row === undefined) throw new NotFoundError('สมาชิกนี้ไม่ได้อยู่ในรอบส่งเงิน');
+      if (row.obligation.status !== 'UNPAID' && row.obligation.status !== 'CONVERTED_TO_FINE') {
+        throw new ConflictError('เลื่อนหรือแก้ค่าปรับได้เฉพาะสมาชิกที่ยังไม่ส่งและยังไม่มีหลักฐานรอตรวจ');
+      }
+
+      const [updated] = await tx
+        .update(weeklyObligations)
+        .set({
+          fineConversionAt,
+          overdueFineAmountOverride: overdueFineAmount,
+          recurringFineAmountOverride: recurringFineAmount,
+          updatedAt: now,
+        })
+        .where(eq(weeklyObligations.id, row.obligation.id))
+        .returning();
+      if (updated === undefined) throw new Error('Weekly fine policy update did not return a row');
+
+      if (row.obligation.status === 'CONVERTED_TO_FINE') {
+        if (row.obligation.convertedFineId === null) throw new Error('Converted weekly obligation has no fine reference');
+        await adjustUnpaidFineWithTransaction(tx, {
+          guildId,
+          fineId: row.obligation.convertedFineId,
+          principalAmount: row.obligation.amount + overdueFineAmount,
+          surchargeAmount: recurringFineAmount,
+          dueAt: fineConversionAt,
+          nextSurchargeAt: DateTime.fromJSDate(fineConversionAt).plus({ hours: 24 }).toJSDate(),
+          actorDiscordUserId,
+          reason: adjustmentReason,
+          now,
+        });
+      } else {
+        await queueWeeklyJob(
+          tx,
+          guildId,
+          'WEEKLY_CONVERT',
+          collectionId,
+          fineConversionAt,
+          `convert:${row.obligation.id}:${String(fineConversionAt.getTime())}`,
+        );
+      }
+      await queueWeeklyRefresh(tx, guildId, collectionId, now);
+      await writeAudit(
+        tx,
+        guildId,
+        actorDiscordUserId,
+        'WEEKLY_FINE_POLICY_UPDATED',
+        'WEEKLY_OBLIGATION',
+        row.obligation.id,
+        row.obligation,
+        updated,
+        adjustmentReason,
       );
     });
     return this.get(guildId, collectionId);
@@ -631,6 +767,18 @@ export class WeeklyDuesService {
         .where(and(eq(weeklyObligations.collectionId, collectionId), eq(weeklyObligations.status, 'UNPAID')))
         .for('update');
       for (const obligation of unpaid) {
+        const fineConversionAt = obligation.fineConversionAt ?? collection.conversionAt;
+        if (now < fineConversionAt) {
+          await queueWeeklyJob(
+            tx,
+            guildId,
+            'WEEKLY_CONVERT',
+            collectionId,
+            fineConversionAt,
+            `convert:${obligation.id}:${String(fineConversionAt.getTime())}`,
+          );
+          continue;
+        }
         await convertObligation(tx, collection, obligation, 'SYSTEM', now);
       }
       if (!collection.isClosed) {
@@ -671,16 +819,24 @@ async function convertObligation(
   now: Date,
 ): Promise<void> {
   if (obligation.status !== 'UNPAID') return;
-  const amounts = buildWeeklyOverdueFine(obligation.amount, collection.overdueFineAmount, collection.recurringFineAmount);
+  const fineConversionAt = obligation.fineConversionAt ?? collection.conversionAt;
+  const amounts = buildWeeklyOverdueFine(
+    obligation.amount,
+    obligation.overdueFineAmountOverride ?? collection.overdueFineAmount,
+    obligation.recurringFineAmountOverride ?? collection.recurringFineAmount,
+  );
   const fine = await createSourcedFineWithTransaction(tx, {
     guildId: collection.guildId,
-    requestId: `weekly:${obligation.id}:fine`,
+    // The obligation timestamp changes when an Admin re-enables a previously exempt member.
+    // Keeping it in the idempotency key allows a new fine after the old one was cancelled,
+    // while repeated delivery of the same conversion job still resolves to one fine.
+    requestId: `weekly:${obligation.id}:fine:${String(obligation.updatedAt.getTime())}`,
     memberId: obligation.memberId,
     reason: `ค้างส่งเงินรายสัปดาห์: ${collection.title}`,
     principalAmount: amounts.principalAmount,
     surchargeAmount: amounts.recurringPenaltyAmount,
-    dueAt: collection.conversionAt,
-    nextSurchargeAt: DateTime.fromJSDate(collection.conversionAt).plus({ hours: 24 }).toJSDate(),
+    dueAt: fineConversionAt,
+    nextSurchargeAt: DateTime.fromJSDate(fineConversionAt).plus({ hours: 24 }).toJSDate(),
     sourceType: 'WEEKLY_DUES',
     sourceId: obligation.id,
     actorDiscordUserId,

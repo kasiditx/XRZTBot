@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { DateTime } from 'luxon';
-import { and, desc, eq, lt } from 'drizzle-orm';
+import { and, desc, eq, lt, lte } from 'drizzle-orm';
 import { AuthorizationError, ConflictError, NotFoundError, ValidationError } from '../../domain/errors.js';
 import type { Database } from '../../infrastructure/db/client.js';
 import {
@@ -150,6 +150,7 @@ export class FineService {
           eq(fines.guildId, guildId),
           eq(fines.status, 'UNPAID'),
           lt(fines.createdAt, localToday.toJSDate()),
+          lte(fines.dueAt, now),
         ));
       let queued = 0;
       for (const fine of unpaid) {
@@ -346,6 +347,7 @@ export class FineService {
     const shouldPublish = await this.db.transaction(async (tx) => {
       const fine = await lockFine(tx, guildId, fineId);
       if (fine.status !== 'UNPAID') return false;
+      if (now < fine.dueAt) return false;
       await queueNextFineReminder(tx, fine, now);
       return true;
     });
@@ -499,6 +501,63 @@ export async function cancelFineWithTransaction(
     cancellationReason,
   );
   return cancelled;
+}
+
+export async function adjustUnpaidFineWithTransaction(
+  tx: Transaction,
+  input: {
+    readonly guildId: string;
+    readonly fineId: string;
+    readonly principalAmount: number;
+    readonly surchargeAmount: number;
+    readonly dueAt: Date;
+    readonly nextSurchargeAt: Date;
+    readonly actorDiscordUserId: string;
+    readonly reason: string;
+    readonly now: Date;
+  },
+): Promise<Fine> {
+  validateAmount(input.principalAmount, 'ยอดค่าปรับรวม', false);
+  validateAmount(input.surchargeAmount, 'ค่าปรับเพิ่มต่อ 24 ชั่วโมง', true);
+  const reason = requireText(input.reason, 'เหตุผลที่แก้ค่าปรับ', 2, 200);
+  if (Number.isNaN(input.dueAt.getTime()) || Number.isNaN(input.nextSurchargeAt.getTime())) {
+    throw new ValidationError('กำหนดเวลาค่าปรับไม่ถูกต้อง');
+  }
+  if (input.nextSurchargeAt < input.dueAt) {
+    throw new ValidationError('เวลาทบค่าปรับครั้งแรกต้องไม่อยู่ก่อนกำหนดค่าปรับ');
+  }
+  const fine = await lockFine(tx, input.guildId, input.fineId);
+  if (fine.status !== 'UNPAID') {
+    throw new ConflictError('แก้ค่าปรับได้เฉพาะรายการที่ยังไม่มีหลักฐานรอตรวจและยังไม่ชำระ');
+  }
+  const [updated] = await tx
+    .update(fines)
+    .set({
+      principalAmount: input.principalAmount,
+      surchargeAmount: input.surchargeAmount,
+      accruedSurchargeAmount: 0,
+      dueAt: input.dueAt,
+      nextSurchargeAt: input.nextSurchargeAt,
+      updatedAt: input.now,
+    })
+    .where(eq(fines.id, fine.id))
+    .returning();
+  if (updated === undefined) throw new Error('Fine adjustment did not return a row');
+  await queueFineRefresh(tx, input.guildId, fine.id, input.now);
+  await queueFineSurcharge(tx, updated);
+  await queueNextFineReminder(tx, updated, input.now);
+  await writeFineAudit(
+    tx,
+    input.guildId,
+    input.actorDiscordUserId,
+    'FINE_ADJUSTED',
+    'FINE',
+    fine.id,
+    fine,
+    updated,
+    reason,
+  );
+  return updated;
 }
 
 async function accrueFineWithTransaction(
@@ -656,10 +715,12 @@ async function queueFineSurcharge(tx: Transaction, fine: Fine): Promise<void> {
 async function queueNextFineReminder(tx: Transaction, fine: Fine, now: Date): Promise<void> {
   if (fine.status !== 'UNPAID') return;
   const timezone = await findGuildTimezone(tx, fine.guildId);
-  const nextReminder = DateTime.fromJSDate(now, { zone: timezone })
+  const nextLocalReminder = DateTime.fromJSDate(now, { zone: timezone })
     .plus({ days: 1 })
     .startOf('day')
     .plus({ hours: 9 });
+  const dueAt = DateTime.fromJSDate(fine.dueAt, { zone: timezone });
+  const nextReminder = nextLocalReminder < dueAt ? dueAt : nextLocalReminder;
   if (!nextReminder.isValid) throw new Error(`Invalid guild timezone: ${timezone}`);
   const localDate = nextReminder.toISODate();
   if (localDate === null) throw new Error(`Unable to resolve next reminder date for timezone: ${timezone}`);

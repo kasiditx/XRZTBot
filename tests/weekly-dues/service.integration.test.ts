@@ -168,6 +168,116 @@ describeWithDatabase('WeeklyDuesService PostgreSQL integration', () => {
     expect(adminObligation?.convertedFineId).not.toBeNull();
   });
 
+  it('lets Admin postpone and change an unpaid fine, then exempt and re-enable a member after close', async () => {
+    const collection = (await service.list(guildId)).find(({ collection: value }) => (
+      value.requestId === 'weekly-create-1'
+    ));
+    expect(collection).toBeDefined();
+
+    const adjustedAt = new Date('2026-09-01T00:00:00.000Z');
+    const postponedUntil = new Date('2026-09-03T17:00:00.000Z');
+    const adjusted = await service.setMemberFinePolicy(
+      guildId,
+      collection!.collection.id,
+      adminMember,
+      postponedUntil,
+      10_000,
+      5_000,
+      'ลาฉุกเฉินสองวัน',
+      actor,
+      adjustedAt,
+    );
+    const adminObligation = adjusted.obligations.find(({ member }) => member.discordUserId === adminMember)!.obligation;
+    const [adjustedFine] = await db.select().from(fines).where(eq(fines.id, adminObligation.convertedFineId!));
+    expect(adjustedFine).toMatchObject({
+      status: 'UNPAID',
+      principalAmount: 110_000,
+      surchargeAmount: 5_000,
+      accruedSurchargeAmount: 0,
+      dueAt: postponedUntil,
+    });
+    expect(adjustedFine?.nextSurchargeAt.toISOString()).toBe('2026-09-04T17:00:00.000Z');
+
+    const secondObligation = collection!.obligations.find(({ member }) => member.discordUserId === secondMember)!.obligation;
+    const originalFineId = secondObligation.convertedFineId!;
+    const exempted = await service.setMemberRule(
+      guildId,
+      collection!.collection.id,
+      secondMember,
+      'EXEMPT',
+      0,
+      'ลาเหตุฉุกเฉิน',
+      actor,
+      new Date('2026-09-01T00:01:00.000Z'),
+    );
+    expect(exempted.obligations.find(({ member }) => member.discordUserId === secondMember)?.obligation)
+      .toMatchObject({ status: 'EXEMPT', amount: 0, convertedFineId: null, rejectionReason: 'ลาเหตุฉุกเฉิน' });
+    expect((await fineService.get(guildId, originalFineId)).fine.status).toBe('CANCELLED');
+
+    const requiredAgain = await service.setMemberRule(
+      guildId,
+      collection!.collection.id,
+      secondMember,
+      'REQUIRED',
+      130_000,
+      null,
+      actor,
+      new Date('2026-09-01T00:02:00.000Z'),
+    );
+    const requiredObligation = requiredAgain.obligations.find(({ member }) => member.discordUserId === secondMember)!.obligation;
+    expect(requiredObligation.status).toBe('CONVERTED_TO_FINE');
+    expect(requiredObligation.convertedFineId).not.toBe(originalFineId);
+    const [replacementFine] = await db.select().from(fines).where(eq(fines.id, requiredObligation.convertedFineId!));
+    expect(replacementFine).toMatchObject({ status: 'UNPAID', principalAmount: 180_000, surchargeAmount: 25_000 });
+  });
+
+  it('keeps a postponed member unpaid at round close and converts only at the personal fine time', async () => {
+    const created = await service.create({
+      guildId,
+      requestId: 'weekly-personal-fine-delay',
+      title: 'รอบทดสอบเลื่อนค่าปรับ',
+      startsOn: '2026-09-14',
+      endsOn: '2026-09-20',
+      standardAmount: 200_000,
+      overdueFineAmount: 20_000,
+      recurringFineAmount: 20_000,
+      timezone: 'Asia/Bangkok',
+      actorDiscordUserId: actor,
+      now: new Date('2026-09-14T00:00:00.000Z'),
+    });
+    const personalFineAt = new Date('2026-09-22T17:00:00.000Z');
+    await service.setMemberFinePolicy(
+      guildId,
+      created.collection.id,
+      secondMember,
+      personalFineAt,
+      7_000,
+      3_000,
+      'อนุมัติเลื่อนค่าปรับ',
+      actor,
+      new Date('2026-09-15T00:00:00.000Z'),
+    );
+
+    const closed = await service.processConversion(
+      guildId,
+      created.collection.id,
+      created.collection.conversionAt,
+    );
+    expect(closed.collection.isClosed).toBe(true);
+    expect(closed.obligations.find(({ member }) => member.discordUserId === secondMember)?.obligation.status).toBe('UNPAID');
+
+    const converted = await service.processConversion(guildId, created.collection.id, personalFineAt);
+    const obligation = converted.obligations.find(({ member }) => member.discordUserId === secondMember)!.obligation;
+    expect(obligation.status).toBe('CONVERTED_TO_FINE');
+    const [fine] = await db.select().from(fines).where(eq(fines.id, obligation.convertedFineId!));
+    expect(fine).toMatchObject({
+      principalAmount: 207_000,
+      surchargeAmount: 3_000,
+      dueAt: personalFineAt,
+    });
+    expect(fine?.nextSurchargeAt.toISOString()).toBe('2026-09-23T17:00:00.000Z');
+  });
+
   it('queues publish, conversion, refresh, fine, and treasury jobs', async () => {
     const jobs = await db.select().from(scheduledJobs).where(eq(scheduledJobs.guildId, guildId));
     expect(new Set(jobs.map((job) => job.jobType))).toEqual(expect.objectContaining(new Set([

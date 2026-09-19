@@ -1,6 +1,7 @@
 import {
   buildWeeklyAnnouncement,
   buildWeeklyCancellationModal,
+  buildWeeklyFinePolicyModal,
   buildWeeklyManagement,
   buildWeeklyMemberRuleModal,
   buildWeeklyPaymentModal,
@@ -73,6 +74,9 @@ describe('weekly dues Discord components', () => {
         decidedByDiscordUserId: null,
         rejectionReason: null,
         convertedFineId: null,
+        fineConversionAt: now,
+        overdueFineAmountOverride: 50_000,
+        recurringFineAmountOverride: 50_000,
         createdAt: now,
         updatedAt: now,
       },
@@ -107,6 +111,7 @@ describe('weekly dues Discord components', () => {
       amount: 0, status: 'EXEMPT' as const, attachmentId: null, submittedAt: null, decidedAt: now,
       decidedByDiscordUserId: '700000000000000001', rejectionReason: 'ยกเว้นเนื่องจากเป็นตำแหน่งสำรอง',
       convertedFineId: null, createdAt: now, updatedAt: now,
+      fineConversionAt: now, overdueFineAmountOverride: 50_000, recurringFineAmountOverride: 50_000,
     };
     const payload = buildWeeklyAnnouncement({
       ...view,
@@ -171,6 +176,34 @@ describe('weekly dues Discord components', () => {
     expect(JSON.stringify(modal.components)).toContain('REQUIRED');
     expect(JSON.stringify(modal.components)).toContain('EXEMPT');
     expect(JSON.stringify(modal.components)).toContain('100000');
+  });
+
+  it('keeps member and fine controls available after closing while protecting amount override', () => {
+    const view = weeklyView();
+    const management = buildWeeklyManagement({
+      ...view,
+      collection: { ...view.collection, isClosed: true },
+    }).components[0]?.toJSON().components;
+    const memberRule = buildWeeklyMemberRuleModal(
+      view.collection.id,
+      [{ discordUserId: '700000000000000002', inGameName: 'สมาชิกทดสอบ' }],
+      100_000,
+      true,
+    ).toJSON();
+    const finePolicy = buildWeeklyFinePolicyModal(
+      view.collection.id,
+      [{ discordUserId: '700000000000000002', inGameName: 'สมาชิกทดสอบ' }],
+      { fineAt: '20/09/2569 23:59', overdueFineAmount: 20_000, recurringFineAmount: 10_000 },
+    ).toJSON();
+
+    expect(management?.[0]).toMatchObject({ custom_id: `weekly:member_rule:${view.collection.id}`, disabled: false });
+    expect(management?.[1]).toMatchObject({ custom_id: `weekly:override:${view.collection.id}`, disabled: true });
+    expect(management?.[2]).toMatchObject({ custom_id: `weekly:fine_policy:${view.collection.id}`, disabled: false });
+    expect(JSON.stringify(memberRule.components)).toContain('ยกเว้นและยกเลิกค่าปรับ');
+    expect(JSON.stringify(memberRule.components)).toContain('REQUIRED');
+    expect(JSON.stringify(finePolicy.components)).toContain('weekly:fine_policy_at');
+    expect(JSON.stringify(finePolicy.components)).toContain('weekly:fine_policy_initial_amount');
+    expect(JSON.stringify(finePolicy.components)).toContain('weekly:fine_policy_recurring_amount');
   });
 });
 

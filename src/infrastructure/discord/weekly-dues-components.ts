@@ -35,6 +35,11 @@ export const weeklyComponentIds = {
   memberRuleAction: 'weekly:member_rule_action',
   memberRuleAmount: 'weekly:member_rule_amount',
   memberRuleReason: 'weekly:member_rule_reason',
+  finePolicyMember: 'weekly:fine_policy_member',
+  finePolicyAt: 'weekly:fine_policy_at',
+  finePolicyInitialAmount: 'weekly:fine_policy_initial_amount',
+  finePolicyRecurringAmount: 'weekly:fine_policy_recurring_amount',
+  finePolicyReason: 'weekly:fine_policy_reason',
   rejectionReason: 'weekly:rejection_reason',
   cancellationReason: 'weekly:cancellation_reason',
 } as const;
@@ -116,7 +121,7 @@ function buildWeeklyDescriptions(view: WeeklyCollectionView): string[] {
     '',
     `**สถานะสมาชิกที่ต้องส่ง (${paymentStatuses.length.toString()} คน)**`,
     ...paymentStatuses.map(({ obligation, member }) =>
-      `${statusEmoji(obligation.status)} <@${member.discordUserId}> — ${obligation.amount.toLocaleString('th-TH')} · ${thaiStatus(obligation.status)}`),
+      `${statusEmoji(obligation.status)} <@${member.discordUserId}> — ${obligation.amount.toLocaleString('th-TH')} · ${thaiStatus(obligation.status)}${finePolicySuffix(view, obligation)}`),
     ...(exemptions.length === 0
       ? []
       : [
@@ -158,12 +163,20 @@ export function buildWeeklyManagement(view: WeeklyCollectionView) {
     .setCustomId(`weekly:member_rule:${view.collection.id}`)
     .setLabel('จัดการผู้ส่ง/ยกเว้น')
     .setStyle(ButtonStyle.Primary)
-    .setDisabled(view.collection.isClosed);
+    .setDisabled(view.collection.cancelledAt !== null);
+  const finePolicy = new ButtonBuilder()
+    .setCustomId(`weekly:fine_policy:${view.collection.id}`)
+    .setLabel('เลื่อน/กำหนดค่าปรับ')
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(view.collection.cancelledAt !== null);
   const cancel = buildWeeklyCancellationButton(
     view.collection.id,
     view.collection.cancelledAt !== null,
   );
-  return { embeds: content.embeds, components: [new ActionRowBuilder<ButtonBuilder>().addComponents(memberRule, override, cancel)] };
+  return {
+    embeds: content.embeds,
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(memberRule, override, finePolicy, cancel)],
+  };
 }
 
 export function buildWeeklyCancellationModal(collectionId: string): ModalBuilder {
@@ -204,6 +217,7 @@ export function buildWeeklyMemberRuleModal(
   collectionId: string,
   members: readonly MemberSelectionOption[],
   standardAmount: number,
+  isClosed = false,
 ): ModalBuilder {
   const member = new StringSelectMenuBuilder()
     .setCustomId(weeklyComponentIds.memberRuleMember)
@@ -217,8 +231,18 @@ export function buildWeeklyMemberRuleModal(
     .setMinValues(1)
     .setMaxValues(1)
     .addOptions(
-      { label: 'ต้องส่งเงิน', value: 'REQUIRED', emoji: '💰', description: 'เรียกเก็บยอดที่ระบุด้านล่าง' },
-      { label: 'ยกเว้นส่งเงิน', value: 'EXEMPT', emoji: '🛡️', description: 'ไม่ต้องส่งเงินในรอบนี้' },
+      {
+        label: 'ต้องส่งเงิน',
+        value: 'REQUIRED',
+        emoji: '💰',
+        description: isClosed ? 'ยกเลิกการยกเว้นและสร้างค่าปรับ' : 'เรียกเก็บยอดที่ระบุด้านล่าง',
+      },
+      {
+        label: isClosed ? 'ยกเว้นและยกเลิกค่าปรับ' : 'ยกเว้นส่งเงิน',
+        value: 'EXEMPT',
+        emoji: '🛡️',
+        description: isClosed ? 'ใช้ได้เมื่อค่าปรับยังไม่ชำระ' : 'ไม่ต้องส่งเงินในรอบนี้',
+      },
     );
   const amount = new TextInputBuilder()
     .setCustomId(weeklyComponentIds.memberRuleAmount)
@@ -241,6 +265,33 @@ export function buildWeeklyMemberRuleModal(
       new LabelBuilder().setLabel('สถานะ').setStringSelectMenuComponent(action),
       new LabelBuilder().setLabel('ยอดที่ต้องส่ง (ใช้เมื่อเลือกต้องส่ง)').setTextInputComponent(amount),
       new LabelBuilder().setLabel('เหตุผลยกเว้น').setTextInputComponent(reason),
+    );
+}
+
+export function buildWeeklyFinePolicyModal(
+  collectionId: string,
+  members: readonly MemberSelectionOption[],
+  defaults: {
+    readonly fineAt: string;
+    readonly overdueFineAmount: number;
+    readonly recurringFineAmount: number;
+  },
+): ModalBuilder {
+  const member = new StringSelectMenuBuilder()
+    .setCustomId(weeklyComponentIds.finePolicyMember)
+    .setPlaceholder('เลือกสมาชิกที่ยังไม่ส่ง')
+    .setMinValues(1)
+    .setMaxValues(1)
+    .addOptions(memberOptions(members));
+  return new ModalBuilder()
+    .setCustomId(`weekly:fine_policy_modal:${collectionId}`)
+    .setTitle('เลื่อนและกำหนดค่าปรับรายคน')
+    .addLabelComponents(
+      new LabelBuilder().setLabel('สมาชิก').setStringSelectMenuComponent(member),
+      labelText('เริ่มเป็นค่าปรับ (DD/MM/YYYY HH:mm)', weeklyComponentIds.finePolicyAt, '20/09/2569 23:59', 15, 16, defaults.fineAt),
+      labelText('ค่าปรับครั้งแรก', weeklyComponentIds.finePolicyInitialAmount, '20000', 1, 15, String(defaults.overdueFineAmount)),
+      labelText('ค่าปรับเพิ่มทุก 24 ชั่วโมง', weeklyComponentIds.finePolicyRecurringAmount, '20000', 1, 15, String(defaults.recurringFineAmount)),
+      labelText('เหตุผลที่เลื่อนหรือแก้ค่าปรับ', weeklyComponentIds.finePolicyReason, 'ลา/เหตุฉุกเฉิน', 2, 200),
     );
 }
 
@@ -344,6 +395,21 @@ function statusEmoji(status: WeeklyCollectionView['obligations'][number]['obliga
   if (status === 'PENDING_VERIFICATION') return '⏳';
   if (status === 'CONVERTED_TO_FINE') return '💸';
   return '❌';
+}
+
+function finePolicySuffix(
+  view: WeeklyCollectionView,
+  obligation: WeeklyCollectionView['obligations'][number]['obligation'],
+): string {
+  const fineAt = obligation.fineConversionAt ?? view.collection.conversionAt;
+  const initial = obligation.overdueFineAmountOverride ?? view.collection.overdueFineAmount;
+  const recurring = obligation.recurringFineAmountOverride ?? view.collection.recurringFineAmount;
+  const usesDefaults = fineAt.getTime() === view.collection.conversionAt.getTime()
+    && initial === view.collection.overdueFineAmount
+    && recurring === view.collection.recurringFineAmount;
+  if (usesDefaults) return '';
+  const timestamp = Math.floor(fineAt.getTime() / 1_000);
+  return ` · ค่าปรับ ${initial.toLocaleString('th-TH')} +${recurring.toLocaleString('th-TH')}/24ชม. เริ่ม <t:${String(timestamp)}:f>`;
 }
 
 function memberOptions(members: readonly MemberSelectionOption[]) {

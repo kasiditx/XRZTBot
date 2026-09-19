@@ -11,7 +11,13 @@ import {
   type StringSelectMenuInteraction,
 } from 'discord.js';
 import { AuthorizationError, ValidationError } from '../../domain/errors.js';
-import { formatDateInput, formatLocalDateInput, parseDateInput } from '../../domain/temporal-input.js';
+import {
+  formatDateInput,
+  formatDateTimeInput,
+  formatLocalDateInput,
+  parseDateInput,
+  parseDateTimeInput,
+} from '../../domain/temporal-input.js';
 import { hasCapability, resolveAuthority, type AuthorityLevel, type Capability } from '../../modules/authorization/permissions.js';
 import type { GuildConfigService } from '../../modules/guild-config/service.js';
 import type { MemberService } from '../../modules/members/service.js';
@@ -25,6 +31,7 @@ import {
   buildWeeklyAdminPanel,
   buildWeeklyAnnouncement,
   buildWeeklyCancellationModal,
+  buildWeeklyFinePolicyModal,
   buildWeeklyManagement,
   buildWeeklyMemberRuleModal,
   buildWeeklyOverrideModal,
@@ -145,17 +152,51 @@ export class WeeklyDuesInteractionHandler {
         this.requireSettings(guild.id),
         this.dependencies.weeklyDues.get(guild.id, collectionId),
       ]);
+      const manageable = view.obligations.filter(({ obligation }) => (
+        obligation.status === 'UNPAID'
+        || obligation.status === 'EXEMPT'
+        || (view.collection.isClosed && obligation.status === 'CONVERTED_TO_FINE')
+      ));
       const members = await filterRoleVerifiedActiveMembers(
         guild,
         settings,
-        view.obligations.map(({ member }) => member),
+        manageable.map(({ member }) => member),
       );
-      if (members.length === 0) throw new ValidationError('ไม่มีสมาชิกที่รับยศแล้วในรอบนี้');
+      if (members.length === 0) throw new ValidationError('ไม่มีสมาชิกที่ยังจัดการผู้ส่งหรือยกเว้นได้ในรอบนี้');
       await interaction.showModal(buildWeeklyMemberRuleModal(
         collectionId,
         members,
         view.collection.standardAmount,
+        view.collection.isClosed,
       ));
+      return;
+    }
+    if (interaction.customId.startsWith('weekly:fine_policy:')) {
+      await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
+      const collectionId = entityId(interaction.customId, 'weekly:fine_policy:');
+      const [settings, view] = await Promise.all([
+        this.requireSettings(guild.id),
+        this.dependencies.weeklyDues.get(guild.id, collectionId),
+      ]);
+      const fineCandidates = view.obligations.filter(({ obligation }) => (
+        obligation.status === 'UNPAID' || obligation.status === 'CONVERTED_TO_FINE'
+      ));
+      const members = await filterRoleVerifiedActiveMembers(
+        guild,
+        settings,
+        fineCandidates.map(({ member }) => member),
+      );
+      if (members.length === 0) throw new ValidationError('ไม่มีสมาชิกที่ยังเลื่อนหรือแก้ค่าปรับได้ในรอบนี้');
+      const now = new Date();
+      const defaultFineAt = new Date(Math.max(
+        view.collection.conversionAt.getTime(),
+        now.getTime() + 24 * 60 * 60 * 1_000,
+      ));
+      await interaction.showModal(buildWeeklyFinePolicyModal(collectionId, members, {
+        fineAt: formatDateTimeInput(defaultFineAt, settings.timezone),
+        overdueFineAmount: view.collection.overdueFineAmount,
+        recurringFineAmount: view.collection.recurringFineAmount,
+      }));
     }
   }
 
@@ -206,6 +247,10 @@ export class WeeklyDuesInteractionHandler {
     }
     if (interaction.customId.startsWith('weekly:member_rule_modal:')) {
       await this.setMemberRule(interaction, guild, entityId(interaction.customId, 'weekly:member_rule_modal:'));
+      return;
+    }
+    if (interaction.customId.startsWith('weekly:fine_policy_modal:')) {
+      await this.setMemberFinePolicy(interaction, guild, entityId(interaction.customId, 'weekly:fine_policy_modal:'));
     }
   }
 
@@ -386,6 +431,54 @@ export class WeeklyDuesInteractionHandler {
       'success',
       rule === 'EXEMPT' ? 'ยกเว้นสมาชิกแล้ว' : 'กำหนดให้สมาชิกต้องส่งเงินแล้ว',
       `สมาชิก: <@${memberId}>${rule === 'REQUIRED' ? `\nยอดที่ต้องส่ง: **${amount.toLocaleString('th-TH')}**` : ''}`,
+      'Weekly Dues',
+    ));
+  }
+
+  private async setMemberFinePolicy(
+    interaction: ModalSubmitInteraction,
+    guild: Guild,
+    collectionId: string,
+  ): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
+    const memberId = interaction.fields.getStringSelectValues(weeklyComponentIds.finePolicyMember)[0];
+    if (memberId === undefined) throw new ValidationError('กรุณาเลือกสมาชิก');
+    const settings = await this.requireSettings(guild.id);
+    const fineConversionAt = parseDateTimeInput(
+      interaction.fields.getTextInputValue(weeklyComponentIds.finePolicyAt),
+      settings.timezone,
+      'เวลาเริ่มค่าปรับ',
+    );
+    const overdueFineAmount = parseMoney(
+      interaction.fields.getTextInputValue(weeklyComponentIds.finePolicyInitialAmount),
+      true,
+    );
+    const recurringFineAmount = parseMoney(
+      interaction.fields.getTextInputValue(weeklyComponentIds.finePolicyRecurringAmount),
+      true,
+    );
+    const view = await this.dependencies.weeklyDues.setMemberFinePolicy(
+      guild.id,
+      collectionId,
+      memberId,
+      fineConversionAt,
+      overdueFineAmount,
+      recurringFineAmount,
+      interaction.fields.getTextInputValue(weeklyComponentIds.finePolicyReason),
+      interaction.user.id,
+      new Date(),
+    );
+    await this.refreshCollection(view);
+    await interaction.editReply(buildNotice(
+      'success',
+      'บันทึกค่าปรับรายคนแล้ว',
+      [
+        `สมาชิก: <@${memberId}>`,
+        `เริ่มเป็นค่าปรับ: **${formatDateTimeInput(fineConversionAt, settings.timezone)}**`,
+        `ค่าปรับครั้งแรก: **${overdueFineAmount.toLocaleString('th-TH')}**`,
+        `เพิ่มทุก 24 ชั่วโมง: **${recurringFineAmount.toLocaleString('th-TH')}**`,
+      ].join('\n'),
       'Weekly Dues',
     ));
   }
