@@ -22,6 +22,7 @@ if (databaseUrl === undefined || guildId === undefined || token === undefined) {
       detail: 'กำลังติดตั้งเวอร์ชันใหม่ กรุณางดใช้งานชั่วคราว',
       actorDiscordUserId: null,
       now: new Date(),
+      announceWhenUnchanged: true,
     });
     console.log(`Automatic pre-start status: ${result.outcome}`);
   } catch (error) {

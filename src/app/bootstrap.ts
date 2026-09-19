@@ -1,6 +1,6 @@
 import { once } from 'node:events';
 import type { Server } from 'node:http';
-import { Client, Events, GatewayIntentBits } from 'discord.js';
+import { Client, Events, GatewayIntentBits, REST } from 'discord.js';
 import { loadEnv } from '../config/env.js';
 import { createDatabase } from '../infrastructure/db/client.js';
 import { ActivityInteractionHandler } from '../infrastructure/discord/activity-interaction-handler.js';
@@ -70,6 +70,21 @@ export async function bootstrap(): Promise<RunningApplication> {
   };
 
   await guildConfig.ensureGuild(env.DISCORD_GUILD_ID, env.TIMEZONE);
+  try {
+    const statusResult = await publishBotStatus({
+      rest: new REST({ version: '10' }).setToken(env.DISCORD_TOKEN),
+      guildConfig,
+      guildId: env.DISCORD_GUILD_ID,
+      status: 'UPDATING',
+      detail: 'กำลังเริ่มระบบเวอร์ชันใหม่ กรุณางดใช้งานชั่วคราว',
+      actorDiscordUserId: null,
+      now: new Date(),
+      announceWhenUnchanged: true,
+    });
+    logger.info({ outcome: statusResult.outcome }, 'automatic updating status completed');
+  } catch (error: unknown) {
+    logger.error({ err: error }, 'automatic updating status failed');
+  }
   await registerGuildCommands(env.DISCORD_TOKEN, env.DISCORD_APPLICATION_ID, env.DISCORD_GUILD_ID);
 
   const activityInteractions = new ActivityInteractionHandler({
@@ -222,12 +237,14 @@ export async function bootstrap(): Promise<RunningApplication> {
         detail: 'อัปเดตเสร็จแล้ว พร้อมใช้งานตามปกติ',
         actorDiscordUserId: null,
         now: new Date(),
+        announceWhenUnchanged: true,
       });
       logger.info({ outcome: statusResult.outcome }, 'automatic operational status completed');
     } catch (error: unknown) {
       logger.error({ err: error }, 'automatic operational status failed');
     }
     await queueCurrentRelease(db, env.DISCORD_GUILD_ID);
+    scheduler.wake();
   } catch (error: unknown) {
     await scheduler.stop();
     if (healthServer !== null) await closeServer(healthServer);

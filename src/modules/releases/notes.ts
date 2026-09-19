@@ -17,15 +17,17 @@ export type ReleaseNotes = z.infer<typeof releaseNotesSchema>;
 // Change the ID only for a new announcement; keep summaries about member-visible changes.
 // Set to null for a deployment that should not announce anything.
 export const currentRelease: ReleaseNotes | null = {
-  id: '2026-09-19.2',
-  title: 'ลดการใช้ฐานข้อมูลและแจ้งสถานะอัตโนมัติ',
+  id: '2026-09-19.3',
+  title: 'กู้คืนระบบและแก้การแจ้งสถานะหลังอัปเดต',
   added: [
-    'เมื่อ process พบข้อผิดพลาดร้ายแรง ระบบจะเปลี่ยนสถานะเป็น “ระบบขัดข้อง” และแท็ก Leader, Deputy และ Member ก่อนเริ่มการทำงานใหม่',
+    'ย้ายฐานข้อมูลหลักไป Railway PostgreSQL พร้อมกู้คืนข้อมูลสมาชิก เงินกองกลาง Stock ค่าปรับ ใบลา และรอบส่งเงินเดิม',
   ],
   improved: [
-    'Scheduler จะรอถึงเวลางานถัดไปและตื่นทันทีเมื่อมีคำสั่งใหม่ ลดการใช้ compute ของฐานข้อมูลขณะไม่มีงาน',
+    'เมื่อบอทเริ่มทำงานสำเร็จ ระบบจะรีเฟรชแผงสถานะและส่งประกาศพร้อมใช้งานล่าสุดลงท้าย Channel สถานะบอท',
+    'ระบบจะปลุก Scheduler ทันทีหลังสร้างงานประกาศอัปเดต เพื่อให้ข่าวอัปเดตถูกส่งโดยไม่ต้องรอรอบตรวจถัดไป',
   ],
   fixed: [
-    'ป้องกันบอทหยุดทั้งระบบเมื่อ PostgreSQL ปิด idle connection โดยระบบจะบันทึกข้อผิดพลาดและสร้าง connection ใหม่เมื่อมีงานถัดไป',
+    'แก้กรณีฐานข้อมูลระบุว่า Bot ใช้งานได้ปกติอยู่แล้ว ทำให้ไม่มีข้อความสถานะใหม่หลัง Deploy',
+    'แก้ประกาศอัปเดตไม่ถูกส่งเมื่อ Scheduler เข้าสู่ช่วงพักรอระยะยาว',
   ],
 };

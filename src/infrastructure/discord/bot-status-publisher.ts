@@ -20,6 +20,7 @@ export interface PublishBotStatusInput {
   readonly detail: string | null;
   readonly actorDiscordUserId: string | null;
   readonly now: Date;
+  readonly announceWhenUnchanged?: boolean;
 }
 
 export type PublishBotStatusResult =
@@ -36,13 +37,6 @@ export async function publishBotStatus(input: PublishBotStatusInput): Promise<Pu
   if (roleIds === null) {
     return { outcome: 'SKIPPED', reason: 'STATUS_ROLES_NOT_CONFIGURED' };
   }
-  if (settings.botStatusMessageId !== null && settings.botStatus === input.status) {
-    return {
-      outcome: 'UNCHANGED',
-      channelId: settings.botStatusChannelId,
-      roleIds,
-    };
-  }
 
   const display = {
     status: input.status,
@@ -50,7 +44,7 @@ export async function publishBotStatus(input: PublishBotStatusInput): Promise<Pu
     actorDiscordUserId: input.actorDiscordUserId,
     updatedAt: input.now,
   };
-  const message = await upsertStatusMessage(
+  const { message, created } = await upsertStatusMessage(
     input.rest,
     settings.botStatusChannelId,
     settings.botStatusMessageId,
@@ -64,6 +58,18 @@ export async function publishBotStatus(input: PublishBotStatusInput): Promise<Pu
     input.actorDiscordUserId,
     input.now,
   );
+  const statusChanged = settings.botStatus !== input.status || settings.botStatusDetail !== input.detail;
+  const shouldAnnounce = input.announceWhenUnchanged === true
+    || settings.botStatusMessageId === null
+    || created
+    || statusChanged;
+  if (!shouldAnnounce) {
+    return {
+      outcome: 'UNCHANGED',
+      channelId: settings.botStatusChannelId,
+      roleIds,
+    };
+  }
   await input.rest.post(Routes.channelMessages(settings.botStatusChannelId), {
     body: buildBotStatusAlert(display, roleIds),
   });
@@ -87,13 +93,15 @@ async function upsertStatusMessage(
   channelId: string,
   messageId: string | null,
   body: ReturnType<typeof buildBotStatusPanel>,
-): Promise<APIMessage> {
+): Promise<{ readonly message: APIMessage; readonly created: boolean }> {
   if (messageId !== null) {
     try {
-      return await rest.patch(Routes.channelMessage(channelId, messageId), { body }) as APIMessage;
+      const message = await rest.patch(Routes.channelMessage(channelId, messageId), { body }) as APIMessage;
+      return { message, created: false };
     } catch (error: unknown) {
       if (!(error instanceof DiscordAPIError) || error.code !== UNKNOWN_MESSAGE_ERROR) throw error;
     }
   }
-  return await rest.post(Routes.channelMessages(channelId), { body }) as APIMessage;
+  const message = await rest.post(Routes.channelMessages(channelId), { body }) as APIMessage;
+  return { message, created: true };
 }

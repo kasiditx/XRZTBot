@@ -9,7 +9,6 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "prestart": "node scripts/publish-bot-status.mjs",
     "start": "node dist/index.js",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
