@@ -18,8 +18,10 @@ export type ReleaseNotes = z.infer<typeof releaseNotesSchema>;
 // Set to null for a deployment that should not announce anything.
 export const currentRelease: ReleaseNotes | null = {
   id: '2026-09-19.1',
-  title: 'เพิ่มความเสถียรของการเชื่อมต่อฐานข้อมูล',
-  added: [],
+  title: 'แก้บอทล่มและแจ้งสถานะอัตโนมัติ',
+  added: [
+    'เมื่อ process พบข้อผิดพลาดร้ายแรง ระบบจะเปลี่ยนสถานะเป็น “ระบบขัดข้อง” และแท็ก Leader, Deputy และ Member ก่อนเริ่มการทำงานใหม่',
+  ],
   improved: [],
   fixed: [
     'ป้องกันบอทหยุดทั้งระบบเมื่อ PostgreSQL ปิด idle connection โดยระบบจะบันทึกข้อผิดพลาดและสร้าง connection ใหม่เมื่อมีงานถัดไป',

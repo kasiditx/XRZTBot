@@ -729,7 +729,7 @@ function parseRosterTitleSelection(value: string | undefined): RosterTitleSelect
 }
 
 function parseBotOperationalStatus(value: string): BotOperationalStatus {
-  if (value === 'OPERATIONAL' || value === 'UPDATING') return value;
+  if (value === 'OPERATIONAL' || value === 'UPDATING' || value === 'DEGRADED') return value;
   throw new ValidationError('สถานะ Bot ไม่ถูกต้อง');
 }
 
@@ -743,11 +743,15 @@ function optionalDetail(value: string | null): string | null {
 }
 
 function botStatusLabel(status: BotOperationalStatus): string {
-  return status === 'OPERATIONAL' ? 'ใช้งานได้ปกติ' : 'กำลังอัปเดต';
+  if (status === 'OPERATIONAL') return 'ใช้งานได้ปกติ';
+  if (status === 'UPDATING') return 'กำลังอัปเดต';
+  return 'ระบบขัดข้อง';
 }
 
 function botStatusEmoji(status: BotOperationalStatus): string {
-  return status === 'OPERATIONAL' ? '🟢' : '🟠';
+  if (status === 'OPERATIONAL') return '🟢';
+  if (status === 'UPDATING') return '🟠';
+  return '🔴';
 }
 
 function parseRosterMemberContext(

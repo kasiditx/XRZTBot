@@ -115,6 +115,7 @@ const adminCommand = new SlashCommandBuilder()
         .addChoices(
           { name: 'ใช้งานได้ปกติ', value: 'OPERATIONAL' },
           { name: 'กำลังอัปเดต — งดใช้งานชั่วคราว', value: 'UPDATING' },
+          { name: 'ระบบขัดข้อง — งดใช้งานชั่วคราว', value: 'DEGRADED' },
         ))
       .addStringOption((option) => option
         .setName('detail')

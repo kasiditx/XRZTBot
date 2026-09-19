@@ -1,0 +1,1 @@
+ALTER TYPE "public"."bot_operational_status" ADD VALUE 'DEGRADED';

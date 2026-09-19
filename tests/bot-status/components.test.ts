@@ -37,6 +37,20 @@ describe('bot status Discord components', () => {
     expect(embed?.description).toContain('งดใช้งานคำสั่งของ Bot ชั่วคราว');
   });
 
+  it('shows a red outage status when the process reports a fatal error', () => {
+    const message = buildBotStatusPanel({
+      status: 'DEGRADED',
+      detail: 'กำลังเริ่มการทำงานใหม่โดยอัตโนมัติ',
+      actorDiscordUserId: null,
+      updatedAt,
+    });
+    const embed = message.embeds[0]?.toJSON();
+
+    expect(embed?.color).toBe(0xed4245);
+    expect(embed?.description).toContain('🔴 ระบบขัดข้อง');
+    expect(embed?.description).toContain('กำลังเริ่มการทำงานใหม่โดยอัตโนมัติ');
+  });
+
   it('mentions only the configured leader, deputy and member roles in notifications', () => {
     const message = buildBotStatusAlert({
       status: 'UPDATING',

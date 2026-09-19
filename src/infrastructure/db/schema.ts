@@ -39,7 +39,7 @@ export const weeklyObligationStatusEnum = pgEnum('weekly_obligation_status', ['U
 export const weeklyItemObligationStatusEnum = pgEnum('weekly_item_obligation_status', ['UNPAID', 'EXEMPT', 'PENDING_VERIFICATION', 'FULFILLED']);
 export const inventoryActionEnum = pgEnum('inventory_action', ['OPENING', 'ADD', 'REMOVE', 'WITHDRAWAL', 'DEPOSIT', 'REVERSAL']);
 export const withdrawalStatusEnum = pgEnum('withdrawal_status', ['PENDING', 'PARTIALLY_FULFILLED', 'FULFILLED', 'CANCELLED']);
-export const botOperationalStatusEnum = pgEnum('bot_operational_status', ['OPERATIONAL', 'UPDATING']);
+export const botOperationalStatusEnum = pgEnum('bot_operational_status', ['OPERATIONAL', 'UPDATING', 'DEGRADED']);
 
 export const guildSettings = pgTable('guild_settings', {
   guildId: text('guild_id').primaryKey(),

@@ -56,11 +56,19 @@ function botStatusDisplay(status: BotOperationalStatus) {
       tone: 'success' as const,
     };
   }
+  if (status === 'UPDATING') {
+    return {
+      emoji: '🟠',
+      label: 'กำลังอัปเดต',
+      guidance: 'ขอให้งดใช้งานคำสั่งของ Bot ชั่วคราวจนกว่าจะมีประกาศพร้อมใช้งาน',
+      tone: 'warning' as const,
+    };
+  }
   return {
-    emoji: '🟠',
-    label: 'กำลังอัปเดต',
-    guidance: 'ขอให้งดใช้งานคำสั่งของ Bot ชั่วคราวจนกว่าจะมีประกาศพร้อมใช้งาน',
-    tone: 'warning' as const,
+    emoji: '🔴',
+    label: 'ระบบขัดข้อง',
+    guidance: 'ระบบตรวจพบข้อผิดพลาดและหยุดให้บริการชั่วคราว กรุณารอประกาศพร้อมใช้งานอีกครั้ง',
+    tone: 'danger' as const,
   };
 }
 
