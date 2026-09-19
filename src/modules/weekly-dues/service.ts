@@ -784,7 +784,7 @@ export class WeeklyDuesService {
       .where(and(
         eq(weeklyObligations.guildId, guildId),
         eq(weeklyObligations.status, 'CONVERTED_TO_FINE'),
-        eq(fines.status, 'UNPAID'),
+        inArray(fines.status, ['UNPAID', 'CANCELLED']),
         isNull(weeklyCollections.cancelledAt),
       ));
     let restoredCount = 0;
@@ -893,12 +893,14 @@ async function restoreConvertedObligation(
     .limit(1)
     .for('update');
   if (fine === undefined) throw new NotFoundError('ไม่พบค่าปรับของสมาชิกนี้');
-  if (fine.status !== 'UNPAID') {
+  if (fine.status !== 'UNPAID' && fine.status !== 'CANCELLED') {
     throw new ConflictError('ย้ายกลับเข้ารอบส่งเงินไม่ได้ เพราะค่าปรับมีหลักฐานรอตรวจหรือชำระแล้ว');
   }
   const firstPenaltyAmount = Math.max(0, fine.principalAmount - obligation.amount);
   const accruedFineAmount = firstPenaltyAmount + fine.accruedSurchargeAmount;
-  await cancelFineWithTransaction(tx, collection.guildId, fine.id, actorDiscordUserId, reason, now);
+  if (fine.status === 'UNPAID') {
+    await cancelFineWithTransaction(tx, collection.guildId, fine.id, actorDiscordUserId, reason, now);
+  }
   const [restored] = await tx
     .update(weeklyObligations)
     .set({

@@ -17,8 +17,8 @@ export type ReleaseNotes = z.infer<typeof releaseNotesSchema>;
 // Change the ID only for a new announcement; keep summaries about member-visible changes.
 // Set to null for a deployment that should not announce anything.
 export const currentRelease: ReleaseNotes | null = {
-  id: '2026-09-20.2',
-  title: 'ส่งเงินต่อหลังหมดเวลาและรวมค่าปรับในรอบเดิม',
+  id: '2026-09-20.3',
+  title: 'กู้ค่าปรับที่ยกเลิกกลับเข้ารอบส่งเงิน',
   added: [
     'ยอดส่งเงินหลังหมดเวลาจะแสดงยอดเดิมรวมค่าปรับ และยังส่งหลักฐานผ่านรอบส่งเงินประจำสัปดาห์เดิมได้',
     'ระบบเพิ่มค่าปรับในยอดของสมาชิกทุก 24 ชั่วโมงตามเงื่อนไขของรอบหรือค่าที่กำหนดรายคน',
@@ -28,6 +28,6 @@ export const currentRelease: ReleaseNotes | null = {
     'ค่าปรับรายสัปดาห์ที่ยังไม่ชำระในระบบเดิมจะถูกย้ายกลับเข้ารอบส่งเงินเดิมโดยอัตโนมัติ',
   ],
   fixed: [
-    'แก้รอบส่งเงินถูกปิดทันทีเมื่อหมดเวลา ทำให้สมาชิกส่งยอดรวมค่าปรับผ่านรอบเดิมไม่ได้',
+    'แก้รายการรายสัปดาห์ค้างสถานะเป็นค่าปรับแล้ว หลังหัวแก๊งยกเลิกบิลค่าปรับใน Channel ค่าปรับ',
   ],
 };

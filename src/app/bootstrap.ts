@@ -190,7 +190,7 @@ export async function bootstrap(): Promise<RunningApplication> {
     env.DISCORD_GUILD_ID,
     new Date(),
   );
-  logger.info({ restoredWeeklyFines }, 'restored unpaid weekly fines into their weekly collections');
+  logger.info({ restoredWeeklyFines }, 'restored unpaid or cancelled weekly fines into their weekly collections');
   const queuedWeeklyItemRefreshes = await weeklyItemsService.ensurePublishedAnnouncementRefreshes(
     env.DISCORD_GUILD_ID,
     new Date(),

@@ -325,7 +325,7 @@ describeWithDatabase('WeeklyDuesService PostgreSQL integration', () => {
     );
   });
 
-  it('restores legacy unpaid weekly fines into the original weekly collection', async () => {
+  it('restores a manually cancelled legacy weekly fine into the original weekly collection', async () => {
     const created = await service.create({
       guildId,
       requestId: 'weekly-legacy-fine-restore',
@@ -350,6 +350,7 @@ describeWithDatabase('WeeklyDuesService PostgreSQL integration', () => {
       accruedSurchargeAmount: 20_000,
       dueAt: created.collection.conversionAt,
       nextSurchargeAt: new Date(created.collection.conversionAt.getTime() + 48 * 60 * 60 * 1_000),
+      status: 'CANCELLED',
       sourceType: 'WEEKLY_DUES',
       sourceId: obligation.id,
       createdByDiscordUserId: 'SYSTEM',
