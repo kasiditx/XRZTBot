@@ -7,6 +7,43 @@ export interface WeeklyFineAmounts {
   readonly recurringPenaltyAmount: number;
 }
 
+export interface WeeklyFineAccrual {
+  readonly accruedFineAmount: number;
+  readonly nextAccrualAt: Date;
+}
+
+const FINE_INTERVAL_MS = 24 * 60 * 60 * 1_000;
+
+export function calculateWeeklyFineAccrual(
+  firstPenaltyAt: Date,
+  firstPenaltyAmount: number,
+  recurringPenaltyAmount: number,
+  now: Date,
+): WeeklyFineAccrual {
+  for (const amount of [firstPenaltyAmount, recurringPenaltyAmount]) {
+    if (!Number.isSafeInteger(amount) || amount < 0) {
+      throw new ValidationError('ค่าปรับรายสัปดาห์ต้องเป็นจำนวนเต็มที่ไม่ติดลบ');
+    }
+  }
+  const firstAtMs = firstPenaltyAt.getTime();
+  const nowMs = now.getTime();
+  if (!Number.isFinite(firstAtMs) || !Number.isFinite(nowMs)) {
+    throw new ValidationError('เวลาคิดค่าปรับรายสัปดาห์ไม่ถูกต้อง');
+  }
+  if (nowMs < firstAtMs) {
+    return { accruedFineAmount: 0, nextAccrualAt: firstPenaltyAt };
+  }
+  const recurringIntervals = Math.floor((nowMs - firstAtMs) / FINE_INTERVAL_MS);
+  const accruedFineAmount = firstPenaltyAmount + recurringPenaltyAmount * recurringIntervals;
+  if (!Number.isSafeInteger(accruedFineAmount)) {
+    throw new ValidationError('ยอดค่าปรับสะสมสูงเกินขอบเขตที่ระบบรองรับ');
+  }
+  return {
+    accruedFineAmount,
+    nextAccrualAt: new Date(firstAtMs + (recurringIntervals + 1) * FINE_INTERVAL_MS),
+  };
+}
+
 export function buildWeeklyOverdueFine(
   obligationAmount: number,
   firstPenaltyAmount: number,

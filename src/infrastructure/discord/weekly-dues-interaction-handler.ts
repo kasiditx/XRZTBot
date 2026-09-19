@@ -22,7 +22,12 @@ import { hasCapability, resolveAuthority, type AuthorityLevel, type Capability }
 import type { GuildConfigService } from '../../modules/guild-config/service.js';
 import type { MemberService } from '../../modules/members/service.js';
 import { validateWeeklyPaymentImage } from '../../modules/weekly-dues/rules.js';
-import type { WeeklyDuesService, WeeklyMemberRule, WeeklyPaymentProofView } from '../../modules/weekly-dues/service.js';
+import {
+  weeklyAmountDue,
+  type WeeklyDuesService,
+  type WeeklyMemberRule,
+  type WeeklyPaymentProofView,
+} from '../../modules/weekly-dues/service.js';
 import type { GuildSettings } from '../db/schema.js';
 import { componentIds } from './components.js';
 import {
@@ -210,7 +215,7 @@ export class WeeklyDuesInteractionHandler {
       if (own === undefined) throw new AuthorizationError('คุณไม่มีรายการเรียกเก็บในรอบนี้');
       await interaction.showModal(buildWeeklyPaymentModal(
         view,
-        own.obligation.amount,
+        weeklyAmountDue(own.obligation),
         requireEvidenceInputMode(interaction.values[0]),
       ));
       return;
@@ -362,7 +367,7 @@ export class WeeklyDuesInteractionHandler {
       hasCapability(await this.resolveCurrentAuthority(guild, interaction.user.id), 'FINANCIAL_REVERSE'),
     );
     await this.updateProofLog(view);
-    await interaction.editReply(buildNotice('warning', 'ปฏิเสธ/ยกเลิกการชำระแล้ว', 'หากพ้นกำหนด ระบบจะสร้างค่าปรับตามเงื่อนไขทันที', 'Weekly Dues'));
+    await interaction.editReply(buildNotice('warning', 'ปฏิเสธ/ยกเลิกการชำระแล้ว', 'หากพ้นกำหนด ระบบจะรวมค่าปรับเข้ายอดส่งเงินของรอบนี้ทันที', 'Weekly Dues'));
   }
 
   private async overrideAmount(interaction: ModalSubmitInteraction, guild: Guild, collectionId: string): Promise<void> {

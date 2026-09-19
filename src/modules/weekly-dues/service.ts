@@ -13,13 +13,9 @@ import {
   weeklyPaymentProofs,
 } from '../../infrastructure/db/schema.js';
 import { writeAudit as persistAudit } from '../audit/service.js';
-import {
-  adjustUnpaidFineWithTransaction,
-  cancelFineWithTransaction,
-  createSourcedFineWithTransaction,
-} from '../fines/service.js';
+import { cancelFineWithTransaction } from '../fines/service.js';
 import { appendTreasuryEntryWithTransaction, reverseSourcedTreasuryEntry } from '../treasury/service.js';
-import { buildWeeklyOverdueFine } from './rules.js';
+import { calculateWeeklyFineAccrual } from './rules.js';
 
 export const WEEKLY_RESERVE_EXEMPTION_REASON = 'ยกเว้นเนื่องจากเป็นตำแหน่งสำรอง';
 export const WEEKLY_ADMIN_EXEMPTION_REASON = 'ยกเว้นโดย Admin';
@@ -142,6 +138,7 @@ export class WeeklyDuesService {
         fineConversionAt: collection.conversionAt,
         overdueFineAmountOverride: input.overdueFineAmount,
         recurringFineAmountOverride: input.recurringFineAmount,
+        accruedFineAmount: 0,
         createdAt: input.now,
         updatedAt: input.now,
       })));
@@ -194,6 +191,7 @@ export class WeeklyDuesService {
           .set({
             status: 'EXEMPT',
             amount: 0,
+            accruedFineAmount: 0,
             rejectionReason: WEEKLY_RESERVE_EXEMPTION_REASON,
             decidedAt: now,
             decidedByDiscordUserId: actorDiscordUserId,
@@ -248,7 +246,7 @@ export class WeeklyDuesService {
     validateAmount(amount, 'ยอดเฉพาะสมาชิก', false);
     await this.db.transaction(async (tx) => {
       const collection = await lockCollection(tx, guildId, collectionId);
-      if (collection.isClosed || now >= collection.conversionAt) throw new ConflictError('รอบส่งเงินนี้ปิดแล้ว');
+      if (collection.cancelledAt !== null) throw new ConflictError('รอบส่งเงินนี้ถูกยกเลิกแล้ว');
       const [row] = await tx
         .select({ obligation: weeklyObligations })
         .from(weeklyObligations)
@@ -292,7 +290,7 @@ export class WeeklyDuesService {
     await this.db.transaction(async (tx) => {
       const collection = await lockCollection(tx, guildId, collectionId);
       if (collection.cancelledAt !== null) throw new ConflictError('รอบส่งเงินนี้ถูกยกเลิกแล้ว');
-      const isPastDeadline = collection.isClosed || now >= collection.conversionAt;
+      const isPastDeadline = now >= collection.conversionAt;
       const [row] = await tx
         .select({ obligation: weeklyObligations })
         .from(weeklyObligations)
@@ -306,36 +304,26 @@ export class WeeklyDuesService {
       if (row === undefined) throw new NotFoundError('สมาชิกนี้ไม่ได้อยู่ในรอบส่งเงิน');
       const canEdit = row.obligation.status === 'UNPAID'
         || row.obligation.status === 'EXEMPT'
-        || (rule === 'EXEMPT' && row.obligation.status === 'CONVERTED_TO_FINE');
+        || row.obligation.status === 'CONVERTED_TO_FINE';
       if (!canEdit) {
         throw new ConflictError('แก้ไขไม่ได้ เพราะรายการนี้มีหลักฐานรอตรวจหรือชำระแล้ว');
       }
-      if (row.obligation.status === 'CONVERTED_TO_FINE') {
-        if (row.obligation.convertedFineId === null) throw new Error('Converted weekly obligation has no fine reference');
-        const [fine] = await tx
-          .select()
-          .from(fines)
-          .where(and(eq(fines.guildId, guildId), eq(fines.id, row.obligation.convertedFineId)))
-          .limit(1)
-          .for('update');
-        if (fine === undefined) throw new NotFoundError('ไม่พบค่าปรับของสมาชิกนี้');
-        if (fine.status !== 'UNPAID') {
-          throw new ConflictError('ยกเว้นไม่ได้ เพราะค่าปรับมีหลักฐานรอตรวจหรือชำระแล้ว');
-        }
-        await cancelFineWithTransaction(
-          tx,
-          guildId,
-          fine.id,
-          actorDiscordUserId,
-          reason ?? WEEKLY_ADMIN_EXEMPTION_REASON,
-          now,
-        );
-      }
-      const [updated] = await tx
+      const current = row.obligation.status === 'CONVERTED_TO_FINE'
+        ? await restoreConvertedObligation(
+            tx,
+            collection,
+            row.obligation,
+            actorDiscordUserId,
+            reason ?? 'ย้ายค่าปรับกลับเข้ารอบส่งเงินรายสัปดาห์',
+            now,
+          )
+        : row.obligation;
+      const [changed] = await tx
         .update(weeklyObligations)
         .set(rule === 'EXEMPT'
           ? {
               amount: 0,
+              accruedFineAmount: 0,
               status: 'EXEMPT',
               rejectionReason: reason,
               convertedFineId: null,
@@ -345,29 +333,23 @@ export class WeeklyDuesService {
             }
           : {
               amount,
+              accruedFineAmount: 0,
               status: 'UNPAID',
               rejectionReason: null,
               decidedAt: null,
               decidedByDiscordUserId: null,
               updatedAt: now,
             })
-        .where(eq(weeklyObligations.id, row.obligation.id))
+        .where(eq(weeklyObligations.id, current.id))
         .returning();
-      if (updated === undefined) throw new Error('Weekly member rule update did not return a row');
-      if (rule === 'REQUIRED' && isPastDeadline) {
-        const fineConversionAt = updated.fineConversionAt ?? collection.conversionAt;
-        if (now >= fineConversionAt) {
-          await convertObligation(tx, collection, updated, actorDiscordUserId, now);
-        } else {
-          await queueWeeklyJob(
-            tx,
-            guildId,
-            'WEEKLY_CONVERT',
-            collectionId,
-            fineConversionAt,
-            `convert:${updated.id}:${String(fineConversionAt.getTime())}`,
-          );
-        }
+      if (changed === undefined) throw new Error('Weekly member rule update did not return a row');
+      let updated = changed;
+      if (rule === 'REQUIRED') {
+        if (collection.isClosed) await reopenCollection(tx, collection, actorDiscordUserId, now);
+        if (isPastDeadline) updated = await accrueWeeklyObligation(tx, collection, changed, now);
+        await queueNextWeeklyAccrual(tx, collection, updated, now);
+      } else {
+        await closeCollectionIfSettled(tx, collection, actorDiscordUserId, now);
       }
       await queueWeeklyRefresh(tx, guildId, collectionId, now);
       await writeAudit(
@@ -376,7 +358,7 @@ export class WeeklyDuesService {
         actorDiscordUserId,
         rule === 'EXEMPT' ? 'WEEKLY_MEMBER_EXEMPTED' : 'WEEKLY_MEMBER_REQUIRED',
         'WEEKLY_OBLIGATION',
-        row.obligation.id,
+        current.id,
         row.obligation,
         updated,
         reason ?? undefined,
@@ -422,42 +404,37 @@ export class WeeklyDuesService {
       if (row.obligation.status !== 'UNPAID' && row.obligation.status !== 'CONVERTED_TO_FINE') {
         throw new ConflictError('เลื่อนหรือแก้ค่าปรับได้เฉพาะสมาชิกที่ยังไม่ส่งและยังไม่มีหลักฐานรอตรวจ');
       }
-
+      const current = row.obligation.status === 'CONVERTED_TO_FINE'
+        ? await restoreConvertedObligation(
+            tx,
+            collection,
+            row.obligation,
+            actorDiscordUserId,
+            adjustmentReason,
+            now,
+          )
+        : row.obligation;
       const [updated] = await tx
         .update(weeklyObligations)
         .set({
           fineConversionAt,
           overdueFineAmountOverride: overdueFineAmount,
           recurringFineAmountOverride: recurringFineAmount,
+          accruedFineAmount: 0,
           updatedAt: now,
         })
-        .where(eq(weeklyObligations.id, row.obligation.id))
+        .where(eq(weeklyObligations.id, current.id))
         .returning();
       if (updated === undefined) throw new Error('Weekly fine policy update did not return a row');
-
-      if (row.obligation.status === 'CONVERTED_TO_FINE') {
-        if (row.obligation.convertedFineId === null) throw new Error('Converted weekly obligation has no fine reference');
-        await adjustUnpaidFineWithTransaction(tx, {
-          guildId,
-          fineId: row.obligation.convertedFineId,
-          principalAmount: row.obligation.amount + overdueFineAmount,
-          surchargeAmount: recurringFineAmount,
-          dueAt: fineConversionAt,
-          nextSurchargeAt: DateTime.fromJSDate(fineConversionAt).plus({ hours: 24 }).toJSDate(),
-          actorDiscordUserId,
-          reason: adjustmentReason,
-          now,
-        });
-      } else {
-        await queueWeeklyJob(
-          tx,
-          guildId,
-          'WEEKLY_CONVERT',
-          collectionId,
-          fineConversionAt,
-          `convert:${row.obligation.id}:${String(fineConversionAt.getTime())}`,
-        );
-      }
+      if (collection.isClosed) await reopenCollection(tx, collection, actorDiscordUserId, now);
+      await queueWeeklyJob(
+        tx,
+        guildId,
+        'WEEKLY_CONVERT',
+        collectionId,
+        fineConversionAt,
+        `accrue:${String(fineConversionAt.getTime())}`,
+      );
       await queueWeeklyRefresh(tx, guildId, collectionId, now);
       await writeAudit(
         tx,
@@ -465,7 +442,7 @@ export class WeeklyDuesService {
         actorDiscordUserId,
         'WEEKLY_FINE_POLICY_UPDATED',
         'WEEKLY_OBLIGATION',
-        row.obligation.id,
+        current.id,
         row.obligation,
         updated,
         adjustmentReason,
@@ -497,11 +474,14 @@ export class WeeklyDuesService {
         .for('update');
       if (row === undefined) throw new AuthorizationError('คุณไม่มีรายการเรียกเก็บในรอบนี้');
       if (row.obligation.status !== 'UNPAID') throw new ConflictError(obligationConflictMessage(row.obligation.status));
-      if (amount !== row.obligation.amount) throw new ValidationError(`ต้องส่งเต็มจำนวน ${row.obligation.amount.toLocaleString('th-TH')}`);
+      const obligation = await accrueWeeklyObligation(tx, collection, row.obligation, now);
+      await queueNextWeeklyAccrual(tx, collection, obligation, now);
+      const totalDue = weeklyAmountDue(obligation);
+      if (amount !== totalDue) throw new ValidationError(`ต้องส่งเต็มจำนวน ${totalDue.toLocaleString('th-TH')}`);
       return {
         proofId: randomUUID(),
         collection,
-        obligation: row.obligation,
+        obligation,
         member: toMemberIdentity(row.member),
         amount,
       };
@@ -531,7 +511,10 @@ export class WeeklyDuesService {
       const member = await getMember(tx, obligation.memberId);
       if (member.discordUserId !== input.submittedByDiscordUserId) throw new AuthorizationError('ส่งหลักฐานแทนสมาชิกคนอื่นไม่ได้');
       if (obligation.status !== 'UNPAID') throw new ConflictError(obligationConflictMessage(obligation.status));
-      if (obligation.amount !== input.prepared.amount) throw new ConflictError('ยอดเรียกเก็บมีการเปลี่ยนแปลง กรุณาส่งใหม่');
+      const accrued = await accrueWeeklyObligation(tx, collection, obligation, input.now);
+      if (weeklyAmountDue(accrued) !== input.prepared.amount) {
+        throw new ConflictError('ยอดเรียกเก็บมีการเปลี่ยนแปลง กรุณาส่งใหม่');
+      }
 
       const [proof] = await tx
         .insert(weeklyPaymentProofs)
@@ -539,7 +522,7 @@ export class WeeklyDuesService {
           id: input.prepared.proofId,
           guildId: collection.guildId,
           requestId: input.requestId,
-          obligationId: obligation.id,
+          obligationId: accrued.id,
           submittedByDiscordUserId: input.submittedByDiscordUserId,
           amount: input.prepared.amount,
           attachmentId: input.attachmentId,
@@ -559,7 +542,7 @@ export class WeeklyDuesService {
           submittedAt: input.now,
           updatedAt: input.now,
         })
-        .where(eq(weeklyObligations.id, obligation.id));
+        .where(eq(weeklyObligations.id, accrued.id));
       await queueWeeklyRefresh(tx, collection.guildId, collection.id, input.now);
       await writeAudit(tx, collection.guildId, input.submittedByDiscordUserId, 'WEEKLY_PAYMENT_SUBMITTED', 'WEEKLY_PAYMENT_PROOF', proof.id, null, proof);
       return proof.id;
@@ -598,6 +581,7 @@ export class WeeklyDuesService {
         .update(weeklyObligations)
         .set({ status: 'PAID', decidedAt: now, decidedByDiscordUserId: actorDiscordUserId, rejectionReason: null, updatedAt: now })
         .where(eq(weeklyObligations.id, context.obligation.id));
+      await closeCollectionIfSettled(tx, context.collection, actorDiscordUserId, now);
       await queueWeeklyRefresh(tx, guildId, context.collection.id, now);
       await queueWeeklyProofRefresh(tx, guildId, proofId, now);
       await writeAudit(tx, guildId, actorDiscordUserId, 'WEEKLY_PAYMENT_APPROVED', 'WEEKLY_PAYMENT_PROOF', proofId, context.proof, { status: 'APPROVED' });
@@ -633,9 +617,9 @@ export class WeeklyDuesService {
         .where(eq(weeklyObligations.id, context.obligation.id))
         .returning();
       if (unpaid === undefined) throw new Error('Weekly payment rejection did not return a row');
-      if (now >= context.collection.conversionAt) {
-        await convertObligation(tx, context.collection, unpaid, actorDiscordUserId, now);
-      }
+      if (context.collection.isClosed) await reopenCollection(tx, context.collection, actorDiscordUserId, now);
+      const accrued = await accrueWeeklyObligation(tx, context.collection, unpaid, now);
+      await queueNextWeeklyAccrual(tx, context.collection, accrued, now);
       await queueWeeklyRefresh(tx, guildId, context.collection.id, now);
       await writeAudit(tx, guildId, actorDiscordUserId, 'WEEKLY_PAYMENT_REJECTED', 'WEEKLY_PAYMENT_PROOF', proofId, context.proof, { status: 'REJECTED', rejectionReason }, rejectionReason);
       await tx.insert(scheduledJobs).values({
@@ -722,6 +706,8 @@ export class WeeklyDuesService {
         .update(weeklyObligations)
         .set({
           status: 'EXEMPT',
+          accruedFineAmount: 0,
+          convertedFineId: null,
           decidedAt: now,
           decidedByDiscordUserId: actorDiscordUserId,
           rejectionReason: cancellationReason,
@@ -759,32 +745,18 @@ export class WeeklyDuesService {
   public async processConversion(guildId: string, collectionId: string, now: Date): Promise<WeeklyCollectionView> {
     await this.db.transaction(async (tx) => {
       const collection = await lockCollection(tx, guildId, collectionId);
-      if (collection.cancelledAt !== null) return;
-      if (now < collection.conversionAt) throw new ConflictError('ยังไม่ถึงเวลาปิดรอบส่งเงิน');
+      if (collection.cancelledAt !== null || collection.isClosed) return;
+      if (now < collection.conversionAt) throw new ConflictError('ยังไม่ถึงเวลาเริ่มคิดค่าปรับ');
       const unpaid = await tx
         .select()
         .from(weeklyObligations)
         .where(and(eq(weeklyObligations.collectionId, collectionId), eq(weeklyObligations.status, 'UNPAID')))
         .for('update');
       for (const obligation of unpaid) {
-        const fineConversionAt = obligation.fineConversionAt ?? collection.conversionAt;
-        if (now < fineConversionAt) {
-          await queueWeeklyJob(
-            tx,
-            guildId,
-            'WEEKLY_CONVERT',
-            collectionId,
-            fineConversionAt,
-            `convert:${obligation.id}:${String(fineConversionAt.getTime())}`,
-          );
-          continue;
-        }
-        await convertObligation(tx, collection, obligation, 'SYSTEM', now);
+        const accrued = await accrueWeeklyObligation(tx, collection, obligation, now);
+        await queueNextWeeklyAccrual(tx, collection, accrued, now);
       }
-      if (!collection.isClosed) {
-        await tx.update(weeklyCollections).set({ isClosed: true, updatedAt: now }).where(eq(weeklyCollections.id, collection.id));
-        await writeAudit(tx, guildId, 'SYSTEM', 'WEEKLY_COLLECTION_CLOSED', 'WEEKLY_COLLECTION', collection.id, collection, { isClosed: true });
-      }
+      await closeCollectionIfSettled(tx, collection, 'SYSTEM', now);
       await queueWeeklyRefresh(tx, guildId, collectionId, now);
     });
     return this.get(guildId, collectionId);
@@ -803,6 +775,43 @@ export class WeeklyDuesService {
     return { proof: row.proof, obligation: row.obligation, collection: row.collection, member: toMemberIdentity(row.member) };
   }
 
+  public async restoreOutstandingWeeklyFines(guildId: string, now: Date): Promise<number> {
+    const rows = await this.db
+      .select({ obligationId: weeklyObligations.id, collectionId: weeklyObligations.collectionId })
+      .from(weeklyObligations)
+      .innerJoin(weeklyCollections, eq(weeklyObligations.collectionId, weeklyCollections.id))
+      .innerJoin(fines, eq(weeklyObligations.convertedFineId, fines.id))
+      .where(and(
+        eq(weeklyObligations.guildId, guildId),
+        eq(weeklyObligations.status, 'CONVERTED_TO_FINE'),
+        eq(fines.status, 'UNPAID'),
+        isNull(weeklyCollections.cancelledAt),
+      ));
+    let restoredCount = 0;
+    for (const row of rows) {
+      const restored = await this.db.transaction(async (tx) => {
+        const collection = await lockCollection(tx, guildId, row.collectionId);
+        const obligation = await lockObligation(tx, guildId, row.obligationId);
+        if (obligation.status !== 'CONVERTED_TO_FINE') return false;
+        const current = await restoreConvertedObligation(
+          tx,
+          collection,
+          obligation,
+          'SYSTEM',
+          'ย้ายค่าปรับที่ยังไม่ชำระกลับเข้ารอบส่งเงินรายสัปดาห์',
+          now,
+        );
+        await reopenCollection(tx, collection, 'SYSTEM', now);
+        const accrued = await accrueWeeklyObligation(tx, collection, current, now);
+        await queueNextWeeklyAccrual(tx, collection, accrued, now);
+        await queueWeeklyRefresh(tx, guildId, collection.id, now);
+        return true;
+      });
+      if (restored) restoredCount += 1;
+    }
+    return restoredCount;
+  }
+
   public async markPublished(guildId: string, collectionId: string, channelId: string, messageId: string): Promise<void> {
     await this.db
       .update(weeklyCollections)
@@ -811,42 +820,173 @@ export class WeeklyDuesService {
   }
 }
 
-async function convertObligation(
+async function accrueWeeklyObligation(
+  tx: Transaction,
+  collection: WeeklyCollection,
+  obligation: WeeklyObligation,
+  now: Date,
+): Promise<WeeklyObligation> {
+  if (obligation.status !== 'UNPAID') return obligation;
+  const accrual = calculateWeeklyFineAccrual(
+    obligation.fineConversionAt ?? collection.conversionAt,
+    obligation.overdueFineAmountOverride ?? collection.overdueFineAmount,
+    obligation.recurringFineAmountOverride ?? collection.recurringFineAmount,
+    now,
+  );
+  const accruedFineAmount = Math.max(obligation.accruedFineAmount, accrual.accruedFineAmount);
+  if (accruedFineAmount === obligation.accruedFineAmount) return obligation;
+  const [updated] = await tx
+    .update(weeklyObligations)
+    .set({ accruedFineAmount, updatedAt: now })
+    .where(and(eq(weeklyObligations.id, obligation.id), eq(weeklyObligations.status, 'UNPAID')))
+    .returning();
+  if (updated === undefined) return obligation;
+  await writeAudit(
+    tx,
+    collection.guildId,
+    'SYSTEM',
+    'WEEKLY_FINE_ACCRUED',
+    'WEEKLY_OBLIGATION',
+    obligation.id,
+    obligation,
+    updated,
+  );
+  return updated;
+}
+
+async function queueNextWeeklyAccrual(
+  tx: Transaction,
+  collection: WeeklyCollection,
+  obligation: WeeklyObligation,
+  now: Date,
+): Promise<void> {
+  if (obligation.status !== 'UNPAID') return;
+  const firstPenaltyAmount = obligation.overdueFineAmountOverride ?? collection.overdueFineAmount;
+  const recurringPenaltyAmount = obligation.recurringFineAmountOverride ?? collection.recurringFineAmount;
+  if (firstPenaltyAmount === 0 && recurringPenaltyAmount === 0) return;
+  const firstPenaltyAt = obligation.fineConversionAt ?? collection.conversionAt;
+  const accrual = calculateWeeklyFineAccrual(firstPenaltyAt, firstPenaltyAmount, recurringPenaltyAmount, now);
+  if (now >= firstPenaltyAt && recurringPenaltyAmount === 0) return;
+  await queueWeeklyJob(
+    tx,
+    collection.guildId,
+    'WEEKLY_CONVERT',
+    collection.id,
+    accrual.nextAccrualAt,
+    `accrue:${String(accrual.nextAccrualAt.getTime())}`,
+  );
+}
+
+async function restoreConvertedObligation(
   tx: Transaction,
   collection: WeeklyCollection,
   obligation: WeeklyObligation,
   actorDiscordUserId: string,
+  reason: string,
+  now: Date,
+): Promise<WeeklyObligation> {
+  if (obligation.convertedFineId === null) throw new Error('Converted weekly obligation has no fine reference');
+  const [fine] = await tx
+    .select()
+    .from(fines)
+    .where(and(eq(fines.guildId, collection.guildId), eq(fines.id, obligation.convertedFineId)))
+    .limit(1)
+    .for('update');
+  if (fine === undefined) throw new NotFoundError('ไม่พบค่าปรับของสมาชิกนี้');
+  if (fine.status !== 'UNPAID') {
+    throw new ConflictError('ย้ายกลับเข้ารอบส่งเงินไม่ได้ เพราะค่าปรับมีหลักฐานรอตรวจหรือชำระแล้ว');
+  }
+  const firstPenaltyAmount = Math.max(0, fine.principalAmount - obligation.amount);
+  const accruedFineAmount = firstPenaltyAmount + fine.accruedSurchargeAmount;
+  await cancelFineWithTransaction(tx, collection.guildId, fine.id, actorDiscordUserId, reason, now);
+  const [restored] = await tx
+    .update(weeklyObligations)
+    .set({
+      status: 'UNPAID',
+      convertedFineId: null,
+      fineConversionAt: fine.dueAt,
+      overdueFineAmountOverride: firstPenaltyAmount,
+      recurringFineAmountOverride: fine.surchargeAmount,
+      accruedFineAmount,
+      decidedAt: null,
+      decidedByDiscordUserId: null,
+      rejectionReason: null,
+      updatedAt: now,
+    })
+    .where(eq(weeklyObligations.id, obligation.id))
+    .returning();
+  if (restored === undefined) throw new Error('Weekly obligation restoration did not return a row');
+  await writeAudit(
+    tx,
+    collection.guildId,
+    actorDiscordUserId,
+    'WEEKLY_FINE_RESTORED',
+    'WEEKLY_OBLIGATION',
+    obligation.id,
+    obligation,
+    restored,
+    reason,
+  );
+  return restored;
+}
+
+async function reopenCollection(
+  tx: Transaction,
+  collection: WeeklyCollection,
+  actorDiscordUserId: string,
   now: Date,
 ): Promise<void> {
-  if (obligation.status !== 'UNPAID') return;
-  const fineConversionAt = obligation.fineConversionAt ?? collection.conversionAt;
-  const amounts = buildWeeklyOverdueFine(
-    obligation.amount,
-    obligation.overdueFineAmountOverride ?? collection.overdueFineAmount,
-    obligation.recurringFineAmountOverride ?? collection.recurringFineAmount,
-  );
-  const fine = await createSourcedFineWithTransaction(tx, {
-    guildId: collection.guildId,
-    // The obligation timestamp changes when an Admin re-enables a previously exempt member.
-    // Keeping it in the idempotency key allows a new fine after the old one was cancelled,
-    // while repeated delivery of the same conversion job still resolves to one fine.
-    requestId: `weekly:${obligation.id}:fine:${String(obligation.updatedAt.getTime())}`,
-    memberId: obligation.memberId,
-    reason: `ค้างส่งเงินรายสัปดาห์: ${collection.title}`,
-    principalAmount: amounts.principalAmount,
-    surchargeAmount: amounts.recurringPenaltyAmount,
-    dueAt: fineConversionAt,
-    nextSurchargeAt: DateTime.fromJSDate(fineConversionAt).plus({ hours: 24 }).toJSDate(),
-    sourceType: 'WEEKLY_DUES',
-    sourceId: obligation.id,
+  if (!collection.isClosed || collection.cancelledAt !== null) return;
+  await tx.update(weeklyCollections)
+    .set({ isClosed: false, updatedAt: now })
+    .where(eq(weeklyCollections.id, collection.id));
+  await writeAudit(
+    tx,
+    collection.guildId,
     actorDiscordUserId,
-    now,
-  });
-  await tx
-    .update(weeklyObligations)
-    .set({ status: 'CONVERTED_TO_FINE', convertedFineId: fine.id, updatedAt: now })
-    .where(and(eq(weeklyObligations.id, obligation.id), eq(weeklyObligations.status, 'UNPAID')));
-  await writeAudit(tx, collection.guildId, actorDiscordUserId, 'WEEKLY_OBLIGATION_CONVERTED', 'WEEKLY_OBLIGATION', obligation.id, obligation, { status: 'CONVERTED_TO_FINE', fineId: fine.id });
+    'WEEKLY_COLLECTION_REOPENED',
+    'WEEKLY_COLLECTION',
+    collection.id,
+    collection,
+    { isClosed: false },
+  );
+}
+
+async function closeCollectionIfSettled(
+  tx: Transaction,
+  collection: WeeklyCollection,
+  actorDiscordUserId: string,
+  now: Date,
+): Promise<boolean> {
+  if (collection.cancelledAt !== null) return false;
+  const obligations = await tx
+    .select({ status: weeklyObligations.status })
+    .from(weeklyObligations)
+    .where(eq(weeklyObligations.collectionId, collection.id));
+  const settled = obligations.length > 0 && obligations.every(({ status }) => status === 'PAID' || status === 'EXEMPT');
+  if (!settled || collection.isClosed) return settled;
+  await tx.update(weeklyCollections)
+    .set({ isClosed: true, updatedAt: now })
+    .where(eq(weeklyCollections.id, collection.id));
+  await writeAudit(
+    tx,
+    collection.guildId,
+    actorDiscordUserId,
+    'WEEKLY_COLLECTION_CLOSED',
+    'WEEKLY_COLLECTION',
+    collection.id,
+    collection,
+    { isClosed: true },
+  );
+  return true;
+}
+
+export function weeklyAmountDue(obligation: WeeklyObligation): number {
+  const total = obligation.amount + obligation.accruedFineAmount;
+  if (!Number.isSafeInteger(total) || total < 0) {
+    throw new ValidationError('ยอดส่งเงินรวมค่าปรับสูงเกินขอบเขตที่ระบบรองรับ');
+  }
+  return total;
 }
 
 async function lockCollection(tx: Transaction, guildId: string, collectionId: string): Promise<WeeklyCollection> {
@@ -905,7 +1045,7 @@ async function getMember(tx: Transaction, memberId: string) {
 
 async function requireCollectionOpen(tx: Transaction, collection: WeeklyCollection, now: Date): Promise<void> {
   if (collection.cancelledAt !== null) throw new ConflictError('รอบส่งเงินนี้ถูกยกเลิกแล้ว');
-  if (collection.isClosed || now >= collection.conversionAt) throw new ConflictError('หมดเวลาส่งเงินรอบนี้แล้ว');
+  if (collection.isClosed) throw new ConflictError('รอบส่งเงินนี้ปิดยอดแล้ว');
   const [settings] = await tx
     .select({ timezone: guildSettings.timezone })
     .from(guildSettings)

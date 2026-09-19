@@ -186,6 +186,11 @@ export async function bootstrap(): Promise<RunningApplication> {
 
   const queuedFineReminders = await fineService.ensureDailyReminders(env.DISCORD_GUILD_ID, new Date());
   logger.info({ queuedFineReminders }, 'ensured daily unpaid fine reminders');
+  const restoredWeeklyFines = await weeklyDuesService.restoreOutstandingWeeklyFines(
+    env.DISCORD_GUILD_ID,
+    new Date(),
+  );
+  logger.info({ restoredWeeklyFines }, 'restored unpaid weekly fines into their weekly collections');
   const queuedWeeklyItemRefreshes = await weeklyItemsService.ensurePublishedAnnouncementRefreshes(
     env.DISCORD_GUILD_ID,
     new Date(),

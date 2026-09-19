@@ -1,6 +1,7 @@
 import { ValidationError } from '../../src/domain/errors.js';
 import {
   buildWeeklyOverdueFine,
+  calculateWeeklyFineAccrual,
   parseWeeklyDateRange,
   validateWeeklyPaymentImage,
 } from '../../src/modules/weekly-dues/rules.js';
@@ -11,6 +12,24 @@ describe('weekly dues overdue conversion', () => {
       principalAmount: 150_000,
       firstPenaltyAmount: 50_000,
       recurringPenaltyAmount: 25_000,
+    });
+  });
+
+  it('accrues the first fine at the deadline and the recurring fine every 24 hours', () => {
+    const firstPenaltyAt = new Date('2026-09-19T17:00:00.000Z');
+
+    expect(calculateWeeklyFineAccrual(
+      firstPenaltyAt, 20_000, 20_000, new Date('2026-09-19T16:59:59.999Z'),
+    )).toEqual({ accruedFineAmount: 0, nextAccrualAt: firstPenaltyAt });
+    expect(calculateWeeklyFineAccrual(firstPenaltyAt, 20_000, 20_000, firstPenaltyAt)).toEqual({
+      accruedFineAmount: 20_000,
+      nextAccrualAt: new Date('2026-09-20T17:00:00.000Z'),
+    });
+    expect(calculateWeeklyFineAccrual(
+      firstPenaltyAt, 20_000, 20_000, new Date('2026-09-21T17:00:00.000Z'),
+    )).toEqual({
+      accruedFineAmount: 60_000,
+      nextAccrualAt: new Date('2026-09-22T17:00:00.000Z'),
     });
   });
 

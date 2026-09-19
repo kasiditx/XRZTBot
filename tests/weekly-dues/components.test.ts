@@ -77,6 +77,7 @@ describe('weekly dues Discord components', () => {
         fineConversionAt: now,
         overdueFineAmountOverride: 50_000,
         recurringFineAmountOverride: 50_000,
+        accruedFineAmount: index === 0 ? 25_000 : 0,
         createdAt: now,
         updatedAt: now,
       },
@@ -100,6 +101,7 @@ describe('weekly dues Discord components', () => {
 
     expect(embed?.description).toContain('สถานะสมาชิกที่ต้องส่ง (13 คน)');
     expect(embed?.description).toContain('<@700000000000000001>');
+    expect(embed?.description).toContain('125,000 (ยอดส่ง 100,000 + ค่าปรับ 25,000)');
     expect(embed?.description).toContain('<@700000000000000013>');
     expect(embed?.fields).toBeUndefined();
   });
@@ -112,6 +114,7 @@ describe('weekly dues Discord components', () => {
       decidedByDiscordUserId: '700000000000000001', rejectionReason: 'ยกเว้นเนื่องจากเป็นตำแหน่งสำรอง',
       convertedFineId: null, createdAt: now, updatedAt: now,
       fineConversionAt: now, overdueFineAmountOverride: 50_000, recurringFineAmountOverride: 50_000,
+      accruedFineAmount: 0,
     };
     const payload = buildWeeklyAnnouncement({
       ...view,

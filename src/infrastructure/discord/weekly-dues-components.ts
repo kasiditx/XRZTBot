@@ -16,6 +16,7 @@ import type {
   WeeklyCollectionView,
   WeeklyPaymentProofView,
 } from '../../modules/weekly-dues/service.js';
+import { weeklyAmountDue } from '../../modules/weekly-dues/service.js';
 import type { MemberSelectionOption } from './role-verified-members.js';
 
 export const weeklyComponentIds = {
@@ -120,8 +121,12 @@ function buildWeeklyDescriptions(view: WeeklyCollectionView): string[] {
         ]),
     '',
     `**สถานะสมาชิกที่ต้องส่ง (${paymentStatuses.length.toString()} คน)**`,
-    ...paymentStatuses.map(({ obligation, member }) =>
-      `${statusEmoji(obligation.status)} <@${member.discordUserId}> — ${obligation.amount.toLocaleString('th-TH')} · ${thaiStatus(obligation.status)}${finePolicySuffix(view, obligation)}`),
+    ...paymentStatuses.map(({ obligation, member }) => {
+      const fineBreakdown = obligation.accruedFineAmount === 0
+        ? ''
+        : ` (ยอดส่ง ${obligation.amount.toLocaleString('th-TH')} + ค่าปรับ ${obligation.accruedFineAmount.toLocaleString('th-TH')})`;
+      return `${statusEmoji(obligation.status)} <@${member.discordUserId}> — ${weeklyAmountDue(obligation).toLocaleString('th-TH')}${fineBreakdown} · ${thaiStatus(obligation.status)}${finePolicySuffix(view, obligation)}`;
+    }),
     ...(exemptions.length === 0
       ? []
       : [
@@ -235,7 +240,7 @@ export function buildWeeklyMemberRuleModal(
         label: 'ต้องส่งเงิน',
         value: 'REQUIRED',
         emoji: '💰',
-        description: isClosed ? 'ยกเลิกการยกเว้นและสร้างค่าปรับ' : 'เรียกเก็บยอดที่ระบุด้านล่าง',
+        description: isClosed ? 'เปิดรอบและรวมค่าปรับในยอดส่ง' : 'เรียกเก็บยอดที่ระบุด้านล่าง',
       },
       {
         label: isClosed ? 'ยกเว้นและยกเลิกค่าปรับ' : 'ยกเว้นส่งเงิน',

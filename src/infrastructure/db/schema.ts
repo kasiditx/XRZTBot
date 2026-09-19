@@ -678,11 +678,13 @@ export const weeklyObligations = pgTable(
     fineConversionAt: timestamp('fine_conversion_at', { withTimezone: true, mode: 'date' }),
     overdueFineAmountOverride: bigint('overdue_fine_amount_override', { mode: 'number' }),
     recurringFineAmountOverride: bigint('recurring_fine_amount_override', { mode: 'number' }),
+    accruedFineAmount: bigint('accrued_fine_amount', { mode: 'number' }).notNull().default(0),
     ...auditColumns,
   },
   (table) => [
     uniqueIndex('weekly_obligations_collection_member_uq').on(table.collectionId, table.memberId),
     check('weekly_obligations_amount_non_negative', sql`${table.amount} >= 0`),
+    check('weekly_obligations_accrued_fine_non_negative', sql`${table.accruedFineAmount} >= 0`),
     check('weekly_obligations_fine_overrides_non_negative', sql`(
       ${table.overdueFineAmountOverride} IS NULL OR ${table.overdueFineAmountOverride} >= 0
     ) AND (

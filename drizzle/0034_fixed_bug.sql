@@ -1,0 +1,2 @@
+ALTER TABLE "weekly_obligations" ADD COLUMN "accrued_fine_amount" bigint DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "weekly_obligations" ADD CONSTRAINT "weekly_obligations_accrued_fine_non_negative" CHECK ("weekly_obligations"."accrued_fine_amount" >= 0);
