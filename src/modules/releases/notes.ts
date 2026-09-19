@@ -17,13 +17,11 @@ export type ReleaseNotes = z.infer<typeof releaseNotesSchema>;
 // Change the ID only for a new announcement; keep summaries about member-visible changes.
 // Set to null for a deployment that should not announce anything.
 export const currentRelease: ReleaseNotes | null = {
-  id: '2026-09-18.6',
-  title: 'ปรับรายการส่งของให้อ่านต่อเนื่อง',
-  added: [
-    'รายการส่งของประจำสัปดาห์จะแสดงสมาชิกที่ต้องส่งและสมาชิกที่ได้รับการยกเว้นเป็นกล่องยาวต่อเนื่องแบบรายการส่งเงิน',
+  id: '2026-09-19.1',
+  title: 'เพิ่มความเสถียรของการเชื่อมต่อฐานข้อมูล',
+  added: [],
+  improved: [],
+  fixed: [
+    'ป้องกันบอทหยุดทั้งระบบเมื่อ PostgreSQL ปิด idle connection โดยระบบจะบันทึกข้อผิดพลาดและสร้าง connection ใหม่เมื่อมีงานถัดไป',
   ],
-  improved: [
-    'หลังอัปเดตบอท ระบบจะรีเฟรชข้อความของรอบส่งของที่เปิดอยู่ให้ใช้รูปแบบล่าสุดอัตโนมัติ',
-  ],
-  fixed: [],
 };

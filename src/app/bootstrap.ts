@@ -43,7 +43,9 @@ export interface RunningApplication {
 export async function bootstrap(): Promise<RunningApplication> {
   const env = loadEnv();
   const logger = createLogger(env.LOG_LEVEL);
-  const { db, pool } = createDatabase(env.DATABASE_URL);
+  const { db, pool } = createDatabase(env.DATABASE_URL, (error) => {
+    logger.error({ err: error }, 'unexpected error from an idle PostgreSQL client');
+  });
   const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
   });
