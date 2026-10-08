@@ -67,7 +67,7 @@ function botStatusDisplay(status: BotOperationalStatus) {
   return {
     emoji: '🔴',
     label: 'ระบบขัดข้อง',
-    guidance: 'ระบบตรวจพบข้อผิดพลาดและหยุดให้บริการชั่วคราว กรุณารอประกาศพร้อมใช้งานอีกครั้ง',
+    guidance: 'ระบบอาจตอบช้าหรือใช้งานบางส่วนไม่ได้ กรุณาตรวจรายละเอียดด้านล่างและรอสถานะกลับมาปกติ',
     tone: 'danger' as const,
   };
 }

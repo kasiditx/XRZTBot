@@ -11,27 +11,49 @@ import type {
 import { buildBotStatusAlert, buildBotStatusPanel } from './bot-status-components.js';
 
 const UNKNOWN_MESSAGE_ERROR = 10_008;
+const activePublications = new Map<string, Promise<void>>();
 
 export interface PublishBotStatusInput {
   readonly rest: REST;
-  readonly guildConfig: GuildConfigService;
+  readonly guildConfig: Pick<GuildConfigService, 'get' | 'saveBotStatus'>;
   readonly guildId: string;
   readonly status: BotOperationalStatus;
   readonly detail: string | null;
   readonly actorDiscordUserId: string | null;
   readonly now: Date;
   readonly announceWhenUnchanged?: boolean;
+  readonly notify?: boolean;
+  readonly automaticHealthCheck?: boolean;
 }
 
 export type PublishBotStatusResult =
-  | { readonly outcome: 'SKIPPED'; readonly reason: 'CHANNEL_NOT_CONFIGURED' | 'STATUS_ROLES_NOT_CONFIGURED' }
+  | { readonly outcome: 'SKIPPED'; readonly reason: 'CHANNEL_NOT_CONFIGURED' | 'STATUS_ROLES_NOT_CONFIGURED' | 'MANUAL_STATUS_ACTIVE' }
   | { readonly outcome: 'UNCHANGED'; readonly channelId: string; readonly roleIds: readonly string[] }
   | { readonly outcome: 'PUBLISHED'; readonly channelId: string; readonly roleIds: readonly string[]; readonly messageId: string };
 
 export async function publishBotStatus(input: PublishBotStatusInput): Promise<PublishBotStatusResult> {
+  const previous = activePublications.get(input.guildId);
+  let release: () => void = () => undefined;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  activePublications.set(input.guildId, pending);
+  await previous;
+  try {
+    return await publishStatus(input);
+  } finally {
+    release();
+    if (activePublications.get(input.guildId) === pending) activePublications.delete(input.guildId);
+  }
+}
+
+async function publishStatus(input: PublishBotStatusInput): Promise<PublishBotStatusResult> {
   const settings = await input.guildConfig.get(input.guildId);
   if (settings?.botStatusChannelId == null) {
     return { outcome: 'SKIPPED', reason: 'CHANNEL_NOT_CONFIGURED' };
+  }
+  if (input.automaticHealthCheck === true
+    && settings.botStatusUpdatedByDiscordUserId !== null
+    && settings.botStatus !== 'OPERATIONAL') {
+    return { outcome: 'SKIPPED', reason: 'MANUAL_STATUS_ACTIVE' };
   }
   const roleIds = statusRoleIds(settings);
   if (roleIds === null) {
@@ -63,7 +85,7 @@ export async function publishBotStatus(input: PublishBotStatusInput): Promise<Pu
     || settings.botStatusMessageId === null
     || created
     || statusChanged;
-  if (!shouldAnnounce) {
+  if (!shouldAnnounce || input.notify === false) {
     return {
       outcome: 'UNCHANGED',
       channelId: settings.botStatusChannelId,

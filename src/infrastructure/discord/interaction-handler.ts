@@ -100,6 +100,7 @@ export interface InteractionHandlerDependencies {
   readonly fightPositionInteractions: FightPositionInteractionHandler;
   readonly logger: pino.Logger;
   readonly checkDatabase: () => Promise<boolean>;
+  readonly reportSystemError?: () => void;
 }
 
 export class DiscordInteractionHandler {
@@ -613,6 +614,7 @@ export class DiscordInteractionHandler {
       'System Response',
     );
     if (!(error instanceof DomainError)) {
+      this.dependencies.reportSystemError?.();
       this.dependencies.logger.error(
         {
           err: error,

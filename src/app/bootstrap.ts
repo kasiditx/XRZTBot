@@ -16,6 +16,7 @@ import { DiscordInteractionHandler } from '../infrastructure/discord/interaction
 import { createDiscordJobHandlers } from '../infrastructure/discord/job-handlers.js';
 import { DailyLogPublisher, DrizzleDailyLogMarkerRepository } from '../infrastructure/discord/daily-log-publisher.js';
 import { startHealthServer } from '../infrastructure/health/server.js';
+import { createRuntimeHealthMonitor } from '../infrastructure/health/runtime-monitor.js';
 import { createLogger } from '../infrastructure/logger.js';
 import { GuildConfigService } from '../modules/guild-config/service.js';
 import { ActivityService } from '../modules/activities/service.js';
@@ -153,6 +154,7 @@ export async function bootstrap(): Promise<RunningApplication> {
     guildConfig,
     members: memberService,
   });
+  let healthMonitor: ReturnType<typeof createRuntimeHealthMonitor> | undefined;
   const interactionHandler = new DiscordInteractionHandler({
     client,
     guildConfig,
@@ -167,14 +169,19 @@ export async function bootstrap(): Promise<RunningApplication> {
     fightPositionInteractions,
     logger,
     checkDatabase,
+    reportSystemError: () => healthMonitor?.monitor.recordInteractionProblem('ERROR'),
   });
   let wakeScheduler: (() => void) | undefined;
   client.on(Events.InteractionCreate, (interaction) => {
+    const finishHealthObservation = interaction.isRepliable()
+      ? healthMonitor?.monitor.watchInteraction(interaction)
+      : undefined;
     void interactionHandler.handle(interaction)
       .catch((error: unknown) => {
         logger.error({ err: error, interactionId: interaction.id }, 'unhandled interaction failure');
       })
       .finally(() => {
+        finishHealthObservation?.();
         wakeScheduler?.();
       });
   });
@@ -250,7 +257,16 @@ export async function bootstrap(): Promise<RunningApplication> {
     }
     await queueCurrentRelease(db, env.DISCORD_GUILD_ID);
     scheduler.wake();
+    healthMonitor = createRuntimeHealthMonitor({
+      client,
+      databaseUrl: env.DATABASE_URL,
+      discordToken: env.DISCORD_TOKEN,
+      guildId: env.DISCORD_GUILD_ID,
+      logger,
+    });
+    await healthMonitor.start();
   } catch (error: unknown) {
+    await healthMonitor?.stop();
     await scheduler.stop();
     if (healthServer !== null) await closeServer(healthServer);
     await client.destroy();
@@ -267,6 +283,7 @@ export async function bootstrap(): Promise<RunningApplication> {
       stopped = true;
       logger.info('shutting down');
       wakeScheduler = undefined;
+      await healthMonitor?.stop();
       await scheduler.stop();
       await client.destroy();
       await closeServer(healthServer);
