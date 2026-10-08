@@ -1,3 +1,4 @@
+import { interactionResponse } from './responsive-interaction.js';
 import type pino from 'pino';
 import { buildReasonedCancellationModal, requireCancellationConfirmation } from './cancellation-confirmation.js';
 import {
@@ -107,33 +108,33 @@ export class AttendanceInteractionHandler {
     if (interaction.customId === componentIds.controlAttendance) {
       await this.requireAdmin(guild, interaction.user.id);
       const rounds = await this.dependencies.attendance.listRounds(guild.id);
-      await interaction.reply({ ...buildAttendanceAdminPanel(rounds), flags: MessageFlags.Ephemeral });
+      await interactionResponse(interaction).reply({ ...buildAttendanceAdminPanel(rounds), flags: MessageFlags.Ephemeral });
       return;
     }
     if (interaction.customId === attendanceComponentIds.adminCreate) {
       await this.requireAdmin(guild, interaction.user.id);
       const settings = await this.requireSettings(guild.id);
       requireAttendanceChannels(settings);
-      await interaction.reply({ ...buildAttendanceModeSelector('MANUAL'), flags: MessageFlags.Ephemeral });
+      await interactionResponse(interaction).reply({ ...buildAttendanceModeSelector('MANUAL'), flags: MessageFlags.Ephemeral });
       return;
     }
     if (interaction.customId === attendanceComponentIds.adminRecurring) {
       await this.requireAdmin(guild, interaction.user.id);
       const settings = await this.requireSettings(guild.id);
       requireAttendanceChannels(settings);
-      await interaction.reply({ ...buildAttendanceModeSelector('AUTO'), flags: MessageFlags.Ephemeral });
+      await interactionResponse(interaction).reply({ ...buildAttendanceModeSelector('AUTO'), flags: MessageFlags.Ephemeral });
       return;
     }
     if (interaction.customId === attendanceComponentIds.adminManageRecurring) {
       await this.requireAdmin(guild, interaction.user.id);
       const schedules = await this.dependencies.attendance.listSchedules(guild.id);
-      await interaction.reply({ ...buildScheduleManagementPanel(schedules), flags: MessageFlags.Ephemeral });
+      await interactionResponse(interaction).reply({ ...buildScheduleManagementPanel(schedules), flags: MessageFlags.Ephemeral });
       return;
     }
     if (interaction.customId.startsWith('attendance:schedule_edit:')) {
       await this.requireAdmin(guild, interaction.user.id);
       const schedule = await this.dependencies.attendance.getSchedule(guild.id, entityId(interaction.customId, 'attendance:schedule_edit:'));
-      await interaction.showModal(buildScheduleEditModal(schedule));
+      await interactionResponse(interaction).showModal(buildScheduleEditModal(schedule));
       return;
     }
     if (interaction.customId.startsWith('attendance:schedule_disable:')) {
@@ -141,7 +142,7 @@ export class AttendanceInteractionHandler {
       const scheduleId = entityId(interaction.customId, 'attendance:schedule_disable:');
       await this.dependencies.attendance.disableSchedule(guild.id, scheduleId, interaction.user.id, new Date());
       const schedule = await this.dependencies.attendance.getSchedule(guild.id, scheduleId);
-      await interaction.update(buildScheduleManagement(schedule));
+      await interactionResponse(interaction).update(buildScheduleManagement(schedule));
       return;
     }
     if (interaction.customId === attendanceComponentIds.adminPublishLeave) {
@@ -154,14 +155,14 @@ export class AttendanceInteractionHandler {
       requireLeaveChannels(settings);
       const today = formatLocalDateInput(new Date(), settings.timezone);
       const schedules = await this.dependencies.attendance.listActiveSchedules(guild.id);
-      await interaction.showModal(buildLeaveModal(today, today, schedules));
+      await interactionResponse(interaction).showModal(buildLeaveModal(today, today, schedules));
       return;
     }
     if (interaction.customId.startsWith('attendance:check_in:')) {
       await this.requireActiveMember(guild, interaction.user.id);
       const roundId = entityId(interaction.customId, 'attendance:check_in:');
       const round = await this.dependencies.attendance.getRound(guild.id, roundId);
-      await interaction.reply({
+      await interactionResponse(interaction).reply({
         ...buildEvidenceMethodPrompt(
           `attendance:proof_method:${roundId}`,
           `หลักฐาน${attendanceModeLabel(round.mode)}`,
@@ -173,7 +174,7 @@ export class AttendanceInteractionHandler {
     if (interaction.customId.startsWith('attendance:cancel:')) {
       await this.requireAdmin(guild, interaction.user.id);
       const roundId = entityId(interaction.customId, 'attendance:cancel:');
-      await interaction.showModal(buildAttendanceCancellationModal(roundId));
+      await interactionResponse(interaction).showModal(buildAttendanceCancellationModal(roundId));
       return;
     }
     if (interaction.customId.startsWith('attendance:correct:')) {
@@ -190,13 +191,13 @@ export class AttendanceInteractionHandler {
         await this.dependencies.members.listActive(guild.id),
       );
       if (members.length === 0) throw new ValidationError('ไม่มีสมาชิกที่รับยศแล้วให้เลือก');
-      await interaction.showModal(buildCorrectionModal(roundId, members));
+      await interactionResponse(interaction).showModal(buildCorrectionModal(roundId, members));
       return;
     }
     if (interaction.customId.startsWith('attendance:proof_reject:')) {
       await this.requireAdmin(guild, interaction.user.id);
       const roundId = entityId(interaction.customId, 'attendance:proof_reject:');
-      await interaction.showModal(buildAttendanceProofRejectionModal(roundId, interaction.message.id));
+      await interactionResponse(interaction).showModal(buildAttendanceProofRejectionModal(roundId, interaction.message.id));
       return;
     }
     if (interaction.customId.startsWith('leave:edit:')) {
@@ -204,7 +205,7 @@ export class AttendanceInteractionHandler {
       const view = await this.requireLeaveActor(guild, interaction.user.id, leaveId);
       const activeSchedules = await this.dependencies.attendance.listActiveSchedules(guild.id);
       const schedules = mergeLeaveSchedules(activeSchedules, view.schedules);
-      await interaction.showModal(buildLeaveEditModal(
+      await interactionResponse(interaction).showModal(buildLeaveEditModal(
         view,
         formatDateInput(view.leave.startsOn),
         formatDateInput(view.leave.endsOn),
@@ -215,13 +216,13 @@ export class AttendanceInteractionHandler {
     if (interaction.customId.startsWith('leave:cancel_confirm:')) {
       const leaveId = entityId(interaction.customId, 'leave:cancel_confirm:');
       await this.requireLeaveActor(guild, interaction.user.id, leaveId);
-      await interaction.showModal(buildReasonedCancellationModal(`leave:cancel_modal:${leaveId}`, 'ยกเลิกใบลาและคำนวณผลที่เกี่ยวข้อง'));
+      await interactionResponse(interaction).showModal(buildReasonedCancellationModal(`leave:cancel_modal:${leaveId}`, 'ยกเลิกใบลาและคำนวณผลที่เกี่ยวข้อง'));
       return;
     }
     if (interaction.customId.startsWith('leave:cancel:')) {
       const leaveId = entityId(interaction.customId, 'leave:cancel:');
       await this.requireLeaveActor(guild, interaction.user.id, leaveId);
-      await interaction.showModal(buildReasonedCancellationModal(`leave:cancel_modal:${leaveId}`, 'ยกเลิกใบลาและคำนวณผลที่เกี่ยวข้อง'));
+      await interactionResponse(interaction).showModal(buildReasonedCancellationModal(`leave:cancel_modal:${leaveId}`, 'ยกเลิกใบลาและคำนวณผลที่เกี่ยวข้อง'));
     }
   }
 
@@ -231,7 +232,7 @@ export class AttendanceInteractionHandler {
       await this.requireActiveMember(guild, interaction.user.id);
       const roundId = entityId(interaction.customId, 'attendance:proof_method:');
       const round = await this.dependencies.attendance.getRound(guild.id, roundId);
-      await interaction.showModal(buildAttendanceProofModal(
+      await interactionResponse(interaction).showModal(buildAttendanceProofModal(
         roundId,
         requireEvidenceInputMode(interaction.values[0]),
         round.mode,
@@ -247,7 +248,7 @@ export class AttendanceInteractionHandler {
       const now = new Date();
       const eventAt = new Date(now.getTime() + 10 * 60 * 1_000);
       const closesAt = new Date(now.getTime() + 60 * 60 * 1_000);
-      await interaction.showModal(buildCreateRoundModal(mode, {
+      await interactionResponse(interaction).showModal(buildCreateRoundModal(mode, {
         title: mode === 'AIRDROP' ? `Airdrop ${formatDateTimeInput(eventAt, settings.timezone).slice(-5)}` : attendanceModeLabel(mode),
         eventAt: formatDateTimeInput(eventAt, settings.timezone),
         opensAt: formatDateTimeInput(now, settings.timezone),
@@ -260,7 +261,7 @@ export class AttendanceInteractionHandler {
       const settings = await this.requireSettings(guild.id);
       const mode = requireAttendanceMode(interaction.values[0]);
       requireAttendanceProofChannel(settings);
-      await interaction.showModal(buildRecurringScheduleModal(mode));
+      await interactionResponse(interaction).showModal(buildRecurringScheduleModal(mode));
       return;
     }
     if (interaction.customId === attendanceComponentIds.adminScheduleSelect) {
@@ -268,7 +269,7 @@ export class AttendanceInteractionHandler {
       const scheduleId = interaction.values[0];
       if (scheduleId === undefined) throw new ValidationError('กรุณาเลือก Auto');
       const schedule = await this.dependencies.attendance.getSchedule(guild.id, scheduleId);
-      await interaction.update(buildScheduleManagement(schedule));
+      await interactionResponse(interaction).update(buildScheduleManagement(schedule));
       return;
     }
     if (interaction.customId !== attendanceComponentIds.adminRoundSelect) return;
@@ -276,7 +277,7 @@ export class AttendanceInteractionHandler {
     const roundId = interaction.values[0];
     if (roundId === undefined) throw new ValidationError('กรุณาเลือกรอบเช็กชื่อ');
     const view = await this.dependencies.attendance.getRoundView(guild.id, roundId);
-    await interaction.update({ ...buildAttendanceManagement(view), content: null });
+    await interactionResponse(interaction).update({ ...buildAttendanceManagement(view), content: null });
   }
 
   private async handleModal(interaction: ModalSubmitInteraction): Promise<void> {
@@ -287,14 +288,14 @@ export class AttendanceInteractionHandler {
     }
     if (interaction.customId.startsWith('leave:cancel_modal:')) {
       requireCancellationConfirmation(interaction);
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
       const isAdmin = await this.requireMemberOrAdmin(guild, interaction.user.id);
       const settings = await this.requireSettings(guild.id);
       const view = await this.dependencies.attendance.cancelLeave(guild.id,
         entityId(interaction.customId, 'leave:cancel_modal:'), interaction.user.id, isAdmin, settings.timezone, new Date(),
         interaction.fields.getTextInputValue('cancellation:reason'));
       await this.updateLeaveLog(view);
-      await interaction.editReply(buildNotice('success', 'ยกเลิกใบลาแล้ว', 'อัปเดตผลที่อ้างอิงใบลานี้ โดยเก็บผลแก้ไขด้วยมือไว้', 'Leave'));
+      await interactionResponse(interaction).editReply(buildNotice('success', 'ยกเลิกใบลาแล้ว', 'อัปเดตผลที่อ้างอิงใบลานี้ โดยเก็บผลแก้ไขด้วยมือไว้', 'Leave'));
       return;
     }
     if (interaction.customId.startsWith(attendanceCreateModalPrefix)) {
@@ -350,7 +351,7 @@ export class AttendanceInteractionHandler {
   }
 
   private async createRound(interaction: ModalSubmitInteraction, guild: Guild, mode: AttendanceMode): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAdmin(guild, interaction.user.id);
     const settings = await this.requireSettings(guild.id);
     requireAttendanceChannels(settings);
@@ -393,7 +394,7 @@ export class AttendanceInteractionHandler {
       actorDiscordUserId: interaction.user.id,
       now,
     });
-    await interaction.editReply(buildNotice('success', 'สร้างรอบเช็กชื่อแล้ว', `📅 **${round.title}**\nระบบจะประกาศ เปิด เตือนก่อนปิด 15 นาที และสรุปผลอัตโนมัติ`, 'Attendance'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'สร้างรอบเช็กชื่อแล้ว', `📅 **${round.title}**\nระบบจะประกาศ เปิด เตือนก่อนปิด 15 นาที และสรุปผลอัตโนมัติ`, 'Attendance'));
   }
 
   private async createRecurringSchedule(
@@ -401,7 +402,7 @@ export class AttendanceInteractionHandler {
     guild: Guild,
     mode: AttendanceMode,
   ): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAdmin(guild, interaction.user.id);
     const settings = await this.requireSettings(guild.id);
     requireAttendanceChannels(settings);
@@ -429,7 +430,7 @@ export class AttendanceInteractionHandler {
           opensAtLocalTime: interaction.fields.getTextInputValue(attendanceComponentIds.recurringOpensAt),
           closesAtLocalTime: interaction.fields.getTextInputValue(attendanceComponentIds.recurringClosesAt),
         });
-    await interaction.editReply(buildNotice('success', 'ตั้งเวลาเช็กชื่อประจำแล้ว', `⏰ **${schedule.name}**\nระบบเตรียมรอบล่วงหน้าและจะประกาศเช็กชื่อทีละวันโดยอัตโนมัติ`, 'Attendance'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'ตั้งเวลาเช็กชื่อประจำแล้ว', `⏰ **${schedule.name}**\nระบบเตรียมรอบล่วงหน้าและจะประกาศเช็กชื่อทีละวันโดยอัตโนมัติ`, 'Attendance'));
   }
 
   private async updateRecurringSchedule(
@@ -438,7 +439,7 @@ export class AttendanceInteractionHandler {
     scheduleId: string,
     mode: AttendanceMode,
   ): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAdmin(guild, interaction.user.id);
     const settings = await this.requireSettings(guild.id);
     requireAttendanceChannels(settings);
@@ -464,7 +465,7 @@ export class AttendanceInteractionHandler {
           opensAtLocalTime: interaction.fields.getTextInputValue(attendanceComponentIds.recurringOpensAt),
           closesAtLocalTime: interaction.fields.getTextInputValue(attendanceComponentIds.recurringClosesAt),
         });
-    await interaction.editReply(buildNotice('success', 'แก้ไข Auto แล้ว', `⏰ **${schedule.name}**\nรอบที่ยังไม่ประกาศจะใช้วันและเวลาใหม่`, 'Attendance'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'แก้ไข Auto แล้ว', `⏰ **${schedule.name}**\nรอบที่ยังไม่ประกาศจะใช้วันและเวลาใหม่`, 'Attendance'));
   }
 
   private async submitAttendanceProof(
@@ -473,7 +474,7 @@ export class AttendanceInteractionHandler {
     roundId: string,
     evidenceMode: EvidenceInputMode,
   ): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     const evidenceInput = readEvidenceModalInput(
       interaction.fields,
       evidenceMode,
@@ -536,7 +537,7 @@ export class AttendanceInteractionHandler {
       });
       throw error;
     }
-    await interaction.editReply(buildNotice(
+    await interactionResponse(interaction).editReply(buildNotice(
       'success',
       `${attendanceModeLabel(round.mode)} สำเร็จ`,
       'บันทึกรูปหลักฐานแล้ว ระบบนับผลเป็นมาในรอบนี้',
@@ -550,7 +551,7 @@ export class AttendanceInteractionHandler {
     roundId: string,
     proofMessageId: string,
   ): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAdmin(guild, interaction.user.id);
     const view = await this.dependencies.attendance.rejectProof(
       guild.id,
@@ -567,7 +568,7 @@ export class AttendanceInteractionHandler {
     );
     const message = await channel.messages.fetch(view.proof.logMessageId);
     await message.edit(buildAttendanceProofLog(view.round, view.member, view.proof));
-    await interaction.editReply(buildNotice(
+    await interactionResponse(interaction).editReply(buildNotice(
         'warning',
         'ปฏิเสธหลักฐานเช็กชื่อแล้ว',
         'ระบบเปลี่ยนผลเป็นขาด หากรอบยังเปิด สมาชิกสามารถส่งรูปหลักฐานใหม่ได้',
@@ -576,7 +577,7 @@ export class AttendanceInteractionHandler {
   }
 
   private async publishLeavePanel(interaction: ButtonInteraction, guild: Guild): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAdmin(guild, interaction.user.id);
     const settings = await this.requireSettings(guild.id);
     const channel = await fetchSendableChannel(this.dependencies.client, settings.leaveChannelId, 'Channel แจ้งลา');
@@ -584,17 +585,17 @@ export class AttendanceInteractionHandler {
       const existing = await channel.messages.fetch(settings.leavePanelMessageId).catch(() => null);
       if (existing !== null) {
         await existing.edit(buildLeavePanel());
-        await interaction.editReply(buildNotice('success', 'อัปเดต Panel แจ้งลาแล้ว', `ปลายทาง: <#${channel.id}>`, 'Leave'));
+        await interactionResponse(interaction).editReply(buildNotice('success', 'อัปเดต Panel แจ้งลาแล้ว', `ปลายทาง: <#${channel.id}>`, 'Leave'));
         return;
       }
     }
     const message = await channel.send(buildLeavePanel());
     await this.dependencies.guildConfig.saveLeavePanelMessage(guild.id, message.id);
-    await interaction.editReply(buildNotice('success', 'ส่ง Panel แจ้งลาแล้ว', `ปลายทาง: <#${channel.id}>`, 'Leave'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'ส่ง Panel แจ้งลาแล้ว', `ปลายทาง: <#${channel.id}>`, 'Leave'));
   }
 
   private async submitLeave(interaction: ModalSubmitInteraction, guild: Guild): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireActiveMember(guild, interaction.user.id);
     const settings = await this.requireSettings(guild.id);
     requireLeaveChannels(settings);
@@ -610,11 +611,11 @@ export class AttendanceInteractionHandler {
       timezone: settings.timezone,
       now: new Date(),
     });
-    await interaction.editReply(buildNotice('success', 'บันทึกใบลาแล้ว', `📅 **${view.leave.startsOn} – ${view.leave.endsOn}**\nใบลามีผลทันทีและไม่ต้องรออนุมัติ`, 'Leave'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'บันทึกใบลาแล้ว', `📅 **${view.leave.startsOn} – ${view.leave.endsOn}**\nใบลามีผลทันทีและไม่ต้องรออนุมัติ`, 'Leave'));
   }
 
   private async editLeave(interaction: ModalSubmitInteraction, guild: Guild, leaveId: string): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     const isAdmin = await this.requireMemberOrAdmin(guild, interaction.user.id);
     const settings = await this.requireSettings(guild.id);
     const scheduleIds = readLeaveScheduleIds(interaction);
@@ -631,11 +632,11 @@ export class AttendanceInteractionHandler {
       new Date(),
     );
     await this.updateLeaveLog(view);
-    await interaction.editReply(buildNotice('success', 'แก้ไขใบลาแล้ว', 'ช่วงวันลาและเหตุผลได้รับการอัปเดต', 'Leave'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'แก้ไขใบลาแล้ว', 'ช่วงวันลาและเหตุผลได้รับการอัปเดต', 'Leave'));
   }
 
   private async correctAttendance(interaction: ModalSubmitInteraction, guild: Guild, roundId: string): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAdmin(guild, interaction.user.id);
     const memberId = interaction.fields.getStringSelectValues(attendanceComponentIds.correctionMember)[0];
     const result = interaction.fields.getStringSelectValues(attendanceComponentIds.correctionResult)[0];
@@ -660,7 +661,7 @@ export class AttendanceInteractionHandler {
       interaction.user.id,
       new Date(),
     );
-    await interaction.editReply(buildNotice('success', 'แก้ผลย้อนหลังแล้ว', 'ผลเช็กชื่อและ Audit log ได้รับการบันทึกเรียบร้อย', 'Attendance'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'แก้ผลย้อนหลังแล้ว', 'ผลเช็กชื่อและ Audit log ได้รับการบันทึกเรียบร้อย', 'Attendance'));
   }
 
   private async cancelRound(
@@ -669,7 +670,7 @@ export class AttendanceInteractionHandler {
     roundId: string,
   ): Promise<void> {
     requireCancellationConfirmation(interaction);
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAdmin(guild, interaction.user.id);
     const round = await this.dependencies.attendance.cancelRound(
       guild.id,
@@ -679,7 +680,7 @@ export class AttendanceInteractionHandler {
       new Date(),
     );
     await this.refreshRound(guild.id, round.id);
-    await interaction.editReply(buildNotice(
+    await interactionResponse(interaction).editReply(buildNotice(
       'success',
       'ยกเลิกรอบเช็กชื่อแล้ว',
       'ปิดการเช็กชื่อและงานอัตโนมัติของรอบนี้แล้ว โดยเก็บผลเดิมไว้เป็นประวัติ',

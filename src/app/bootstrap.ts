@@ -13,6 +13,7 @@ import { StockInteractionHandler } from '../infrastructure/discord/stock-interac
 import { FightPositionInteractionHandler } from '../infrastructure/discord/fight-position-interaction-handler.js';
 import { registerGuildCommands } from '../infrastructure/discord/commands.js';
 import { DiscordInteractionHandler } from '../infrastructure/discord/interaction-handler.js';
+import { describeInteractionError } from '../infrastructure/discord/interaction-error.js';
 import { createDiscordJobHandlers } from '../infrastructure/discord/job-handlers.js';
 import { DailyLogPublisher, DrizzleDailyLogMarkerRepository } from '../infrastructure/discord/daily-log-publisher.js';
 import { startHealthServer } from '../infrastructure/health/server.js';
@@ -178,7 +179,7 @@ export async function bootstrap(): Promise<RunningApplication> {
       : undefined;
     void interactionHandler.handle(interaction)
       .catch((error: unknown) => {
-        logger.error({ err: error, interactionId: interaction.id }, 'unhandled interaction failure');
+        logger.error({ err: describeInteractionError(error), interactionId: interaction.id }, 'unhandled interaction failure');
       })
       .finally(() => {
         finishHealthObservation?.();

@@ -1,3 +1,4 @@
+import { interactionResponse } from './responsive-interaction.js';
 import { randomUUID } from 'node:crypto';
 import { DateTime } from 'luxon';
 import {
@@ -96,7 +97,7 @@ export class DateTimePicker {
     this.sessions.set(session.id, session);
     const timer = setTimeout(() => this.sessions.delete(session.id), SESSION_TTL_MS);
     timer.unref();
-    await interaction.reply({ ...buildPickerMessage(session), flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).reply({ ...buildPickerMessage(session), flags: MessageFlags.Ephemeral });
   }
 
   public async handle(interaction: Interaction): Promise<boolean> {
@@ -163,7 +164,7 @@ export class DateTimePicker {
     } else {
       throw new ValidationError('ขั้นตอนเลือกวันเวลาไม่ตรงกับหน้าปัจจุบัน');
     }
-    await interaction.update(buildPickerMessage(session));
+    await interactionResponse(interaction).update(buildPickerMessage(session));
   }
 
   private async handleButton(interaction: ButtonInteraction): Promise<void> {
@@ -182,7 +183,7 @@ export class DateTimePicker {
       const pageStart = next.toISODate();
       if (pageStart === null) throw new ValidationError('ไม่สามารถเปลี่ยนหน้าวันที่ได้');
       session.pageStart = pageStart;
-      await interaction.update(buildPickerMessage(session));
+      await interactionResponse(interaction).update(buildPickerMessage(session));
       return;
     }
     if (parsed.action === 'reset') {
@@ -195,7 +196,7 @@ export class DateTimePicker {
       session.pageStart = validIsoDate(firstField.initialDate)
         ?? DateTime.now().setZone(session.timezone).toISODate()
         ?? session.pageStart;
-      await interaction.update(buildPickerMessage(session));
+      await interactionResponse(interaction).update(buildPickerMessage(session));
       return;
     }
     throw new ValidationError('ปุ่มตัวเลือกวันเวลาไม่ถูกต้อง');

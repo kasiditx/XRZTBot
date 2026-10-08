@@ -1,3 +1,4 @@
+import { interactionResponse } from './responsive-interaction.js';
 import { randomUUID } from 'node:crypto';
 import type pino from 'pino';
 import { cancellationConfirmationRow, requireCancellationConfirmation } from './cancellation-confirmation.js';
@@ -113,32 +114,32 @@ export class StockInteractionHandler {
         this.dependencies.withdrawals.list(guild.id, 10),
         this.dependencies.deposits.list(guild.id, 10),
       ]);
-      await interaction.reply({ ...buildStockAdminPanel(batches, withdrawals, deposits), flags: MessageFlags.Ephemeral });
+      await interactionResponse(interaction).reply({ ...buildStockAdminPanel(batches, withdrawals, deposits), flags: MessageFlags.Ephemeral });
       return;
     }
     if (interaction.customId === stockComponentIds.adminOpening) {
       await this.requireCapability(guild, interaction.user.id, 'STOCK_REVERSE');
       await this.requireStockLogChannel(guild.id);
-      await interaction.showModal(buildStockCsvModal('OPENING'));
+      await interactionResponse(interaction).showModal(buildStockCsvModal('OPENING'));
       return;
     }
     if (interaction.customId === stockComponentIds.adminMovement) {
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
       await this.requireStockLogChannel(guild.id);
-      await interaction.showModal(buildStockCsvModal('MOVEMENT'));
+      await interactionResponse(interaction).showModal(buildStockCsvModal('MOVEMENT'));
       return;
     }
     if (interaction.customId === stockComponentIds.adminSync) {
       await this.requireCapability(guild, interaction.user.id, 'STOCK_REVERSE');
       await this.requireStockLogChannel(guild.id);
-      await interaction.showModal(buildStockCsvModal('SYNC'));
+      await interactionResponse(interaction).showModal(buildStockCsvModal('SYNC'));
       return;
     }
     if (interaction.customId === stockComponentIds.adminExportSync) {
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
       await this.requireCapability(guild, interaction.user.id, 'STOCK_REVERSE');
       const content = await this.dependencies.inventory.exportSyncCsv(guild.id);
-      await interaction.editReply({
+      await interactionResponse(interaction).editReply({
         ...buildNotice('success', 'Export ยอด Stock ล่าสุดแล้ว', 'แก้เฉพาะ `item_name` และ `latest_quantity` จากนั้นนำไฟล์กลับมาใช้กับ **Sync ยอดล่าสุด**', 'Stock'),
         files: [{ attachment: content, name: 'stock-sync-latest.csv' }],
       });
@@ -149,20 +150,20 @@ export class StockInteractionHandler {
       return;
     }
     if (interaction.customId === 'stock:withdraw') {
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
       await this.requireActiveMember(guild, interaction.user.id);
       const session = this.createSelectionSession(guild.id, interaction.user.id, 'WITHDRAWAL');
-      await interaction.editReply({
+      await interactionResponse(interaction).editReply({
         ...buildStockItemPicker('WITHDRAWAL', await this.dependencies.inventory.getDashboard(guild.id, 1, 25), session.token, session.itemIds),
       });
       return;
     }
     if (interaction.customId === 'stock:deposit') {
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
       await this.requireActiveMember(guild, interaction.user.id);
       await this.requireDepositLogChannel(guild.id);
       const session = this.createSelectionSession(guild.id, interaction.user.id, 'DEPOSIT');
-      await interaction.editReply({
+      await interactionResponse(interaction).editReply({
         ...buildStockItemPicker('DEPOSIT', await this.dependencies.inventory.getDashboard(guild.id, 1, 25), session.token, session.itemIds),
       });
       return;
@@ -171,7 +172,7 @@ export class StockInteractionHandler {
       const component = parseSelectionComponent(interaction.customId, stockComponentIds.memberPagePrefix, true);
       const session = await this.requireSelectionSession(guild, interaction.user.id, component);
       const dashboard = await this.dependencies.inventory.getDashboard(guild.id, component.page, 25);
-      await interaction.update(buildStockItemPicker(session.action, dashboard, session.token, session.itemIds));
+      await interactionResponse(interaction).update(buildStockItemPicker(session.action, dashboard, session.token, session.itemIds));
       return;
     }
     if (interaction.customId.startsWith(stockComponentIds.memberClearPrefix)) {
@@ -179,7 +180,7 @@ export class StockInteractionHandler {
       const session = await this.requireSelectionSession(guild, interaction.user.id, component);
       session.itemIds.clear();
       const dashboard = await this.dependencies.inventory.getDashboard(guild.id, component.page, 25);
-      await interaction.update(buildStockItemPicker(session.action, dashboard, session.token, session.itemIds));
+      await interactionResponse(interaction).update(buildStockItemPicker(session.action, dashboard, session.token, session.itemIds));
       return;
     }
     if (interaction.customId.startsWith(stockComponentIds.memberReviewPrefix)) {
@@ -195,10 +196,10 @@ export class StockInteractionHandler {
         items.map((item) => item.id),
       );
       if (session.action === 'WITHDRAWAL') {
-        await interaction.showModal(buildWithdrawalModal(submission.token, items));
+        await interactionResponse(interaction).showModal(buildWithdrawalModal(submission.token, items));
         return;
       }
-      await interaction.update(buildEvidenceMethodPrompt(
+      await interactionResponse(interaction).update(buildEvidenceMethodPrompt(
         `stock:deposit_evidence_method:${submission.token}`,
         'หลักฐานส่งของเข้าแก๊ง',
       ));
@@ -206,23 +207,23 @@ export class StockInteractionHandler {
     }
     if (interaction.customId.startsWith('stock:view:')) {
       const page = parseStockViewPage(interaction.customId.slice('stock:view:'.length));
-      await interaction.update(buildStockDashboard(await this.dependencies.inventory.getDashboard(guild.id, page)));
+      await interactionResponse(interaction).update(buildStockDashboard(await this.dependencies.inventory.getDashboard(guild.id, page)));
       return;
     }
     if (interaction.customId.startsWith('stock:log_view:')) {
       const page = parseStockViewPage(interaction.customId.slice('stock:log_view:'.length));
-      await interaction.update(buildStockDashboard(await this.dependencies.inventory.getDashboard(guild.id, page), 'LOG'));
+      await interactionResponse(interaction).update(buildStockDashboard(await this.dependencies.inventory.getDashboard(guild.id, page), 'LOG'));
       return;
     }
     if (interaction.customId.startsWith('stock:fulfill:')) {
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
       const request = await this.dependencies.withdrawals.get(guild.id, entityId(interaction.customId, 'stock:fulfill:'));
-      await interaction.showModal(buildFulfillmentModal(request));
+      await interactionResponse(interaction).showModal(buildFulfillmentModal(request));
       return;
     }
     if (interaction.customId.startsWith('stock:withdrawal_reject:')) {
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
-      await interaction.showModal(buildWithdrawalRejectionModal(entityId(interaction.customId, 'stock:withdrawal_reject:')).addComponents(cancellationConfirmationRow()));
+      await interactionResponse(interaction).showModal(buildWithdrawalRejectionModal(entityId(interaction.customId, 'stock:withdrawal_reject:')).addComponents(cancellationConfirmationRow()));
       return;
     }
     if (interaction.customId.startsWith('stock:deposit_approve:')) {
@@ -231,12 +232,12 @@ export class StockInteractionHandler {
     }
     if (interaction.customId.startsWith('stock:deposit_reject:')) {
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
-      await interaction.showModal(buildDepositRejectionModal(entityId(interaction.customId, 'stock:deposit_reject:')).addComponents(cancellationConfirmationRow()));
+      await interactionResponse(interaction).showModal(buildDepositRejectionModal(entityId(interaction.customId, 'stock:deposit_reject:')).addComponents(cancellationConfirmationRow()));
       return;
     }
     if (interaction.customId.startsWith('stock:reverse:')) {
       await this.requireCapability(guild, interaction.user.id, 'STOCK_REVERSE');
-      await interaction.showModal(buildStockReversalModal(entityId(interaction.customId, 'stock:reverse:')));
+      await interactionResponse(interaction).showModal(buildStockReversalModal(entityId(interaction.customId, 'stock:reverse:')));
     }
   }
 
@@ -251,7 +252,7 @@ export class StockInteractionHandler {
         page: 1,
       });
       const items = await this.dependencies.inventory.getActiveItems(guild.id, [...session.itemIds]);
-      await interaction.showModal(buildDepositModal(
+      await interactionResponse(interaction).showModal(buildDepositModal(
         token,
         items,
         requireEvidenceInputMode(interaction.values[0]),
@@ -272,22 +273,22 @@ export class StockInteractionHandler {
       if (nextItemIds.size > 25) throw new ValidationError('หนึ่งคำขอเลือกได้สูงสุด 25 รายการ');
       session.itemIds.clear();
       nextItemIds.forEach((itemId) => session.itemIds.add(itemId));
-      await interaction.update(buildStockItemPicker(session.action, dashboard, session.token, session.itemIds));
+      await interactionResponse(interaction).update(buildStockItemPicker(session.action, dashboard, session.token, session.itemIds));
       return;
     }
     const selectedId = interaction.values[0];
     if (selectedId === undefined) throw new ValidationError('กรุณาเลือกรายการ');
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     if (interaction.customId === stockComponentIds.adminBatchSelect) {
-      await interaction.update({ ...buildBatchManagement(await this.dependencies.inventory.getBatch(guild.id, selectedId)), content: null });
+      await interactionResponse(interaction).update({ ...buildBatchManagement(await this.dependencies.inventory.getBatch(guild.id, selectedId)), content: null });
       return;
     }
     if (interaction.customId === stockComponentIds.adminWithdrawalSelect) {
-      await interaction.update({ ...buildWithdrawalLog(await this.dependencies.withdrawals.get(guild.id, selectedId)), content: null });
+      await interactionResponse(interaction).update({ ...buildWithdrawalLog(await this.dependencies.withdrawals.get(guild.id, selectedId)), content: null });
       return;
     }
     if (interaction.customId === stockComponentIds.adminDepositSelect) {
-      await interaction.update({ ...buildDepositLog(await this.dependencies.deposits.get(guild.id, selectedId)), content: null });
+      await interactionResponse(interaction).update({ ...buildDepositLog(await this.dependencies.deposits.get(guild.id, selectedId)), content: null });
     }
   }
 
@@ -332,7 +333,7 @@ export class StockInteractionHandler {
   }
 
   private async applyCsv(interaction: ModalSubmitInteraction, guild: Guild, kind: 'OPENING' | 'MOVEMENT' | 'SYNC'): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, kind === 'MOVEMENT' ? 'ROUTINE_ADMIN' : 'STOCK_REVERSE');
     const settings = await this.requireSettings(guild.id);
     const channel = await fetchSendableChannel(
@@ -381,11 +382,11 @@ export class StockInteractionHandler {
           });
       if (batch.batch.publicMessageId !== logMessage.id) {
         await logMessage.delete();
-        await interaction.editReply(buildNotice('info', 'ไฟล์นี้ถูกประมวลผลแล้ว', `Batch: **${batch.batch.batchRef}**\nระบบไม่บันทึกซ้ำเพื่อป้องกันยอด Stock ผิดพลาด`, 'Stock'));
+        await interactionResponse(interaction).editReply(buildNotice('info', 'ไฟล์นี้ถูกประมวลผลแล้ว', `Batch: **${batch.batch.batchRef}**\nระบบไม่บันทึกซ้ำเพื่อป้องกันยอด Stock ผิดพลาด`, 'Stock'));
         return;
       }
       await logMessage.edit(buildBatchLog(batch));
-      await interaction.editReply(buildNotice('success', 'บันทึก Stock CSV แล้ว', `Batch: **${batch.batch.batchRef}**\nMovement: **${batch.movements.length.toString()} รายการ**`, 'Stock'));
+      await interactionResponse(interaction).editReply(buildNotice('success', 'บันทึก Stock CSV แล้ว', `Batch: **${batch.batch.batchRef}**\nMovement: **${batch.movements.length.toString()} รายการ**`, 'Stock'));
     } catch (error: unknown) {
       await logMessage.delete().catch((deleteError: unknown) => {
         this.dependencies.logger.error({ err: deleteError, messageId: logMessage.id }, 'failed to remove orphan stock CSV log');
@@ -395,7 +396,7 @@ export class StockInteractionHandler {
   }
 
   private async createWithdrawal(interaction: ModalSubmitInteraction, guild: Guild, sessionToken: string): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     const session = await this.requireSelectionSession(guild, interaction.user.id, {
       action: 'WITHDRAWAL',
       token: sessionToken,
@@ -416,7 +417,7 @@ export class StockInteractionHandler {
       now: new Date(),
     });
     this.completeSelectionSession(session);
-    await interaction.editReply(buildNotice('success', 'ส่งคำขอเบิกของแล้ว', `จำนวน: **${view.items.length.toString()} รายการ**\nสถานะ: ⏳ รอหัวแก๊ง/รองแก๊งจ่ายของ`, 'Stock Withdrawal'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'ส่งคำขอเบิกของแล้ว', `จำนวน: **${view.items.length.toString()} รายการ**\nสถานะ: ⏳ รอหัวแก๊ง/รองแก๊งจ่ายของ`, 'Stock Withdrawal'));
   }
 
   private async createDeposit(
@@ -425,7 +426,7 @@ export class StockInteractionHandler {
     sessionToken: string,
     evidenceMode: EvidenceInputMode,
   ): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     const session = await this.requireSelectionSession(guild, interaction.user.id, {
       action: 'DEPOSIT',
       token: sessionToken,
@@ -490,7 +491,7 @@ export class StockInteractionHandler {
       });
       if (view.request.publicMessageId !== logMessage.id) {
         await logMessage.delete();
-        await interaction.editReply(buildNotice('info', 'รายการนี้ถูกบันทึกแล้ว', 'ระบบไม่สร้างรายการซ้ำเพื่อป้องกัน Stock คลาดเคลื่อน', 'Stock Deposit'));
+        await interactionResponse(interaction).editReply(buildNotice('info', 'รายการนี้ถูกบันทึกแล้ว', 'ระบบไม่สร้างรายการซ้ำเพื่อป้องกัน Stock คลาดเคลื่อน', 'Stock Deposit'));
         return;
       }
     } catch (error: unknown) {
@@ -500,11 +501,11 @@ export class StockInteractionHandler {
       throw error;
     }
     this.completeSelectionSession(session);
-    await interaction.editReply(buildNotice('success', 'ส่งของเข้าแก๊งแล้ว', `จำนวน: **${prepared.items.length.toString()} รายการ**\nสถานะ: ⏳ รอหัวแก๊ง/รองแก๊งตรวจสอบ`, 'Stock Deposit'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'ส่งของเข้าแก๊งแล้ว', `จำนวน: **${prepared.items.length.toString()} รายการ**\nสถานะ: ⏳ รอหัวแก๊ง/รองแก๊งตรวจสอบ`, 'Stock Deposit'));
   }
 
   private async approveDeposit(interaction: ButtonInteraction, guild: Guild, requestId: string): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const view = await this.dependencies.deposits.approve(guild.id, requestId, interaction.user.id, new Date());
     const attachment = interaction.message.attachments.get(view.request.attachmentId);
@@ -512,12 +513,12 @@ export class StockInteractionHandler {
       ? interaction.message.embeds[0]?.image?.url
       : attachmentReference(attachment);
     await interaction.message.edit(buildDepositLog(view, imageUrl));
-    await interaction.editReply(buildNotice('success', 'อนุมัติแล้ว', 'รับของเข้า Stock และปิดปุ่มรายการนี้เรียบร้อย', 'Stock Deposit'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'อนุมัติแล้ว', 'รับของเข้า Stock และปิดปุ่มรายการนี้เรียบร้อย', 'Stock Deposit'));
   }
 
   private async rejectDeposit(interaction: ModalSubmitInteraction, guild: Guild, requestId: string): Promise<void> {
     requireCancellationConfirmation(interaction);
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const view = await this.dependencies.deposits.reject(
       guild.id,
@@ -528,11 +529,11 @@ export class StockInteractionHandler {
       hasCapability(await this.resolveCurrentAuthority(guild, interaction.user.id), 'STOCK_REVERSE'),
     );
     await this.updateDepositLog(view);
-    await interaction.editReply(buildNotice('warning', 'ปฏิเสธ/ยกเลิกรายการส่งของแล้ว', 'หากรับเข้าแล้ว ระบบย้อนยอด Stock พร้อมบันทึกประวัติ', 'Stock Deposit'));
+    await interactionResponse(interaction).editReply(buildNotice('warning', 'ปฏิเสธ/ยกเลิกรายการส่งของแล้ว', 'หากรับเข้าแล้ว ระบบย้อนยอด Stock พร้อมบันทึกประวัติ', 'Stock Deposit'));
   }
 
   private async fulfillWithdrawal(interaction: ModalSubmitInteraction, guild: Guild, requestId: string): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const current = await this.dependencies.withdrawals.get(guild.id, requestId);
     const pendingItems = current.items.filter(({ requestedQuantity, fulfilledQuantity }) => fulfilledQuantity < requestedQuantity);
@@ -549,12 +550,12 @@ export class StockInteractionHandler {
       actorDiscordUserId: interaction.user.id,
       now: new Date(),
     });
-    await interaction.editReply(buildNotice('success', 'บันทึกการจ่ายของแล้ว', `สถานะคำขอ: **${view.request.status}**`, 'Stock Withdrawal'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'บันทึกการจ่ายของแล้ว', `สถานะคำขอ: **${view.request.status}**`, 'Stock Withdrawal'));
   }
 
   private async rejectWithdrawal(interaction: ModalSubmitInteraction, guild: Guild, requestId: string): Promise<void> {
     requireCancellationConfirmation(interaction);
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const view = await this.dependencies.withdrawals.reject({
       guildId: guild.id,
@@ -565,11 +566,11 @@ export class StockInteractionHandler {
       allowReversal: hasCapability(await this.resolveCurrentAuthority(guild, interaction.user.id), 'STOCK_REVERSE'),
     });
     await this.updateWithdrawalLog(view);
-    await interaction.editReply(buildNotice('warning', 'ปฏิเสธ/ยกเลิกคำขอเบิกของแล้ว', 'หากจ่ายแล้ว ระบบคืนยอด Stock ตามจำนวนที่จ่ายจริงพร้อมบันทึกประวัติ', 'Stock Withdrawal'));
+    await interactionResponse(interaction).editReply(buildNotice('warning', 'ปฏิเสธ/ยกเลิกคำขอเบิกของแล้ว', 'หากจ่ายแล้ว ระบบคืนยอด Stock ตามจำนวนที่จ่ายจริงพร้อมบันทึกประวัติ', 'Stock Withdrawal'));
   }
 
   private async reverseBatch(interaction: ModalSubmitInteraction, guild: Guild, batchId: string): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, 'STOCK_REVERSE');
     const reversal = await this.dependencies.inventory.reverseBatch(
       guild.id,
@@ -579,11 +580,11 @@ export class StockInteractionHandler {
       interaction.user.id,
       new Date(),
     );
-    await interaction.editReply(buildNotice('success', 'ย้อน Stock Batch แล้ว', `Batch: **${reversal.batch.batchRef}**\nAudit log ได้รับการบันทึกแล้ว`, 'Stock'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'ย้อน Stock Batch แล้ว', `Batch: **${reversal.batch.batchRef}**\nAudit log ได้รับการบันทึกแล้ว`, 'Stock'));
   }
 
   private async publishDashboard(interaction: ButtonInteraction, guild: Guild): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const settings = await this.requireSettings(guild.id);
     const channel = await fetchSendableChannel(this.dependencies.client, settings.stockChannelId, 'Channel Stock');
@@ -592,13 +593,13 @@ export class StockInteractionHandler {
       const existing = await channel.messages.fetch(settings.stockPanelMessageId).catch(() => null);
       if (existing !== null) {
         await existing.edit(content);
-        await interaction.editReply(buildNotice('success', 'อัปเดตหน้า Stock แล้ว', `ปลายทาง: <#${channel.id}>`, 'Stock'));
+        await interactionResponse(interaction).editReply(buildNotice('success', 'อัปเดตหน้า Stock แล้ว', `ปลายทาง: <#${channel.id}>`, 'Stock'));
         return;
       }
     }
     const message = await channel.send(content);
     await this.dependencies.guildConfig.saveStockPanelMessage(guild.id, message.id);
-    await interaction.editReply(buildNotice('success', 'ส่งหน้า Stock แล้ว', `ปลายทาง: <#${channel.id}>`, 'Stock'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'ส่งหน้า Stock แล้ว', `ปลายทาง: <#${channel.id}>`, 'Stock'));
   }
 
   private async updateDepositLog(view: DepositRequestView): Promise<void> {

@@ -1,3 +1,4 @@
+import { interactionResponse } from './responsive-interaction.js';
 import type pino from 'pino';
 import { cancellationConfirmationRow, requireCancellationConfirmation } from './cancellation-confirmation.js';
 import {
@@ -87,13 +88,13 @@ export class TreasuryInteractionHandler {
     if (interaction.customId === componentIds.controlTreasury) {
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
       const dashboard = await this.dependencies.treasury.getDashboard(guild.id, 25);
-      await interaction.reply({ ...buildTreasuryAdminPanel(dashboard), flags: MessageFlags.Ephemeral });
+      await interactionResponse(interaction).reply({ ...buildTreasuryAdminPanel(dashboard), flags: MessageFlags.Ephemeral });
       return;
     }
     if (interaction.customId === treasuryComponentIds.adminIncome) {
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
       await this.requireTreasuryChannel(guild.id);
-      await interaction.reply({
+      await interactionResponse(interaction).reply({
         ...buildEvidenceMethodPrompt('treasury:evidence_method:INCOME', 'หลักฐานรายรับ'),
         flags: MessageFlags.Ephemeral,
       });
@@ -102,7 +103,7 @@ export class TreasuryInteractionHandler {
     if (interaction.customId === treasuryComponentIds.adminExpense) {
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
       await this.requireTreasuryChannel(guild.id);
-      await interaction.reply({
+      await interactionResponse(interaction).reply({
         ...buildEvidenceMethodPrompt('treasury:evidence_method:EXPENSE', 'หลักฐานรายจ่าย'),
         flags: MessageFlags.Ephemeral,
       });
@@ -111,7 +112,7 @@ export class TreasuryInteractionHandler {
     if (interaction.customId === treasuryComponentIds.adminOpening) {
       await this.requireCapability(guild, interaction.user.id, 'FINANCIAL_REVERSE');
       await this.requireTreasuryChannel(guild.id);
-      await interaction.showModal(buildOpeningBalanceModal());
+      await interactionResponse(interaction).showModal(buildOpeningBalanceModal());
       return;
     }
     if (interaction.customId === treasuryComponentIds.adminPublishPanel) {
@@ -126,11 +127,11 @@ export class TreasuryInteractionHandler {
       await this.requireActiveMember(guild, interaction.user.id);
       await this.requireTreasuryWithdrawalChannel(guild.id);
       await this.requireTreasuryWithdrawalLogChannel(guild.id);
-      await interaction.showModal(buildTreasuryWithdrawalModal());
+      await interactionResponse(interaction).showModal(buildTreasuryWithdrawalModal());
       return;
     }
     if (interaction.customId.startsWith('treasury:withdrawal_approve:')) {
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
       const view = await this.dependencies.treasuryWithdrawals.approve(
         guild.id,
@@ -139,18 +140,18 @@ export class TreasuryInteractionHandler {
         new Date(),
       );
       await interaction.message.edit(buildTreasuryWithdrawalRequestLog(view));
-      await interaction.editReply(buildNotice('success', 'อนุมัติแล้ว', 'บันทึกการเบิกเงินและปิดปุ่มรายการนี้เรียบร้อย', 'Treasury Withdrawal'));
+      await interactionResponse(interaction).editReply(buildNotice('success', 'อนุมัติแล้ว', 'บันทึกการเบิกเงินและปิดปุ่มรายการนี้เรียบร้อย', 'Treasury Withdrawal'));
       return;
     }
     if (interaction.customId.startsWith('treasury:withdrawal_reject:')) {
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
-      await interaction.showModal(buildTreasuryWithdrawalRejectionModal(
+      await interactionResponse(interaction).showModal(buildTreasuryWithdrawalRejectionModal(
         entityId(interaction.customId, 'treasury:withdrawal_reject:'),
       ).addComponents(cancellationConfirmationRow()));
       return;
     }
     if (interaction.customId.startsWith('treasury:withdrawal_cancel:')) {
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
       const view = await this.dependencies.treasuryWithdrawals.cancel(
         guild.id,
         entityId(interaction.customId, 'treasury:withdrawal_cancel:'),
@@ -158,13 +159,13 @@ export class TreasuryInteractionHandler {
         new Date(),
       );
       await interaction.message.edit(buildTreasuryWithdrawalRequestLog(view));
-      await interaction.editReply(buildNotice('success', 'ยกเลิกคำขอแล้ว', 'สถานะคำขอได้รับการอัปเดตเรียบร้อย', 'Treasury Withdrawal'));
+      await interactionResponse(interaction).editReply(buildNotice('success', 'ยกเลิกคำขอแล้ว', 'สถานะคำขอได้รับการอัปเดตเรียบร้อย', 'Treasury Withdrawal'));
       return;
     }
     if (interaction.customId.startsWith('treasury:reverse:')) {
       await this.requireCapability(guild, interaction.user.id, 'FINANCIAL_REVERSE');
       const entryId = entityId(interaction.customId, 'treasury:reverse:');
-      await interaction.showModal(buildTreasuryReversalModal(entryId));
+      await interactionResponse(interaction).showModal(buildTreasuryReversalModal(entryId));
     }
   }
 
@@ -175,7 +176,7 @@ export class TreasuryInteractionHandler {
       await this.requireTreasuryChannel(guild.id);
       const entryType = interaction.customId.slice('treasury:evidence_method:'.length);
       if (entryType !== 'INCOME' && entryType !== 'EXPENSE') throw new ValidationError('ประเภทรายการไม่ถูกต้อง');
-      await interaction.showModal(buildManualTreasuryModal(entryType, requireEvidenceInputMode(interaction.values[0])));
+      await interactionResponse(interaction).showModal(buildManualTreasuryModal(entryType, requireEvidenceInputMode(interaction.values[0])));
       return;
     }
     if (interaction.customId !== treasuryComponentIds.adminSelect) return;
@@ -183,7 +184,7 @@ export class TreasuryInteractionHandler {
     const entryId = interaction.values[0];
     if (entryId === undefined) throw new ValidationError('กรุณาเลือกรายการเงินกองกลาง');
     const entry = await this.dependencies.treasury.getEntry(guild.id, entryId);
-    await interaction.update({ ...buildTreasuryManagement(entry), content: null });
+    await interactionResponse(interaction).update({ ...buildTreasuryManagement(entry), content: null });
   }
 
   private async handleModal(interaction: ModalSubmitInteraction): Promise<void> {
@@ -217,7 +218,7 @@ export class TreasuryInteractionHandler {
   }
 
   private async createWithdrawalRequest(interaction: ModalSubmitInteraction, guild: Guild): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireActiveMember(guild, interaction.user.id);
     await this.requireTreasuryWithdrawalChannel(guild.id);
     await this.requireTreasuryWithdrawalLogChannel(guild.id);
@@ -229,7 +230,7 @@ export class TreasuryInteractionHandler {
       reason: interaction.fields.getTextInputValue(treasuryComponentIds.withdrawalReason),
       now: new Date(),
     });
-    await interaction.editReply(buildNotice('success', 'ส่งคำขอเบิกเงินแล้ว', `จำนวนเงิน: **${view.request.amount.toLocaleString('th-TH')}**\nสถานะ: ⏳ รอหัวแก๊ง/รองแก๊งตรวจสอบ`, 'Treasury Withdrawal'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'ส่งคำขอเบิกเงินแล้ว', `จำนวนเงิน: **${view.request.amount.toLocaleString('th-TH')}**\nสถานะ: ⏳ รอหัวแก๊ง/รองแก๊งตรวจสอบ`, 'Treasury Withdrawal'));
   }
 
   private async rejectWithdrawalRequest(
@@ -238,7 +239,7 @@ export class TreasuryInteractionHandler {
     requestId: string,
   ): Promise<void> {
     requireCancellationConfirmation(interaction);
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const view = await this.dependencies.treasuryWithdrawals.reject(
       guild.id,
@@ -249,7 +250,7 @@ export class TreasuryInteractionHandler {
       hasCapability(await this.resolveCurrentAuthority(guild, interaction.user.id), 'FINANCIAL_REVERSE'),
     );
     await this.updateWithdrawalRequestLog(view);
-    await interaction.editReply(buildNotice('warning', 'ปฏิเสธ/ยกเลิกคำขอเบิกเงินแล้ว', 'ระบบอัปเดตสถานะคำขอและยอดเงินเรียบร้อย', 'Treasury Withdrawal'));
+    await interactionResponse(interaction).editReply(buildNotice('warning', 'ปฏิเสธ/ยกเลิกคำขอเบิกเงินแล้ว', 'ระบบอัปเดตสถานะคำขอและยอดเงินเรียบร้อย', 'Treasury Withdrawal'));
   }
 
   private async persistManualEntry(
@@ -258,7 +259,7 @@ export class TreasuryInteractionHandler {
     entryType: 'INCOME' | 'EXPENSE',
     evidenceMode: EvidenceInputMode,
   ): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const settings = await this.requireSettings(guild.id);
     const channel = await fetchSendableChannel(
@@ -315,7 +316,7 @@ export class TreasuryInteractionHandler {
       });
       throw error;
     }
-    await interaction.editReply(buildNotice(
+    await interactionResponse(interaction).editReply(buildNotice(
       'success',
       `บันทึก${entryType === 'INCOME' ? 'รายรับ' : 'รายจ่าย'}แล้ว`,
       'ยอดเงินกองกลางและ Log ได้รับการอัปเดตเรียบร้อย',
@@ -324,7 +325,7 @@ export class TreasuryInteractionHandler {
   }
 
   private async createOpeningBalance(interaction: ModalSubmitInteraction, guild: Guild): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, 'FINANCIAL_REVERSE');
     await this.requireTreasuryChannel(guild.id);
     const entry = await this.dependencies.treasury.createOpeningBalance(
@@ -334,11 +335,11 @@ export class TreasuryInteractionHandler {
       interaction.user.id,
       new Date(),
     );
-    await interaction.editReply(buildNotice('success', 'ตั้งยอดเริ่มต้นแล้ว', `ยอดเงิน: **${entry.amount.toLocaleString('th-TH')}**`, 'Treasury'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'ตั้งยอดเริ่มต้นแล้ว', `ยอดเงิน: **${entry.amount.toLocaleString('th-TH')}**`, 'Treasury'));
   }
 
   private async reverseEntry(interaction: ModalSubmitInteraction, guild: Guild, entryId: string): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, 'FINANCIAL_REVERSE');
     await this.requireTreasuryChannel(guild.id);
     const reversal = await this.dependencies.treasury.reverseEntry(
@@ -349,11 +350,11 @@ export class TreasuryInteractionHandler {
       interaction.user.id,
       new Date(),
     );
-    await interaction.editReply(buildNotice('success', 'ย้อนรายการแล้ว', `ยอดเปลี่ยนแปลง: **${reversal.amount > 0 ? '+' : ''}${reversal.amount.toLocaleString('th-TH')}**\nAudit log ได้รับการบันทึกแล้ว`, 'Treasury'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'ย้อนรายการแล้ว', `ยอดเปลี่ยนแปลง: **${reversal.amount > 0 ? '+' : ''}${reversal.amount.toLocaleString('th-TH')}**\nAudit log ได้รับการบันทึกแล้ว`, 'Treasury'));
   }
 
   private async publishDashboard(interaction: ButtonInteraction, guild: Guild): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const settings = await this.requireSettings(guild.id);
     const channel = await fetchSendableChannel(this.dependencies.client, settings.treasuryChannelId, 'Channel เงินกองกลาง');
@@ -375,11 +376,11 @@ export class TreasuryInteractionHandler {
         this.dependencies.logger.warn({ err: error, messageId: existing.id }, 'failed to remove previous treasury dashboard');
       });
     }
-    await interaction.editReply(buildNotice('success', 'ส่ง/อัปเดตยอดเงินกองกลางแล้ว', `ปลายทาง: <#${channel.id}>`, 'Treasury'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'ส่ง/อัปเดตยอดเงินกองกลางแล้ว', `ปลายทาง: <#${channel.id}>`, 'Treasury'));
   }
 
   private async publishWithdrawalPanel(interaction: ButtonInteraction, guild: Guild): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const settings = await this.requireSettings(guild.id);
     const channel = await fetchSendableChannel(
@@ -392,13 +393,13 @@ export class TreasuryInteractionHandler {
       const existing = await channel.messages.fetch(settings.treasuryWithdrawalPanelMessageId).catch(() => null);
       if (existing !== null) {
         await existing.edit(content);
-        await interaction.editReply(buildNotice('success', 'อัปเดตแผงเบิกเงินแล้ว', `ปลายทาง: <#${channel.id}>`, 'Treasury Withdrawal'));
+        await interactionResponse(interaction).editReply(buildNotice('success', 'อัปเดตแผงเบิกเงินแล้ว', `ปลายทาง: <#${channel.id}>`, 'Treasury Withdrawal'));
         return;
       }
     }
     const message = await channel.send(content);
     await this.dependencies.guildConfig.saveTreasuryWithdrawalPanelMessage(guild.id, message.id);
-    await interaction.editReply(buildNotice('success', 'ส่งแผงเบิกเงินแล้ว', `ปลายทาง: <#${channel.id}>`, 'Treasury Withdrawal'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'ส่งแผงเบิกเงินแล้ว', `ปลายทาง: <#${channel.id}>`, 'Treasury Withdrawal'));
   }
 
   private async requireTreasuryChannel(guildId: string): Promise<SendableChannels> {

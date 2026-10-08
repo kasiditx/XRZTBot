@@ -1,3 +1,4 @@
+import { interactionResponse } from './responsive-interaction.js';
 import { randomUUID } from 'node:crypto';
 import type pino from 'pino';
 import {
@@ -80,7 +81,7 @@ export class WeeklyItemsInteractionHandler {
     const guild = requireGuild(interaction.guild);
     if (interaction.customId === componentIds.controlWeeklyItems) {
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
-      await interaction.reply({
+      await interactionResponse(interaction).reply({
         ...buildWeeklyItemsAdminPanel(await this.dependencies.weeklyItems.list(guild.id)),
         flags: MessageFlags.Ephemeral,
       });
@@ -96,7 +97,7 @@ export class WeeklyItemsInteractionHandler {
       if (items.length === 0) throw new ValidationError('ยังไม่มีรายการ Stock สำหรับสร้างรอบส่งของ');
       const startsOn = new Date();
       const endsOn = new Date(startsOn.getTime() + 6 * 86_400_000);
-      await interaction.showModal(buildCreateWeeklyItemsModal(
+      await interactionResponse(interaction).showModal(buildCreateWeeklyItemsModal(
         items,
         formatLocalDateInput(startsOn, settings.timezone),
         formatLocalDateInput(endsOn, settings.timezone),
@@ -107,7 +108,7 @@ export class WeeklyItemsInteractionHandler {
       await this.requireActiveMember(guild, interaction.user.id);
       const collectionId = entityId(interaction.customId, 'weekly-items:submit:');
       const obligation = await this.dependencies.weeklyItems.prepareSubmission(guild.id, collectionId, interaction.user.id);
-      await interaction.reply({
+      await interactionResponse(interaction).reply({
         ...buildEvidenceMethodPrompt(
           `weekly-items:evidence_method:${collectionId}`,
           `หลักฐานส่งของครบ: ${obligation.items.map(({ item, quantity }) => `${item.itemName} ${quantity.toLocaleString('th-TH')}`).join(', ')}`,
@@ -117,7 +118,7 @@ export class WeeklyItemsInteractionHandler {
       return;
     }
     if (interaction.customId.startsWith('weekly-items:approve:')) {
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
       const view = await this.dependencies.weeklyItems.approveProof(
         guild.id,
@@ -127,12 +128,12 @@ export class WeeklyItemsInteractionHandler {
       );
       await interaction.message.edit(buildWeeklyItemsProofLog(view));
       await this.refreshCollection(guild.id, view.collection.id);
-      await interaction.editReply(buildNotice('success', 'อนุมัติรับของแล้ว', 'เพิ่มของเข้า Stock และปิดปุ่มรายการนี้เรียบร้อย', 'Weekly Items'));
+      await interactionResponse(interaction).editReply(buildNotice('success', 'อนุมัติรับของแล้ว', 'เพิ่มของเข้า Stock และปิดปุ่มรายการนี้เรียบร้อย', 'Weekly Items'));
       return;
     }
     if (interaction.customId.startsWith('weekly-items:reject:')) {
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
-      await interaction.showModal(buildWeeklyItemsRejectionModal(entityId(interaction.customId, 'weekly-items:reject:')));
+      await interactionResponse(interaction).showModal(buildWeeklyItemsRejectionModal(entityId(interaction.customId, 'weekly-items:reject:')));
       return;
     }
     if (interaction.customId.startsWith('weekly-items:member_rule:')) {
@@ -144,12 +145,12 @@ export class WeeklyItemsInteractionHandler {
       ]);
       const members = await filterRoleVerifiedActiveMembers(guild, settings, view.obligations.map(({ member }) => member));
       if (members.length === 0) throw new ValidationError('ไม่มีสมาชิกที่รับยศแล้วในรอบนี้');
-      await interaction.showModal(buildWeeklyItemsMemberRuleModal(collectionId, members));
+      await interactionResponse(interaction).showModal(buildWeeklyItemsMemberRuleModal(collectionId, members));
       return;
     }
     if (interaction.customId.startsWith('weekly-items:cancel:')) {
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
-      await interaction.showModal(buildWeeklyItemsCancellationModal(entityId(interaction.customId, 'weekly-items:cancel:')));
+      await interactionResponse(interaction).showModal(buildWeeklyItemsCancellationModal(entityId(interaction.customId, 'weekly-items:cancel:')));
     }
   }
 
@@ -159,7 +160,7 @@ export class WeeklyItemsInteractionHandler {
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
       const collectionId = interaction.values[0];
       if (collectionId === undefined) throw new ValidationError('กรุณาเลือกรอบส่งของ');
-      await interaction.update({ ...buildWeeklyItemsManagement(await this.dependencies.weeklyItems.get(guild.id, collectionId)), content: null });
+      await interactionResponse(interaction).update({ ...buildWeeklyItemsManagement(await this.dependencies.weeklyItems.get(guild.id, collectionId)), content: null });
       return;
     }
     if (interaction.customId.startsWith('weekly-items:evidence_method:')) {
@@ -167,7 +168,7 @@ export class WeeklyItemsInteractionHandler {
       const collectionId = entityId(interaction.customId, 'weekly-items:evidence_method:');
       await this.dependencies.weeklyItems.prepareSubmission(guild.id, collectionId, interaction.user.id);
       const mode = requireEvidenceInputMode(interaction.values[0]);
-      await interaction.showModal(buildWeeklyItemsProofModal(collectionId, mode));
+      await interactionResponse(interaction).showModal(buildWeeklyItemsProofModal(collectionId, mode));
     }
   }
 
@@ -196,7 +197,7 @@ export class WeeklyItemsInteractionHandler {
   }
 
   private async createCollection(interaction: ModalSubmitInteraction, guild: Guild): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const [settings, items] = await Promise.all([
       this.requireSettings(guild.id),
@@ -219,7 +220,7 @@ export class WeeklyItemsInteractionHandler {
       actorDiscordUserId: interaction.user.id,
       now: new Date(),
     });
-    await interaction.editReply(buildNotice(
+    await interactionResponse(interaction).editReply(buildNotice(
       'success',
       'สร้างรอบส่งของแล้ว',
       `📦 **${view.collection.title}**\nรายการของ: **${view.requirements.length.toString()} รายการ**\nสมาชิกในรอบ: **${view.obligations.length.toString()} คน**`,
@@ -233,7 +234,7 @@ export class WeeklyItemsInteractionHandler {
     collectionId: string,
     evidenceMode: EvidenceInputMode,
   ): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireActiveMember(guild, interaction.user.id);
     const settings = await this.requireSettings(guild.id);
     const channel = await fetchSendableChannel(
@@ -287,11 +288,11 @@ export class WeeklyItemsInteractionHandler {
       });
       throw error;
     }
-    await interaction.editReply(buildNotice('success', 'ส่งหลักฐานแล้ว', 'รายการครบตามยอดถูกส่งให้หัวแก๊ง/รองแก๊งตรวจสอบแล้ว', 'Weekly Items'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'ส่งหลักฐานแล้ว', 'รายการครบตามยอดถูกส่งให้หัวแก๊ง/รองแก๊งตรวจสอบแล้ว', 'Weekly Items'));
   }
 
   private async rejectProof(interaction: ModalSubmitInteraction, guild: Guild, proofId: string): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const view = await this.dependencies.weeklyItems.rejectProof(
       guild.id,
@@ -302,11 +303,11 @@ export class WeeklyItemsInteractionHandler {
     );
     await this.updateProofLog(view);
     await this.refreshCollection(guild.id, view.collection.id);
-    await interaction.editReply(buildNotice('warning', 'ปฏิเสธหลักฐานแล้ว', 'สมาชิกสามารถส่งหลักฐานใหม่ได้ โดยต้องส่งครบตามยอดปัจจุบัน', 'Weekly Items'));
+    await interactionResponse(interaction).editReply(buildNotice('warning', 'ปฏิเสธหลักฐานแล้ว', 'สมาชิกสามารถส่งหลักฐานใหม่ได้ โดยต้องส่งครบตามยอดปัจจุบัน', 'Weekly Items'));
   }
 
   private async setMemberRule(interaction: ModalSubmitInteraction, guild: Guild, collectionId: string): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     const memberId = interaction.fields.getStringSelectValues(weeklyItemsComponentIds.memberRuleMember)[0];
     if (memberId === undefined) throw new ValidationError('กรุณาเลือกสมาชิก');
@@ -329,7 +330,7 @@ export class WeeklyItemsInteractionHandler {
       new Date(),
     );
     await this.refreshCollection(guild.id, collectionId);
-    await interaction.editReply(buildNotice(
+    await interactionResponse(interaction).editReply(buildNotice(
       'success',
       rule === 'EXEMPT' ? 'ยกเว้นสมาชิกแล้ว' : 'กำหนดให้สมาชิกต้องส่งของแล้ว',
       `สมาชิก: <@${memberId}>`,
@@ -338,7 +339,7 @@ export class WeeklyItemsInteractionHandler {
   }
 
   private async cancelCollection(interaction: ModalSubmitInteraction, guild: Guild, collectionId: string): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
     await this.dependencies.weeklyItems.cancelCollection(
       guild.id,
@@ -348,7 +349,7 @@ export class WeeklyItemsInteractionHandler {
       new Date(),
     );
     await this.refreshCollection(guild.id, collectionId);
-    await interaction.editReply(buildNotice('warning', 'ยกเลิกรอบส่งของแล้ว', 'ปิดการส่งหลักฐานและหยุดค่าปรับรอบนี้เรียบร้อย', 'Weekly Items'));
+    await interactionResponse(interaction).editReply(buildNotice('warning', 'ยกเลิกรอบส่งของแล้ว', 'ปิดการส่งหลักฐานและหยุดค่าปรับรอบนี้เรียบร้อย', 'Weekly Items'));
   }
 
   private async updateProofLog(view: Awaited<ReturnType<WeeklyItemsService['getProof']>>): Promise<void> {

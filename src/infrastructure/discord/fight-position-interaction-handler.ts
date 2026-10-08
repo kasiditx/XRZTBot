@@ -1,3 +1,4 @@
+import { interactionResponse } from './responsive-interaction.js';
 import {
   MessageFlags,
   type ButtonInteraction,
@@ -64,7 +65,7 @@ export class FightPositionInteractionHandler {
     const guild = requireGuild(interaction.guild);
     if (interaction.customId.startsWith(fightPositionComponentIds.summaryPagePrefix)) {
       const page = parsePage(interaction.customId.slice(fightPositionComponentIds.summaryPagePrefix.length));
-      await interaction.update(buildFightPositionSummary(
+      await interactionResponse(interaction).update(buildFightPositionSummary(
         await this.dependencies.fightPositions.listAllSetRosters(guild.id),
         page,
       ));
@@ -78,22 +79,22 @@ export class FightPositionInteractionHandler {
         this.dependencies.fightPositions.listActive(guild.id),
       ]);
       const selectedSet = requireSelectedSet(sets);
-      await interaction.reply({
+      await interactionResponse(interaction).reply({
         ...buildFightPositionAdminPanel(sets, selectedSet, positions),
         flags: MessageFlags.Ephemeral,
       });
       return;
     }
     if (interaction.customId === fightPositionComponentIds.addSet) {
-      await interaction.showModal(buildFightPositionSetNameModal());
+      await interactionResponse(interaction).showModal(buildFightPositionSetNameModal());
       return;
     }
     if (interaction.customId === fightPositionComponentIds.add) {
-      await interaction.showModal(buildFightPositionNameModal());
+      await interactionResponse(interaction).showModal(buildFightPositionNameModal());
       return;
     }
     if (interaction.customId.startsWith(fightPositionComponentIds.activateSetPrefix)) {
-      await interaction.deferUpdate();
+      await interactionResponse(interaction).deferUpdate();
       const activeSet = await this.dependencies.fightPositions.activateSet(
         guild.id,
         entityId(interaction.customId, fightPositionComponentIds.activateSetPrefix),
@@ -103,7 +104,7 @@ export class FightPositionInteractionHandler {
         this.dependencies.fightPositions.listSets(guild.id),
         this.dependencies.fightPositions.listActive(guild.id),
       ]);
-      await interaction.editReply(buildFightPositionAdminPanel(sets, activeSet, positions));
+      await interactionResponse(interaction).editReply(buildFightPositionAdminPanel(sets, activeSet, positions));
       return;
     }
     if (interaction.customId.startsWith(fightPositionComponentIds.assignSetPrefix)) {
@@ -115,7 +116,7 @@ export class FightPositionInteractionHandler {
         guild,
         await this.dependencies.fightPositions.listUnassignedMembers(guild.id, set.id),
       );
-      await interaction.reply({
+      await interactionResponse(interaction).reply({
         ...buildFightPositionMemberSelector(set, members),
         flags: MessageFlags.Ephemeral,
       });
@@ -130,14 +131,14 @@ export class FightPositionInteractionHandler {
         guild,
         await this.dependencies.fightPositions.listAssignedMembers(guild.id, set.id),
       );
-      await interaction.reply({
+      await interactionResponse(interaction).reply({
         ...buildFightPositionAssignedMemberSelector(set, members),
         flags: MessageFlags.Ephemeral,
       });
       return;
     }
     if (interaction.customId === fightPositionComponentIds.publish) {
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
       const channel = await syncFightPositionSummary(
         this.dependencies.client,
         this.dependencies.fightPositions,
@@ -146,7 +147,7 @@ export class FightPositionInteractionHandler {
         true,
       );
       if (channel === null) throw new ValidationError('กรุณาตั้งค่า Channel ตำแหน่ง Fight ก่อน');
-      await interaction.editReply(buildNotice('success', 'อัปเดตสรุปตำแหน่ง Fight แล้ว', `ปลายทาง: <#${channel.id}>`, 'Fight Positions'));
+      await interactionResponse(interaction).editReply(buildNotice('success', 'อัปเดตสรุปตำแหน่ง Fight แล้ว', `ปลายทาง: <#${channel.id}>`, 'Fight Positions'));
       return;
     }
     if (interaction.customId.startsWith(fightPositionComponentIds.managePagePrefix)) {
@@ -156,7 +157,7 @@ export class FightPositionInteractionHandler {
         this.dependencies.fightPositions.getSet(guild.id, context.setId),
         this.dependencies.fightPositions.listActive(guild.id),
       ]);
-      await interaction.update(buildFightPositionAdminPanel(sets, selectedSet, positions, context.page));
+      await interactionResponse(interaction).update(buildFightPositionAdminPanel(sets, selectedSet, positions, context.page));
       return;
     }
     if (interaction.customId.startsWith(fightPositionComponentIds.assignMemberPagePrefix)) {
@@ -166,7 +167,7 @@ export class FightPositionInteractionHandler {
         guild,
         await this.dependencies.fightPositions.listUnassignedMembers(guild.id, set.id),
       );
-      await interaction.update(buildFightPositionMemberSelector(
+      await interactionResponse(interaction).update(buildFightPositionMemberSelector(
         set,
         members,
         context.page,
@@ -180,7 +181,7 @@ export class FightPositionInteractionHandler {
         guild,
         await this.dependencies.fightPositions.listAssignedMembers(guild.id, set.id),
       );
-      await interaction.update(buildFightPositionAssignedMemberSelector(
+      await interactionResponse(interaction).update(buildFightPositionAssignedMemberSelector(
         set,
         members,
         context.page,
@@ -197,7 +198,7 @@ export class FightPositionInteractionHandler {
         this.requireRoleVerifiedActiveMember(guild, context.memberId),
         this.dependencies.fightPositions.listActive(guild.id),
       ]);
-      await interaction.update(buildFightPositionAssignmentSelector(
+      await interactionResponse(interaction).update(buildFightPositionAssignmentSelector(
         set,
         member,
         positions,
@@ -210,17 +211,17 @@ export class FightPositionInteractionHandler {
         guild.id,
         entityId(interaction.customId, fightPositionComponentIds.renamePrefix),
       );
-      await interaction.showModal(buildFightPositionNameModal(position));
+      await interactionResponse(interaction).showModal(buildFightPositionNameModal(position));
       return;
     }
     if (interaction.customId.startsWith(fightPositionComponentIds.deleteConfirmPrefix)) {
-      await interaction.deferUpdate();
+      await interactionResponse(interaction).deferUpdate();
       const position = await this.dependencies.fightPositions.remove(
         guild.id,
         entityId(interaction.customId, fightPositionComponentIds.deleteConfirmPrefix),
         interaction.user.id,
       );
-      await interaction.editReply({ ...buildNotice('success', 'ลบตำแหน่งแล้ว', `ตำแหน่ง: **${position.name}**\nสมาชิกเดิมถูกเปลี่ยนเป็น **ยังไม่กำหนดตำแหน่ง**`, 'Fight Positions'), components: [] });
+      await interactionResponse(interaction).editReply({ ...buildNotice('success', 'ลบตำแหน่งแล้ว', `ตำแหน่ง: **${position.name}**\nสมาชิกเดิมถูกเปลี่ยนเป็น **ยังไม่กำหนดตำแหน่ง**`, 'Fight Positions'), components: [] });
       return;
     }
     if (interaction.customId.startsWith(fightPositionComponentIds.deletePrefix)) {
@@ -228,11 +229,11 @@ export class FightPositionInteractionHandler {
         guild.id,
         entityId(interaction.customId, fightPositionComponentIds.deletePrefix),
       );
-      await interaction.update(buildFightPositionDeleteConfirmation(position));
+      await interactionResponse(interaction).update(buildFightPositionDeleteConfirmation(position));
       return;
     }
     if (interaction.customId.startsWith(fightPositionComponentIds.clearPrefix)) {
-      await interaction.deferUpdate();
+      await interactionResponse(interaction).deferUpdate();
       const context = parseSetMemberContext(interaction.customId, fightPositionComponentIds.clearPrefix);
       const result = await this.dependencies.fightPositions.assign(
         guild.id,
@@ -241,7 +242,7 @@ export class FightPositionInteractionHandler {
         null,
         interaction.user.id,
       );
-      await interaction.editReply({ ...buildNotice('success', 'ถอดตำแหน่งแล้ว', `Fight Set: **${result.set.name}**\nสมาชิก: **${result.member.inGameName}**\nสถานะ: **ยังไม่กำหนดตำแหน่ง**`, 'Fight Positions'), components: [] });
+      await interactionResponse(interaction).editReply({ ...buildNotice('success', 'ถอดตำแหน่งแล้ว', `Fight Set: **${result.set.name}**\nสมาชิก: **${result.member.inGameName}**\nสถานะ: **ยังไม่กำหนดตำแหน่ง**`, 'Fight Positions'), components: [] });
     }
   }
 
@@ -257,11 +258,11 @@ export class FightPositionInteractionHandler {
         this.dependencies.fightPositions.getSet(guild.id, requireUuid(selectedId)),
         this.dependencies.fightPositions.listActive(guild.id),
       ]);
-      await interaction.update(buildFightPositionAdminPanel(sets, selectedSet, positions));
+      await interactionResponse(interaction).update(buildFightPositionAdminPanel(sets, selectedSet, positions));
       return;
     }
     if (interaction.customId.startsWith(fightPositionComponentIds.manageSelectPrefix)) {
-      await interaction.update(buildFightPositionManagement(
+      await interactionResponse(interaction).update(buildFightPositionManagement(
         await this.dependencies.fightPositions.getActive(guild.id, requireUuid(selectedId)),
       ));
       return;
@@ -273,7 +274,7 @@ export class FightPositionInteractionHandler {
         this.requireRoleVerifiedActiveMember(guild, requireUuid(selectedId)),
         this.dependencies.fightPositions.listActive(guild.id),
       ]);
-      await interaction.update(buildFightPositionAssignmentSelector(
+      await interactionResponse(interaction).update(buildFightPositionAssignmentSelector(
         set,
         member,
         positions,
@@ -287,7 +288,7 @@ export class FightPositionInteractionHandler {
         this.requireRoleVerifiedActiveMember(guild, requireUuid(selectedId)),
         this.dependencies.fightPositions.listActive(guild.id),
       ]);
-      await interaction.update(buildFightPositionAssignmentSelector(
+      await interactionResponse(interaction).update(buildFightPositionAssignmentSelector(
         set,
         member,
         positions,
@@ -300,7 +301,7 @@ export class FightPositionInteractionHandler {
         fightPositionComponentIds.assignPositionPrefix,
       );
       await this.requireRoleVerifiedActiveMember(guild, context.memberId);
-      await interaction.deferUpdate();
+      await interactionResponse(interaction).deferUpdate();
       const result = await this.dependencies.fightPositions.assign(
         guild.id,
         context.setId,
@@ -308,7 +309,7 @@ export class FightPositionInteractionHandler {
         requireUuid(selectedId),
         interaction.user.id,
       );
-      await interaction.editReply({
+      await interactionResponse(interaction).editReply({
         ...buildNotice(
           'success',
           'มอบตำแหน่งสำเร็จ',
@@ -322,19 +323,19 @@ export class FightPositionInteractionHandler {
 
   private async handleModal(interaction: ModalSubmitInteraction): Promise<void> {
     const guild = requireGuild(interaction.guild);
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAdmin(guild, interaction.user.id);
     if (interaction.customId === fightPositionComponentIds.addSetModal) {
       const setName = interaction.fields.getTextInputValue(fightPositionComponentIds.setNameInput);
       const set = await this.dependencies.fightPositions.createSet(guild.id, setName, interaction.user.id);
-      await interaction.editReply(buildNotice('success', 'เพิ่ม Fight Set แล้ว', `📋 **${set.name}** พร้อมจัดตำแหน่ง\nกด **ใช้ Set นี้** เมื่อต้องการเปลี่ยนแผนที่ใช้งาน`, 'Fight Positions'));
+      await interactionResponse(interaction).editReply(buildNotice('success', 'เพิ่ม Fight Set แล้ว', `📋 **${set.name}** พร้อมจัดตำแหน่ง\nกด **ใช้ Set นี้** เมื่อต้องการเปลี่ยนแผนที่ใช้งาน`, 'Fight Positions'));
       return;
     }
     const name = interaction.fields.getTextInputValue(fightPositionComponentIds.nameInput);
     const emoji = interaction.fields.getTextInputValue(fightPositionComponentIds.emojiInput);
     if (interaction.customId === fightPositionComponentIds.addModal) {
       const position = await this.dependencies.fightPositions.create(guild.id, name, emoji, interaction.user.id);
-      await interaction.editReply(buildNotice('success', 'เพิ่มตำแหน่งแล้ว', `${position.emoji} **${position.name}** พร้อมใช้งาน`, 'Fight Positions'));
+      await interactionResponse(interaction).editReply(buildNotice('success', 'เพิ่มตำแหน่งแล้ว', `${position.emoji} **${position.name}** พร้อมใช้งาน`, 'Fight Positions'));
       return;
     }
     if (interaction.customId.startsWith(fightPositionComponentIds.renameModalPrefix)) {
@@ -345,7 +346,7 @@ export class FightPositionInteractionHandler {
         emoji,
         interaction.user.id,
       );
-      await interaction.editReply(buildNotice('success', 'แก้ไขตำแหน่งแล้ว', `ตำแหน่ง: ${position.emoji} **${position.name}**`, 'Fight Positions'));
+      await interactionResponse(interaction).editReply(buildNotice('success', 'แก้ไขตำแหน่งแล้ว', `ตำแหน่ง: ${position.emoji} **${position.name}**`, 'Fight Positions'));
     }
   }
 

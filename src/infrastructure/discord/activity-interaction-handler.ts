@@ -1,3 +1,4 @@
+import { interactionResponse } from './responsive-interaction.js';
 import type pino from 'pino';
 import { buildReasonedCancellationModal, requireCancellationConfirmation } from './cancellation-confirmation.js';
 import {
@@ -95,25 +96,25 @@ export class ActivityInteractionHandler {
     if (interaction.customId === componentIds.controlActivities) {
       await this.requireAdmin(guild, interaction.user.id);
       const current = await this.dependencies.activities.listForAdministration(guild.id);
-      await interaction.reply({ ...buildActivityAdminPanel(current), flags: MessageFlags.Ephemeral });
+      await interactionResponse(interaction).reply({ ...buildActivityAdminPanel(current), flags: MessageFlags.Ephemeral });
       return;
     }
     if (interaction.customId === activityComponentIds.adminCreate) {
       await this.requireAdmin(guild, interaction.user.id);
-      await interaction.reply({ ...buildActivityTypeSelector(), flags: MessageFlags.Ephemeral });
+      await interactionResponse(interaction).reply({ ...buildActivityTypeSelector(), flags: MessageFlags.Ephemeral });
       return;
     }
 
     if (interaction.customId.startsWith('activity:score_add:')) {
       await this.requireAdmin(guild, interaction.user.id);
-      await interaction.showModal(buildScoreAddModal(entityId(interaction.customId, 'activity:score_add:')));
+      await interactionResponse(interaction).showModal(buildScoreAddModal(entityId(interaction.customId, 'activity:score_add:')));
       return;
     }
     if (interaction.customId.startsWith('activity:score_manage:')) {
       await this.requireAdmin(guild, interaction.user.id);
       const activityId = entityId(interaction.customId, 'activity:score_manage:');
       const activity = await this.dependencies.activities.getWithScores(guild.id, activityId, true);
-      await interaction.reply({ ...buildScoreSelector(activityId, activity.scoreItems), flags: MessageFlags.Ephemeral });
+      await interactionResponse(interaction).reply({ ...buildScoreSelector(activityId, activity.scoreItems), flags: MessageFlags.Ephemeral });
       return;
     }
     if (interaction.customId.startsWith('activity:leaderboard:')) {
@@ -123,7 +124,7 @@ export class ActivityInteractionHandler {
         this.dependencies.activities.getWithScores(guild.id, activityId, true),
         this.dependencies.activities.buildLeaderboard(guild.id, activityId),
       ]);
-      await interaction.reply({ embeds: buildLeaderboardEmbeds(activity, rows, activity.status === 'CLOSED'), flags: MessageFlags.Ephemeral });
+      await interactionResponse(interaction).reply({ embeds: buildLeaderboardEmbeds(activity, rows, activity.status === 'CLOSED'), flags: MessageFlags.Ephemeral });
       return;
     }
     if (interaction.customId.startsWith('activity:summary:')) {
@@ -133,7 +134,7 @@ export class ActivityInteractionHandler {
         this.dependencies.activities.getWithScores(guild.id, activityId, true),
         this.dependencies.activities.buildParticipationSummary(guild.id, activityId),
       ]);
-      await interaction.reply({ embeds: buildParticipationSummaryEmbeds(activity, summary, activity.status === 'CLOSED'), flags: MessageFlags.Ephemeral });
+      await interactionResponse(interaction).reply({ embeds: buildParticipationSummaryEmbeds(activity, summary, activity.status === 'CLOSED'), flags: MessageFlags.Ephemeral });
       return;
     }
     if (interaction.customId.startsWith('activity:submit:')) {
@@ -141,7 +142,7 @@ export class ActivityInteractionHandler {
       enforceCooldown(this.lastSubmissionAt, `${guild.id}:${interaction.user.id}`);
       const activityId = entityId(interaction.customId, 'activity:submit:');
       await this.dependencies.activities.getWithScores(guild.id, activityId);
-      await interaction.reply({
+      await interactionResponse(interaction).reply({
         ...buildEvidenceMethodPrompt(`activity:evidence_method:${activityId}`, 'ส่งหลักฐานกิจกรรม'),
         flags: MessageFlags.Ephemeral,
       });
@@ -150,13 +151,13 @@ export class ActivityInteractionHandler {
     if (interaction.customId.startsWith('activity:cancel_confirm:')) {
       const submissionId = entityId(interaction.customId, 'activity:cancel_confirm:');
       await this.assertSubmissionActor(guild, interaction.user.id, submissionId);
-      await interaction.showModal(buildReasonedCancellationModal(`activity:cancel_modal:${submissionId}`, 'ยกเลิกผลงานและคำนวณผลใหม่'));
+      await interactionResponse(interaction).showModal(buildReasonedCancellationModal(`activity:cancel_modal:${submissionId}`, 'ยกเลิกผลงานและคำนวณผลใหม่'));
       return;
     }
     if (interaction.customId.startsWith('activity:cancel:')) {
       const submissionId = entityId(interaction.customId, 'activity:cancel:');
       await this.assertSubmissionActor(guild, interaction.user.id, submissionId);
-      await interaction.showModal(buildReasonedCancellationModal(`activity:cancel_modal:${submissionId}`, 'ยกเลิกผลงานและคำนวณผลใหม่'));
+      await interactionResponse(interaction).showModal(buildReasonedCancellationModal(`activity:cancel_modal:${submissionId}`, 'ยกเลิกผลงานและคำนวณผลใหม่'));
       return;
     }
     if (interaction.customId.startsWith('activity:participants:')) {
@@ -168,7 +169,7 @@ export class ActivityInteractionHandler {
       if (activeMembers.length === 0) {
         throw new ValidationError('ไม่มีสมาชิกที่อนุมัติและมีสถานะใช้งาน');
       }
-      await interaction.showModal(buildParticipantEditModal(submissionId, activeMembers));
+      await interactionResponse(interaction).showModal(buildParticipantEditModal(submissionId, activeMembers));
       return;
     }
     if (interaction.customId.startsWith('activity:submission_score:')) {
@@ -176,7 +177,7 @@ export class ActivityInteractionHandler {
       await this.assertSubmissionActor(guild, interaction.user.id, submissionId);
       const view = await this.dependencies.activities.getSubmission(guild.id, submissionId);
       const { scoreItems } = await this.dependencies.activities.getWithScores(guild.id, view.activity.id);
-      await interaction.showModal(buildChangeSubmissionScoreModal(submissionId, scoreItems));
+      await interactionResponse(interaction).showModal(buildChangeSubmissionScoreModal(submissionId, scoreItems));
     }
   }
 
@@ -190,7 +191,7 @@ export class ActivityInteractionHandler {
         this.dependencies.activities.getWithScores(guild.id, activityId),
         this.listRoleVerifiedActiveMembers(guild),
       ]);
-      await interaction.showModal(buildActivitySubmissionModal(
+      await interactionResponse(interaction).showModal(buildActivitySubmissionModal(
         activity,
         activeMembers,
         requireEvidenceInputMode(requiredSelectedValue(interaction)),
@@ -204,7 +205,7 @@ export class ActivityInteractionHandler {
       const mode = requireActivityMode(requiredSelectedValue(interaction));
       const startsAt = new Date(Date.now() + 30 * 60 * 1_000);
       const endsAt = new Date(startsAt.getTime() + 4 * 60 * 60 * 1_000);
-      await interaction.showModal(buildCreateActivityModal(
+      await interactionResponse(interaction).showModal(buildCreateActivityModal(
         mode,
         formatDateTimeInput(startsAt, settings.timezone),
         formatDateTimeInput(endsAt, settings.timezone),
@@ -215,7 +216,7 @@ export class ActivityInteractionHandler {
       await this.requireAdmin(guild, interaction.user.id);
       const activityId = requiredSelectedValue(interaction);
       const activity = await this.dependencies.activities.getWithScores(guild.id, activityId, true);
-      await interaction.update({ ...buildActivityManagement(activity), content: null });
+      await interactionResponse(interaction).update({ ...buildActivityManagement(activity), content: null });
       return;
     }
     if (interaction.customId.startsWith('activity:score_select:')) {
@@ -227,7 +228,7 @@ export class ActivityInteractionHandler {
       if (score === undefined) {
         throw new ValidationError('ไม่พบรายการคะแนน');
       }
-      await interaction.showModal(buildScoreEditModal(activityId, score));
+      await interactionResponse(interaction).showModal(buildScoreEditModal(activityId, score));
     }
   }
 
@@ -235,13 +236,13 @@ export class ActivityInteractionHandler {
     const guild = requireGuild(interaction.guild);
     if (interaction.customId.startsWith('activity:cancel_modal:')) {
       requireCancellationConfirmation(interaction);
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
       const isAdmin = await this.requireMemberOrAdmin(guild, interaction.user.id);
       const view = await this.dependencies.activities.cancelSubmission(guild.id,
         entityId(interaction.customId, 'activity:cancel_modal:'), interaction.user.id, isAdmin, new Date(),
         interaction.fields.getTextInputValue('cancellation:reason'));
       await this.updateSubmissionLog(view);
-      await interaction.editReply(buildNotice('success', 'ยกเลิกรายการแล้ว', 'นำผลงานออกจากผลสรุป และอัปเดตสรุปที่ปิดไปแล้ว', 'Activities'));
+      await interactionResponse(interaction).editReply(buildNotice('success', 'ยกเลิกรายการแล้ว', 'นำผลงานออกจากผลสรุป และอัปเดตสรุปที่ปิดไปแล้ว', 'Activities'));
       return;
     }
     if (interaction.customId.startsWith(activityCreateModalPrefix)) {
@@ -275,7 +276,7 @@ export class ActivityInteractionHandler {
   }
 
   private async createActivity(interaction: ModalSubmitInteraction, guild: Guild, mode: ActivityMode): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAdmin(guild, interaction.user.id);
     const settings = await this.requireSettings(guild.id);
     requireConfiguredActivityChannels(settings);
@@ -303,11 +304,11 @@ export class ActivityInteractionHandler {
       actorDiscordUserId: interaction.user.id,
       now: new Date(),
     });
-    await interaction.editReply(buildNotice('success', 'สร้างกิจกรรมแล้ว', `🏆 **${result.activity.title}**\nระบบจะประกาศ เปิด และปิดอัตโนมัติตามเวลาที่ตั้ง`, 'Activities'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'สร้างกิจกรรมแล้ว', `🏆 **${result.activity.title}**\nระบบจะประกาศ เปิด และปิดอัตโนมัติตามเวลาที่ตั้ง`, 'Activities'));
   }
 
   private async addScore(interaction: ModalSubmitInteraction, guild: Guild, activityId: string): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAdmin(guild, interaction.user.id);
     const score = await this.dependencies.activities.addScoreItem(
       guild.id,
@@ -317,11 +318,11 @@ export class ActivityInteractionHandler {
       interaction.user.id,
     );
     await this.refreshAnnouncement(guild.id, activityId);
-    await interaction.editReply(buildNotice('success', 'เพิ่มรายการคะแนนแล้ว', `**${score.name}** • ${score.points.toLocaleString('th-TH')} คะแนน`, 'Activities'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'เพิ่มรายการคะแนนแล้ว', `**${score.name}** • ${score.points.toLocaleString('th-TH')} คะแนน`, 'Activities'));
   }
 
   private async editScore(interaction: ModalSubmitInteraction, guild: Guild): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAdmin(guild, interaction.user.id);
     const ids = parseTwoEntityIds(interaction.customId, 'activity:score_edit_modal:');
     const status = interaction.fields.getTextInputValue(activityComponentIds.scoreActive).trim().toUpperCase();
@@ -338,7 +339,7 @@ export class ActivityInteractionHandler {
       interaction.user.id,
     );
     await this.refreshAnnouncement(guild.id, ids.first);
-    await interaction.editReply(buildNotice('success', 'อัปเดตรายการคะแนนแล้ว', `**${score.name}**\nSubmission เดิมถูกคำนวณใหม่อัตโนมัติ`, 'Activities'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'อัปเดตรายการคะแนนแล้ว', `**${score.name}**\nSubmission เดิมถูกคำนวณใหม่อัตโนมัติ`, 'Activities'));
   }
 
   private async submitActivity(
@@ -347,7 +348,7 @@ export class ActivityInteractionHandler {
     activityId: string,
     evidenceMode: EvidenceInputMode,
   ): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireActiveMember(guild, interaction.user.id);
     const cooldownKey = `${guild.id}:${interaction.user.id}`;
     enforceCooldown(this.lastSubmissionAt, cooldownKey);
@@ -417,7 +418,7 @@ export class ActivityInteractionHandler {
         });
         throw error;
       }
-      await interaction.editReply(buildNotice('success', 'ส่งผลงานกิจกรรมแล้ว', `🏆 **${prepared.activity.title}**\nผู้ร่วมกิจกรรม: **${String(prepared.participants.length)} คน**`, 'Activities'));
+      await interactionResponse(interaction).editReply(buildNotice('success', 'ส่งผลงานกิจกรรมแล้ว', `🏆 **${prepared.activity.title}**\nผู้ร่วมกิจกรรม: **${String(prepared.participants.length)} คน**`, 'Activities'));
     } catch (error: unknown) {
       this.lastSubmissionAt.delete(cooldownKey);
       throw error;
@@ -425,7 +426,7 @@ export class ActivityInteractionHandler {
   }
 
   private async editParticipants(interaction: ModalSubmitInteraction, guild: Guild, submissionId: string): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     const isAdmin = await this.requireMemberOrAdmin(guild, interaction.user.id);
     const operation = interaction.fields.getStringSelectValues(activityComponentIds.participantOperation)[0];
     if (operation !== 'ADD' && operation !== 'REMOVE') {
@@ -442,11 +443,11 @@ export class ActivityInteractionHandler {
       new Date(),
     );
     await this.updateSubmissionLog(view);
-    await interaction.editReply(buildNotice('success', 'อัปเดตผู้ร่วมแล้ว', `ผู้ร่วมปัจจุบัน **${String(view.participants.length)} คน**`, 'Activities'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'อัปเดตผู้ร่วมแล้ว', `ผู้ร่วมปัจจุบัน **${String(view.participants.length)} คน**`, 'Activities'));
   }
 
   private async changeSubmissionScore(interaction: ModalSubmitInteraction, guild: Guild, submissionId: string): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     const isAdmin = await this.requireMemberOrAdmin(guild, interaction.user.id);
     const scoreItemId = interaction.fields.getStringSelectValues(activityComponentIds.changeScore)[0];
     if (scoreItemId === undefined) {
@@ -464,7 +465,7 @@ export class ActivityInteractionHandler {
       throw new ValidationError('รายการนี้ไม่มีคะแนนให้เปลี่ยน');
     }
     await this.updateSubmissionLog(view);
-    await interaction.editReply(buildNotice('success', 'เปลี่ยนรายการคะแนนแล้ว', `**${view.scoreItem.name}** • ${view.scoreItem.points.toLocaleString('th-TH')} คะแนน`, 'Activities'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'เปลี่ยนรายการคะแนนแล้ว', `**${view.scoreItem.name}** • ${view.scoreItem.points.toLocaleString('th-TH')} คะแนน`, 'Activities'));
   }
 
   private async assertSubmissionActor(guild: Guild, discordUserId: string, submissionId: string): Promise<void> {

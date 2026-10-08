@@ -1,6 +1,8 @@
 import { MessageFlags, type InteractionReplyOptions, type RepliableInteraction } from 'discord.js';
+import { jest } from '@jest/globals';
 import { ValidationError } from '../../src/domain/errors.js';
 import { DateTimePicker, pickerDateTimeToDate } from '../../src/infrastructure/discord/date-time-picker.js';
+import { interactionResponse } from '../../src/infrastructure/discord/responsive-interaction.js';
 
 describe('DateTimePicker', () => {
   it('converts a selected Bangkok local datetime to the correct instant', () => {
@@ -31,5 +33,30 @@ describe('DateTimePicker', () => {
 
     expect(captured?.flags).toBe(MessageFlags.Ephemeral);
     expect(captured?.components).toHaveLength(2);
+  });
+
+  it('starts a private selector after slow preparation has already acknowledged the button', async () => {
+    jest.useFakeTimers();
+    try {
+      const state = { deferred: false, replied: false };
+      const reply = jest.fn<() => Promise<void>>().mockResolvedValue();
+      const followUp = jest.fn<() => Promise<{ id: string }>>().mockResolvedValue({ id: 'private-picker' });
+      const interaction = {
+        createdTimestamp: Date.now(), user: { id: '100000000000000001' },
+        get deferred() { return state.deferred; }, get replied() { return state.replied; },
+        isMessageComponent: () => true,
+        deferUpdate: () => { state.deferred = true; return Promise.resolve(); }, reply, followUp,
+      } as unknown as RepliableInteraction;
+      interactionResponse(interaction).start();
+      await jest.advanceTimersByTimeAsync(3_500);
+      await new DateTimePicker().start(interaction, {
+        flow: 'test-flow', continueCustomIdPrefix: 'test:continue:',
+        fields: [{ key: 'date', label: 'วันที่ทดสอบ', type: 'DATE' }], timezone: 'Asia/Bangkok',
+      });
+      expect(reply).not.toHaveBeenCalled();
+      expect(followUp).toHaveBeenCalledWith(expect.objectContaining({ flags: MessageFlags.Ephemeral }));
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
