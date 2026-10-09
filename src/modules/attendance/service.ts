@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { DateTime } from 'luxon';
-import { and, asc, desc, eq, gte, inArray, isNull, like, lte, ne, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, like, lt, lte, ne, or, sql } from 'drizzle-orm';
 import { AuthorizationError, ConflictError, NotFoundError, ValidationError } from '../../domain/errors.js';
 import type { Database } from '../../infrastructure/db/client.js';
 import {
@@ -20,6 +20,7 @@ import {
   buildRecurringPublishAt,
   classifyAttendance,
   parseLocalTime,
+  RECURRING_ANNOUNCEMENT_BEFORE_MINUTES,
   validateWeekdays,
   type AttendanceResult,
   type AttendanceRoundTimes,
@@ -212,6 +213,28 @@ export class AttendanceService {
       await materializeScheduleWithTransaction(tx, schedule, timezone, now);
       await queueNextScheduleTick(tx, schedule, timezone, now);
     });
+  }
+
+  /** Moves previously queued, unpublished auto rounds to the current announcement lead time. */
+  public async rescheduleRecurringAnnouncements(guildId: string, now: Date): Promise<number> {
+    const publishAt = sql<Date>`${attendanceRounds.opensAt} - ${RECURRING_ANNOUNCEMENT_BEFORE_MINUTES}::integer * interval '1 minute'`;
+    const updated = await this.db.update(scheduledJobs)
+      .set({ runAt: publishAt, updatedAt: now })
+      .from(attendanceRounds)
+      .where(and(
+        eq(scheduledJobs.guildId, guildId),
+        eq(attendanceRounds.guildId, scheduledJobs.guildId),
+        eq(scheduledJobs.deduplicationKey, sql`concat('attendance:', ${attendanceRounds.id}, ':publish')`),
+        eq(scheduledJobs.jobType, 'ATTENDANCE_PUBLISH'),
+        eq(scheduledJobs.status, 'PENDING'),
+        eq(attendanceRounds.status, 'SCHEDULED'),
+        isNotNull(attendanceRounds.sourceScheduleId),
+        isNull(attendanceRounds.announcementMessageId),
+        gt(publishAt, now),
+        lt(scheduledJobs.runAt, publishAt),
+      ))
+      .returning({ id: scheduledJobs.id });
+    return updated.length;
   }
 
   public async listRounds(guildId: string, limit = 25): Promise<AttendanceRound[]> {

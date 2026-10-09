@@ -218,8 +218,8 @@ describeWithDatabase('AttendanceService PostgreSQL integration', () => {
       && (job.payload as { roundId?: string }).roundId === roundId
     ))?.runAt;
 
-    expect(publishAt(todayRound?.id)).toEqual(createdAt);
-    expect(publishAt(tomorrowRound?.id)?.toISOString()).toBe('2026-08-28T17:00:00.000Z');
+    expect(publishAt(todayRound?.id)?.toISOString()).toBe('2026-08-28T11:55:00.000Z');
+    expect(publishAt(tomorrowRound?.id)?.toISOString()).toBe('2026-08-29T11:55:00.000Z');
   });
 
   it('applies a scoped leave only to the selected recurring activities', async () => {

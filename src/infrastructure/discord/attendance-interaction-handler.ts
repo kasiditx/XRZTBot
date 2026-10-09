@@ -28,6 +28,7 @@ import type { AttendanceMode, AttendanceSchedule, AttendanceService } from '../.
 import {
   buildAirdropRoundTimes,
   buildGeneralRoundTimes,
+  RECURRING_ANNOUNCEMENT_BEFORE_MINUTES,
   validateAttendanceProof,
   type AttendanceResult,
 } from '../../modules/attendance/rules.js';
@@ -430,7 +431,7 @@ export class AttendanceInteractionHandler {
           opensAtLocalTime: interaction.fields.getTextInputValue(attendanceComponentIds.recurringOpensAt),
           closesAtLocalTime: interaction.fields.getTextInputValue(attendanceComponentIds.recurringClosesAt),
         });
-    await interactionResponse(interaction).editReply(buildNotice('success', 'ตั้งเวลาเช็กชื่อประจำแล้ว', `⏰ **${schedule.name}**\nระบบเตรียมรอบล่วงหน้าและจะประกาศเช็กชื่อทีละวันโดยอัตโนมัติ`, 'Attendance'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'ตั้งเวลาเช็กชื่อประจำแล้ว', `⏰ **${schedule.name}**\nระบบจะประกาศแต่ละรอบก่อนเวลาเปิดเช็กชื่อ ${RECURRING_ANNOUNCEMENT_BEFORE_MINUTES.toString()} นาทีโดยอัตโนมัติ`, 'Attendance'));
   }
 
   private async updateRecurringSchedule(

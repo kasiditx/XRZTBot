@@ -124,21 +124,47 @@ describe('attendance input parsing', () => {
     expect(times.emergencyLeaveCutoff.toISOString()).toBe('2026-08-28T16:59:59.999Z');
   });
 
-  it('publishes recurring rounds one day at a time in the server timezone', () => {
+  it('publishes recurring rounds five minutes before each opening instead of together at midnight', () => {
     const now = new Date('2026-08-28T02:00:00.000Z');
     const todayOpensAt = new Date('2026-08-28T12:00:00.000Z');
     const tomorrowOpensAt = new Date('2026-08-29T12:00:00.000Z');
 
-    expect(buildRecurringPublishAt('2026-08-28', todayOpensAt, 'Asia/Bangkok', now)).toEqual(now);
+    expect(buildRecurringPublishAt('2026-08-28', todayOpensAt, 'Asia/Bangkok', now).toISOString()).toBe('2026-08-28T11:55:00.000Z');
     expect(buildRecurringPublishAt('2026-08-29', tomorrowOpensAt, 'Asia/Bangkok', now).toISOString())
-      .toBe('2026-08-28T17:00:00.000Z');
+      .toBe('2026-08-29T11:55:00.000Z');
   });
 
-  it('publishes a midnight recurring Airdrop no later than its previous-day opening time', () => {
+  it('publishes a midnight recurring Airdrop five minutes before its previous-day opening time', () => {
     const now = new Date('2026-08-28T02:00:00.000Z');
     const opensAt = new Date('2026-08-28T16:50:00.000Z');
 
-    expect(buildRecurringPublishAt('2026-08-29', opensAt, 'Asia/Bangkok', now)).toEqual(opensAt);
+    expect(buildRecurringPublishAt('2026-08-29', opensAt, 'Asia/Bangkok', now).toISOString()).toBe('2026-08-28T16:45:00.000Z');
+  });
+
+  it('publishes the 23:00 and 23:30 Airdrops separately at 22:50 and 23:20 Bangkok time', () => {
+    const now = new Date('2026-10-09T15:39:00.000Z');
+    for (const [eventAt, expectedPublishAt] of [
+      ['2026-10-09T16:00:00.000Z', '2026-10-09T15:50:00.000Z'],
+      ['2026-10-09T16:30:00.000Z', '2026-10-09T16:20:00.000Z'],
+    ] as const) {
+      const times = buildAirdropRoundTimes(new Date(eventAt), 'Asia/Bangkok', 5, 20);
+      expect(buildRecurringPublishAt(times.attendanceDate, times.opensAt, 'Asia/Bangkok', now).toISOString())
+        .toBe(expectedPublishAt);
+    }
+  });
+
+  it('publishes immediately when a schedule is created within five minutes of opening or while open', () => {
+    const opensAt = new Date('2026-10-09T15:55:00.000Z');
+    for (const now of [new Date('2026-10-09T15:50:00.000Z'), new Date('2026-10-09T15:52:00.000Z'), new Date('2026-10-09T16:00:00.000Z')]) {
+      expect(buildRecurringPublishAt('2026-10-09', opensAt, 'Asia/Bangkok', now)).toEqual(now);
+    }
+  });
+
+  it('rejects invalid announcement dates, timezones and opening times', () => {
+    const now = new Date('2026-10-09T15:39:00.000Z');
+    expect(() => buildRecurringPublishAt('2026-02-31', now, 'Asia/Bangkok', now)).toThrow(ValidationError);
+    expect(() => buildRecurringPublishAt('2026-10-09', now, 'Invalid/Timezone', now)).toThrow(ValidationError);
+    expect(() => buildRecurringPublishAt('2026-10-09', new Date('invalid'), 'Asia/Bangkok', now)).toThrow(ValidationError);
   });
 
   it('builds a Manual general session from explicit datetimes', () => {

@@ -29,6 +29,7 @@ export interface AttendanceProofFile {
 }
 
 const MAX_ATTENDANCE_PROOF_BYTES = 10 * 1_024 * 1_024;
+export const RECURRING_ANNOUNCEMENT_BEFORE_MINUTES = 5;
 
 export function currentAttendanceDate(now: Date, timezone: string): string {
   const date = DateTime.fromJSDate(now, { zone: timezone });
@@ -49,7 +50,10 @@ export function buildRecurringPublishAt(
   if (!attendanceDayStartsAt.isValid || attendanceDayStartsAt.toFormat('yyyy-MM-dd') !== attendanceDate) {
     throw new ValidationError('วันที่เช็กชื่อหรือ Timezone ไม่ถูกต้อง');
   }
-  const publishAt = Math.min(attendanceDayStartsAt.toMillis(), opensAt.getTime());
+  const publishAt = opensAt.getTime() - RECURRING_ANNOUNCEMENT_BEFORE_MINUTES * 60_000;
+  if (!Number.isFinite(publishAt) || !Number.isFinite(now.getTime())) {
+    throw new ValidationError('วันเวลาเปิดเช็กชื่อไม่ถูกต้อง');
+  }
   return publishAt > now.getTime() ? new Date(publishAt) : now;
 }
 
