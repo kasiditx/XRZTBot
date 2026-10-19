@@ -205,6 +205,8 @@ export async function bootstrap(): Promise<RunningApplication> {
     new Date(),
   );
   logger.info({ restoredWeeklyFines }, 'restored unpaid or cancelled weekly fines into their weekly collections');
+  const queuedWeeklyRefreshes = await weeklyDuesService.ensurePublishedAnnouncementRefreshes(env.DISCORD_GUILD_ID, new Date());
+  logger.info({ queuedWeeklyRefreshes }, 'queued open weekly dues announcement refreshes');
   const queuedWeeklyItemRefreshes = await weeklyItemsService.ensurePublishedAnnouncementRefreshes(
     env.DISCORD_GUILD_ID,
     new Date(),

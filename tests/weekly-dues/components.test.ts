@@ -1,6 +1,7 @@
 import {
   buildWeeklyAnnouncement,
   buildWeeklyCancellationModal,
+  buildWeeklyCloseModal,
   buildWeeklyFinePolicyModal,
   buildWeeklyManagement,
   buildWeeklyMemberRuleModal,
@@ -11,6 +12,30 @@ import type { WeeklyCollectionView } from '../../src/modules/weekly-dues/service
 const now = new Date('2026-08-31T04:00:00.000Z');
 
 describe('weekly dues Discord components', () => {
+  it('offers separate close and cancellation actions and locks manual-closure controls', () => {
+    const open = buildWeeklyManagement(weeklyView()).components[0]?.toJSON().components;
+    expect(open).toHaveLength(5);
+    expect(open?.find(button => 'custom_id' in button && button.custom_id?.startsWith('weekly:close:')))
+      .toMatchObject({ disabled: false });
+    const view = weeklyView();
+    view.collection.isClosed = true;
+    view.collection.manuallyClosedAt = now;
+    view.collection.manuallyClosedByDiscordUserId = '700000000000000001';
+    view.collection.manualClosureReason = 'ปิดยอดตามรอบ';
+    const closed = buildWeeklyManagement(view);
+    expect(closed.components[0]?.toJSON().components.slice(0, 4).every(button => 'disabled' in button && button.disabled)).toBe(true);
+    expect(closed.embeds[0]?.toJSON().description).toContain('หยุดรับหลักฐานใหม่และหยุดค่าปรับเพิ่ม');
+    expect(closed.embeds[0]?.toJSON().description).toContain('ปิดยอดตามรอบ');
+  });
+
+  it('requires a reason and explicit confirmation to close a round', () => {
+    const modal = buildWeeklyCloseModal(weeklyView().collection.id).toJSON();
+    expect(modal.custom_id).toBe(`weekly:close_modal:${weeklyView().collection.id}`);
+    expect(modal.components).toHaveLength(2);
+    expect(modal.components[0]).toMatchObject({ component: { custom_id: 'weekly:closure_reason', required: true } });
+    expect(modal.components[1]).toMatchObject({ component: { custom_id: 'weekly:closure_confirmation', required: true } });
+  });
+
   it('builds payment modals for file upload and Discord Media Link', () => {
     const view = weeklyView();
     const fileModal = buildWeeklyPaymentModal(view, 100_000, 'FILE').toJSON();
@@ -37,7 +62,7 @@ describe('weekly dues Discord components', () => {
         overdueFineAmount: 50_000,
         recurringFineAmount: 50_000,
         conversionAt: now,
-        isClosed: false,
+        isClosed: false, manuallyClosedAt: null, manuallyClosedByDiscordUserId: null, manualClosureReason: null,
         cancelledAt: null,
         cancelledByDiscordUserId: null,
         cancellationReason: null,
@@ -55,6 +80,7 @@ describe('weekly dues Discord components', () => {
 
     expect(customIds).toEqual([
       'weekly:pay:11111111-1111-4111-8111-111111111111',
+      'weekly:close:11111111-1111-4111-8111-111111111111',
       'weekly:cancel:11111111-1111-4111-8111-111111111111',
     ]);
   });
@@ -91,7 +117,7 @@ describe('weekly dues Discord components', () => {
       collection: {
         id: '11111111-1111-4111-8111-111111111111', guildId: 'guild', requestId: 'request', title: 'ส่งเงินประจำสัปดาห์',
         startsOn: '2026-08-31', endsOn: '2026-09-06', standardAmount: 100_000, overdueFineAmount: 50_000,
-        recurringFineAmount: 50_000, conversionAt: now, isClosed: false, publicChannelId: null, publicMessageId: null,
+        recurringFineAmount: 50_000, conversionAt: now, isClosed: false, manuallyClosedAt: null, manuallyClosedByDiscordUserId: null, manualClosureReason: null, publicChannelId: null, publicMessageId: null,
         cancelledAt: null, cancelledByDiscordUserId: null, cancellationReason: null,
         createdByDiscordUserId: '700000000000000001', createdAt: now, updatedAt: now,
       },
@@ -147,7 +173,7 @@ describe('weekly dues Discord components', () => {
     expect(payload.embeds[0]?.toJSON().color).toBe(0xed4245);
     expect(payload.embeds[0]?.toJSON().footer?.text).toContain('ยกเลิกรอบแล้ว');
     expect(payload.embeds[0]?.toJSON().description).toContain('สร้างรอบผิดสัปดาห์');
-    expect(buttons).toHaveLength(2);
+    expect(buttons).toHaveLength(3);
     expect(buttons?.every((button) => 'disabled' in button && button.disabled === true)).toBe(true);
   });
 
@@ -223,7 +249,7 @@ function weeklyView(): WeeklyCollectionView {
       overdueFineAmount: 50_000,
       recurringFineAmount: 50_000,
       conversionAt: now,
-      isClosed: false,
+      isClosed: false, manuallyClosedAt: null, manuallyClosedByDiscordUserId: null, manualClosureReason: null,
       cancelledAt: null,
       cancelledByDiscordUserId: null,
       cancellationReason: null,

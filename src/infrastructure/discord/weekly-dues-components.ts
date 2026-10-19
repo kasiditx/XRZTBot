@@ -43,6 +43,8 @@ export const weeklyComponentIds = {
   finePolicyReason: 'weekly:fine_policy_reason',
   rejectionReason: 'weekly:rejection_reason',
   cancellationReason: 'weekly:cancellation_reason',
+  closureReason: 'weekly:closure_reason',
+  closureConfirmation: 'weekly:closure_confirmation',
 } as const;
 
 export const weeklyCreateModalId = 'weekly:create_modal';
@@ -101,7 +103,8 @@ export function buildWeeklyAnnouncement(view: WeeklyCollectionView) {
     .setStyle(ButtonStyle.Primary)
     .setDisabled(collection.isClosed);
   const cancel = buildWeeklyCancellationButton(collection.id, isCancelled);
-  return { embeds, components: [new ActionRowBuilder<ButtonBuilder>().addComponents(pay, cancel)] };
+  const close = buildWeeklyCloseButton(collection.id, collection.isClosed);
+  return { embeds, components: [new ActionRowBuilder<ButtonBuilder>().addComponents(pay, close, cancel)] };
 }
 
 function buildWeeklyDescriptions(view: WeeklyCollectionView): string[] {
@@ -112,6 +115,12 @@ function buildWeeklyDescriptions(view: WeeklyCollectionView): string[] {
     `ช่วงวันที่ **${collection.startsOn} – ${collection.endsOn}**`,
     `ยอดมาตรฐาน **${collection.standardAmount.toLocaleString('th-TH')}**`,
     `ค่าปรับเมื่อหมดเวลา **${collection.overdueFineAmount.toLocaleString('th-TH')}** และเพิ่ม **${collection.recurringFineAmount.toLocaleString('th-TH')}** ทุก 24 ชั่วโมง`,
+    ...(collection.manuallyClosedAt === null ? [] : [
+      '',
+      `🔒 **ปิดรอบโดย** <@${collection.manuallyClosedByDiscordUserId}> · <t:${Math.floor(collection.manuallyClosedAt.getTime() / 1_000).toString()}:f>`,
+      `**เหตุผล** ${collection.manualClosureReason}`,
+      'หยุดรับหลักฐานใหม่และหยุดค่าปรับเพิ่ม ยอดที่รับแล้วคงเดิม หลักฐานรอตรวจยังตรวจต่อได้',
+    ]),
     ...(collection.cancelledAt === null
       ? []
       : [
@@ -168,20 +177,32 @@ export function buildWeeklyManagement(view: WeeklyCollectionView) {
     .setCustomId(`weekly:member_rule:${view.collection.id}`)
     .setLabel('จัดการผู้ส่ง/ยกเว้น')
     .setStyle(ButtonStyle.Primary)
-    .setDisabled(view.collection.cancelledAt !== null);
+    .setDisabled(view.collection.cancelledAt !== null || view.collection.manuallyClosedAt !== null);
   const finePolicy = new ButtonBuilder()
     .setCustomId(`weekly:fine_policy:${view.collection.id}`)
     .setLabel('เลื่อน/กำหนดค่าปรับ')
     .setStyle(ButtonStyle.Secondary)
-    .setDisabled(view.collection.cancelledAt !== null);
+    .setDisabled(view.collection.cancelledAt !== null || view.collection.manuallyClosedAt !== null);
   const cancel = buildWeeklyCancellationButton(
     view.collection.id,
     view.collection.cancelledAt !== null,
   );
   return {
     embeds: content.embeds,
-    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(memberRule, override, finePolicy, cancel)],
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+      memberRule, override, finePolicy, buildWeeklyCloseButton(view.collection.id, view.collection.isClosed), cancel,
+    )],
   };
+}
+
+export function buildWeeklyCloseModal(collectionId: string): ModalBuilder {
+  return new ModalBuilder().setCustomId(`weekly:close_modal:${collectionId}`).setTitle('ปิดรอบส่งเงินรายสัปดาห์')
+    .addLabelComponents(
+      new LabelBuilder().setLabel('เหตุผลที่ปิดรอบ').setDescription('ปิดได้แม้ยังมีผู้ไม่ส่งเงิน โดยเก็บประวัติยอดเดิมและหยุดค่าปรับเพิ่ม')
+        .setTextInputComponent(new TextInputBuilder().setCustomId(weeklyComponentIds.closureReason)
+          .setStyle(TextInputStyle.Paragraph).setMinLength(2).setMaxLength(500).setRequired(true)),
+      labelText('พิมพ์ ปิดรอบ เพื่อยืนยัน', weeklyComponentIds.closureConfirmation, 'ปิดรอบ', 5, 20),
+    );
 }
 
 export function buildWeeklyCancellationModal(collectionId: string): ModalBuilder {
@@ -432,6 +453,11 @@ function buildWeeklyCancellationButton(collectionId: string, disabled: boolean):
     .setEmoji('🗑️')
     .setStyle(ButtonStyle.Danger)
     .setDisabled(disabled);
+}
+
+function buildWeeklyCloseButton(collectionId: string, disabled: boolean): ButtonBuilder {
+  return new ButtonBuilder().setCustomId(`weekly:close:${collectionId}`)
+    .setLabel('ปิดรอบ').setEmoji('🔒').setStyle(ButtonStyle.Secondary).setDisabled(disabled);
 }
 
 function weeklyCollectionState(collection: WeeklyCollectionView['collection']): string {

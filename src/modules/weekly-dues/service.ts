@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { DateTime } from 'luxon';
-import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { AuthorizationError, ConflictError, NotFoundError, ValidationError } from '../../domain/errors.js';
 import type { Database } from '../../infrastructure/db/client.js';
 import {
@@ -246,6 +246,7 @@ export class WeeklyDuesService {
     validateAmount(amount, 'ยอดเฉพาะสมาชิก', false);
     await this.db.transaction(async (tx) => {
       const collection = await lockCollection(tx, guildId, collectionId);
+      requireNotManuallyClosed(collection);
       if (collection.cancelledAt !== null) throw new ConflictError('รอบส่งเงินนี้ถูกยกเลิกแล้ว');
       const [row] = await tx
         .select({ obligation: weeklyObligations })
@@ -290,6 +291,7 @@ export class WeeklyDuesService {
     await this.db.transaction(async (tx) => {
       const collection = await lockCollection(tx, guildId, collectionId);
       if (collection.cancelledAt !== null) throw new ConflictError('รอบส่งเงินนี้ถูกยกเลิกแล้ว');
+      requireNotManuallyClosed(collection);
       const isPastDeadline = now >= collection.conversionAt;
       const [row] = await tx
         .select({ obligation: weeklyObligations })
@@ -387,6 +389,7 @@ export class WeeklyDuesService {
     await this.db.transaction(async (tx) => {
       const collection = await lockCollection(tx, guildId, collectionId);
       if (collection.cancelledAt !== null) throw new ConflictError('รอบส่งเงินนี้ถูกยกเลิกแล้ว');
+      requireNotManuallyClosed(collection);
       if (fineConversionAt < collection.conversionAt) {
         throw new ValidationError('เวลาเริ่มค่าปรับรายคนต้องไม่อยู่ก่อนกำหนดเดิมของรอบ');
       }
@@ -630,6 +633,53 @@ export class WeeklyDuesService {
     return this.getProof(guildId, proofId);
   }
 
+  public async ensurePublishedAnnouncementRefreshes(guildId: string, now: Date): Promise<number> {
+    const collections = await this.db.select({ id: weeklyCollections.id }).from(weeklyCollections).where(and(
+      eq(weeklyCollections.guildId, guildId), eq(weeklyCollections.isClosed, false),
+      isNotNull(weeklyCollections.publicChannelId), isNotNull(weeklyCollections.publicMessageId),
+    ));
+    if (collections.length === 0) return 0;
+    await this.db.transaction(async (tx) => {
+      for (const collection of collections) await queueWeeklyRefresh(tx, guildId, collection.id, now);
+    });
+    return collections.length;
+  }
+
+  public async closeCollection(
+    guildId: string,
+    collectionId: string,
+    actorDiscordUserId: string,
+    reason: string,
+    now: Date,
+    allowClose = false,
+  ): Promise<WeeklyCollectionView> {
+    if (!allowClose) throw new AuthorizationError('ปิดรอบส่งเงินได้เฉพาะหัวแก๊ง/รองแก๊ง/Dev');
+    const closureReason = requireText(reason, 'เหตุผลที่ปิดรอบ', 2, 500);
+    await this.db.transaction(async (tx) => {
+      const collection = await lockCollection(tx, guildId, collectionId);
+      if (collection.cancelledAt !== null) throw new ConflictError('รอบส่งเงินนี้ถูกยกเลิกแล้ว');
+      if (collection.isClosed) return;
+      const [closed] = await tx.update(weeklyCollections).set({
+        isClosed: true,
+        manuallyClosedAt: now,
+        manuallyClosedByDiscordUserId: actorDiscordUserId,
+        manualClosureReason: closureReason,
+        updatedAt: now,
+      }).where(eq(weeklyCollections.id, collectionId)).returning();
+      if (closed === undefined) throw new Error('Weekly collection closure did not return a row');
+      await tx.update(scheduledJobs).set({ status: 'CANCELLED', updatedAt: now }).where(and(
+        eq(scheduledJobs.guildId, guildId),
+        eq(scheduledJobs.jobType, 'WEEKLY_CONVERT'),
+        eq(scheduledJobs.status, 'PENDING'),
+        eq(sql<string>`${scheduledJobs.payload}->>'collectionId'`, collectionId),
+      ));
+      await queueWeeklyRefresh(tx, guildId, collectionId, now);
+      await writeAudit(tx, guildId, actorDiscordUserId, 'WEEKLY_COLLECTION_MANUALLY_CLOSED',
+        'WEEKLY_COLLECTION', collectionId, collection, closed, closureReason);
+    });
+    return this.get(guildId, collectionId);
+  }
+
   public async cancelCollection(
     guildId: string,
     collectionId: string,
@@ -786,11 +836,13 @@ export class WeeklyDuesService {
         eq(weeklyObligations.status, 'CONVERTED_TO_FINE'),
         inArray(fines.status, ['UNPAID', 'CANCELLED']),
         isNull(weeklyCollections.cancelledAt),
+        isNull(weeklyCollections.manuallyClosedAt),
       ));
     let restoredCount = 0;
     for (const row of rows) {
       const restored = await this.db.transaction(async (tx) => {
         const collection = await lockCollection(tx, guildId, row.collectionId);
+        if (collection.manuallyClosedAt !== null || collection.cancelledAt !== null) return false;
         const obligation = await lockObligation(tx, guildId, row.obligationId);
         if (obligation.status !== 'CONVERTED_TO_FINE') return false;
         const current = await restoreConvertedObligation(
@@ -826,7 +878,7 @@ async function accrueWeeklyObligation(
   obligation: WeeklyObligation,
   now: Date,
 ): Promise<WeeklyObligation> {
-  if (obligation.status !== 'UNPAID') return obligation;
+  if (collection.manuallyClosedAt !== null || obligation.status !== 'UNPAID') return obligation;
   const accrual = calculateWeeklyFineAccrual(
     obligation.fineConversionAt ?? collection.conversionAt,
     obligation.overdueFineAmountOverride ?? collection.overdueFineAmount,
@@ -860,7 +912,7 @@ async function queueNextWeeklyAccrual(
   obligation: WeeklyObligation,
   now: Date,
 ): Promise<void> {
-  if (obligation.status !== 'UNPAID') return;
+  if (collection.manuallyClosedAt !== null || obligation.status !== 'UNPAID') return;
   const firstPenaltyAmount = obligation.overdueFineAmountOverride ?? collection.overdueFineAmount;
   const recurringPenaltyAmount = obligation.recurringFineAmountOverride ?? collection.recurringFineAmount;
   if (firstPenaltyAmount === 0 && recurringPenaltyAmount === 0) return;
@@ -938,7 +990,7 @@ async function reopenCollection(
   actorDiscordUserId: string,
   now: Date,
 ): Promise<void> {
-  if (!collection.isClosed || collection.cancelledAt !== null) return;
+  if (!collection.isClosed || collection.cancelledAt !== null || collection.manuallyClosedAt !== null) return;
   await tx.update(weeklyCollections)
     .set({ isClosed: false, updatedAt: now })
     .where(eq(weeklyCollections.id, collection.id));
@@ -1056,6 +1108,10 @@ async function requireCollectionOpen(tx: Transaction, collection: WeeklyCollecti
   if (settings === undefined) throw new NotFoundError('ไม่พบการตั้งค่า Server');
   const opensAt = parseLocalDateStart(collection.startsOn, settings.timezone, 'วันที่เริ่ม').toJSDate();
   if (now < opensAt) throw new ConflictError('รอบส่งเงินนี้ยังไม่เปิด');
+}
+
+function requireNotManuallyClosed(collection: WeeklyCollection): void {
+  if (collection.manuallyClosedAt !== null) throw new ConflictError('รอบส่งเงินนี้ถูกปิดยอดโดย Admin แล้ว');
 }
 
 function toMemberIdentity(member: typeof members.$inferSelect): MemberIdentity {

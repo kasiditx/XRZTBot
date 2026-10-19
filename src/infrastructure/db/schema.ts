@@ -633,6 +633,9 @@ export const weeklyCollections = pgTable(
     overdueFineAmount: bigint('overdue_fine_amount', { mode: 'number' }).notNull().default(0),
     recurringFineAmount: bigint('recurring_fine_amount', { mode: 'number' }).notNull().default(0),
     isClosed: boolean('is_closed').notNull().default(false),
+    manuallyClosedAt: timestamp('manually_closed_at', { withTimezone: true, mode: 'date' }),
+    manuallyClosedByDiscordUserId: text('manually_closed_by_discord_user_id'),
+    manualClosureReason: text('manual_closure_reason'),
     cancelledAt: timestamp('cancelled_at', { withTimezone: true, mode: 'date' }),
     cancelledByDiscordUserId: text('cancelled_by_discord_user_id'),
     cancellationReason: text('cancellation_reason'),
@@ -644,6 +647,18 @@ export const weeklyCollections = pgTable(
   (table) => [
     uniqueIndex('weekly_collections_guild_request_uq').on(table.guildId, table.requestId),
     index('weekly_collections_conversion_idx').on(table.guildId, table.isClosed, table.conversionAt),
+    check('weekly_collections_manual_close_complete', sql`(
+      ${table.manuallyClosedAt} IS NULL
+      AND ${table.manuallyClosedByDiscordUserId} IS NULL
+      AND ${table.manualClosureReason} IS NULL
+    ) OR (
+      ${table.manuallyClosedAt} IS NOT NULL
+      AND ${table.manuallyClosedByDiscordUserId} IS NOT NULL
+      AND length(trim(${table.manuallyClosedByDiscordUserId})) > 0
+      AND ${table.manualClosureReason} IS NOT NULL
+      AND length(trim(${table.manualClosureReason})) > 0
+      AND ${table.isClosed} = true
+    )`),
     check('weekly_collections_valid_dates', sql`${table.endsOn} >= ${table.startsOn}`),
     check('weekly_collections_amount_non_negative', sql`${table.standardAmount} >= 0 and ${table.overdueFineAmount} >= 0 and ${table.recurringFineAmount} >= 0`),
     check('weekly_collections_title_not_blank', sql`length(trim(${table.title})) > 0`),

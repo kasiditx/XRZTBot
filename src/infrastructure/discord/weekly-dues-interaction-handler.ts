@@ -37,6 +37,7 @@ import {
   buildWeeklyAdminPanel,
   buildWeeklyAnnouncement,
   buildWeeklyCancellationModal,
+  buildWeeklyCloseModal,
   buildWeeklyFinePolicyModal,
   buildWeeklyManagement,
   buildWeeklyMemberRuleModal,
@@ -128,6 +129,11 @@ export class WeeklyDuesInteractionHandler {
     if (interaction.customId.startsWith('weekly:reject:')) {
       await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
       await interactionResponse(interaction).showModal(buildWeeklyRejectionModal(entityId(interaction.customId, 'weekly:reject:')).addComponents(cancellationConfirmationRow()));
+      return;
+    }
+    if (interaction.customId.startsWith('weekly:close:')) {
+      await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
+      await interactionResponse(interaction).showModal(buildWeeklyCloseModal(entityId(interaction.customId, 'weekly:close:')));
       return;
     }
     if (interaction.customId.startsWith('weekly:cancel:')) {
@@ -241,6 +247,10 @@ export class WeeklyDuesInteractionHandler {
     }
     if (interaction.customId.startsWith('weekly:reject_modal:')) {
       await this.rejectPayment(interaction, guild, entityId(interaction.customId, 'weekly:reject_modal:'));
+      return;
+    }
+    if (interaction.customId.startsWith('weekly:close_modal:')) {
+      await this.closeCollection(interaction, guild, entityId(interaction.customId, 'weekly:close_modal:'));
       return;
     }
     if (interaction.customId.startsWith('weekly:cancel_modal:')) {
@@ -487,6 +497,21 @@ export class WeeklyDuesInteractionHandler {
       ].join('\n'),
       'Weekly Dues',
     ));
+  }
+
+  private async closeCollection(interaction: ModalSubmitInteraction, guild: Guild, collectionId: string): Promise<void> {
+    await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
+    await this.requireCapability(guild, interaction.user.id, 'ROUTINE_ADMIN');
+    if (interaction.fields.getTextInputValue(weeklyComponentIds.closureConfirmation).trim() !== 'ปิดรอบ') {
+      throw new ValidationError('กรุณาพิมพ์ ปิดรอบ เพื่อยืนยันการปิดรับยอดของรอบนี้');
+    }
+    const view = await this.dependencies.weeklyDues.closeCollection(
+      guild.id, collectionId, interaction.user.id,
+      interaction.fields.getTextInputValue(weeklyComponentIds.closureReason), new Date(), true,
+    );
+    await this.refreshCollection(view);
+    await interactionResponse(interaction).editReply(buildNotice('success', 'ปิดรอบส่งเงินแล้ว',
+      'หยุดรับหลักฐานใหม่และหยุดค่าปรับเพิ่มแล้ว ยอดที่รับแล้วคงเดิม หลักฐานรอตรวจยังตรวจต่อได้', 'Weekly Dues'));
   }
 
   private async cancelCollection(
