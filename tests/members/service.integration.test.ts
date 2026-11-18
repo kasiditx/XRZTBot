@@ -22,8 +22,6 @@ describeWithDatabase('MemberService PostgreSQL integration', () => {
   const roleIds: MemberRoleIds = {
     headRoleId: '800000000000000003',
     deputyRoleId: '800000000000000004',
-    activeMemberRoleId: '800000000000000001',
-    formerMemberRoleId: '800000000000000002',
   };
 
   beforeAll(async () => {
@@ -41,21 +39,23 @@ describeWithDatabase('MemberService PostgreSQL integration', () => {
   });
 
   it('adds a direct member to the active roster and queues a roster refresh', async () => {
-    await service.addDirectly(guildId, '700000000000000001', 'Zixx Quint', admin, roleIds);
+    const member = await service.addDirectly(guildId, '700000000000000001', 'Zixx Quint', admin);
 
     const activeMembers = await service.listActive(guildId);
     const jobs = await db.select().from(scheduledJobs).where(eq(scheduledJobs.guildId, guildId));
     expect(activeMembers.map((member) => member.inGameName)).toEqual(['Zixx Quint']);
+    expect(jobs.find((job) => job.jobType === 'MEMBER_ROLE_SYNC')?.payload).toEqual({ discordUserId: member.discordUserId });
     expect(jobs.some((job) => job.jobType === 'MEMBER_ROSTER_REFRESH')).toBe(true);
   });
 
   it('adds an approved registration to the active roster', async () => {
     const pending = await service.register(guildId, '700000000000000002', 'Miko');
-    await service.approve(guildId, pending.id, admin, roleIds);
+    await service.approve(guildId, pending.id, admin);
 
     const activeMembers = await service.listActive(guildId);
     const jobs = await db.select().from(scheduledJobs).where(eq(scheduledJobs.guildId, guildId));
     expect(activeMembers.map((member) => member.inGameName)).toEqual(['Miko', 'Zixx Quint']);
+    expect(jobs.some((job) => job.jobType === 'MEMBER_ROLE_SYNC' && job.payload.discordUserId === pending.discordUserId)).toBe(true);
     expect(await service.getRegistrationEligibility(guildId, pending.discordUserId)).toBe('ACTIVE');
     expect(jobs.filter((job) => (
       job.jobType === 'MEMBER_REGISTRATION_REQUEST_SYNC'
@@ -80,7 +80,7 @@ describeWithDatabase('MemberService PostgreSQL integration', () => {
     const zixx = await service.findByDiscordUserId(guildId, '700000000000000001');
     expect(miko).not.toBeNull();
     expect(zixx).not.toBeNull();
-    const nami = await service.addDirectly(guildId, '700000000000000004', 'Nami', admin, roleIds);
+    const nami = await service.addDirectly(guildId, '700000000000000004', 'Nami', admin);
     await service.assignRosterTitle(guildId, miko!.id, 'HEAD', admin, roleIds);
     await service.assignRosterTitle(guildId, nami.id, 'DEPUTY', admin, roleIds);
     await service.assignRosterTitle(guildId, zixx!.id, 'ACCOUNTANT', admin, roleIds);
@@ -104,8 +104,8 @@ describeWithDatabase('MemberService PostgreSQL integration', () => {
     const orderGuildId = `${guildId}-roster-order`;
     await db.insert(guildSettings).values({ guildId: orderGuildId });
     try {
-      const reserve = await service.addDirectly(orderGuildId, '710000000000000001', 'A Reserve', admin, roleIds);
-      await service.addDirectly(orderGuildId, '710000000000000002', 'Z Member', admin, roleIds);
+      const reserve = await service.addDirectly(orderGuildId, '710000000000000001', 'A Reserve', admin);
+      await service.addDirectly(orderGuildId, '710000000000000002', 'Z Member', admin);
       await service.assignRosterTitle(orderGuildId, reserve.id, 'RESERVE', admin, roleIds);
 
       expect((await service.listActive(orderGuildId)).map((member) => [member.inGameName, member.rosterTitle])).toEqual([
@@ -142,6 +142,8 @@ describeWithDatabase('MemberService PostgreSQL integration', () => {
     const former = await service.findByDiscordUserId(guildId, '700000000000000001');
     const jobs = await db.select().from(scheduledJobs).where(eq(scheduledJobs.guildId, guildId));
     expect(activeMembers.map((member) => member.inGameName)).toEqual(['Nami', 'Miko']);
+    expect(former?.status).toBe('FORMER');
+    expect(jobs.filter((job) => job.jobType === 'MEMBER_ROLE_SYNC' && job.payload.discordUserId === former?.discordUserId)).toHaveLength(2);
     expect(former?.rosterTitle).toBeNull();
     expect(await db.select().from(memberFightPositions).where(eq(memberFightPositions.memberId, former!.id))).toHaveLength(0);
     expect(jobs.filter((job) => job.jobType === 'MEMBER_ROSTER_REFRESH')).toHaveLength(refreshJobsBefore + 1);

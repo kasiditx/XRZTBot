@@ -10,17 +10,9 @@ import {
 } from '../../infrastructure/db/schema.js';
 import { writeAudit } from '../audit/service.js';
 
-export interface MemberRoleSyncPayload {
-  readonly discordUserId: string;
-  readonly addRoleId: string;
-  readonly removeRoleId: string;
-}
-
 export interface MemberRoleIds {
   readonly headRoleId: string;
   readonly deputyRoleId: string;
-  readonly activeMemberRoleId: string;
-  readonly formerMemberRoleId: string;
 }
 
 export type RegistrationEligibility = 'ELIGIBLE' | 'PENDING' | 'ACTIVE';
@@ -102,9 +94,8 @@ export class MemberService {
     guildId: string,
     memberId: string,
     actorDiscordUserId: string,
-    roleIds: MemberRoleIds,
   ): Promise<Member> {
-    return this.changeMembershipStatus(guildId, memberId, actorDiscordUserId, 'ACTIVE', roleIds);
+    return this.changeMembershipStatus(guildId, memberId, actorDiscordUserId, 'ACTIVE');
   }
 
   public async addDirectly(
@@ -112,7 +103,6 @@ export class MemberService {
     discordUserId: string,
     inGameName: string,
     actorDiscordUserId: string,
-    roleIds: MemberRoleIds,
   ): Promise<Member> {
     const normalizedName = inGameName.trim();
     if (normalizedName.length < 2 || normalizedName.length > 80) {
@@ -162,7 +152,7 @@ export class MemberService {
         throw new Error('Direct member creation did not return a row');
       }
 
-      await queueRoleSync(tx, guildId, discordUserId, roleIds.activeMemberRoleId, roleIds.formerMemberRoleId, saved.id);
+      await queueRoleSync(tx, guildId, discordUserId, saved.id);
       await queueMemberRosterRefresh(tx, guildId, saved.id);
       await queueFightPositionRefresh(tx, guildId, saved.id);
       await queueRegistrationRequestSync(tx, guildId, saved.id);
@@ -262,7 +252,7 @@ export class MemberService {
         });
       }
 
-      await queueRoleSync(tx, guildId, member.discordUserId, roleIds.formerMemberRoleId, roleIds.activeMemberRoleId, member.id);
+      await queueRoleSync(tx, guildId, member.discordUserId, member.id);
       await queueAdminRoleSync(tx, guildId, member.discordUserId, null, roleIds, member.id);
       await queueMemberRosterRefresh(tx, guildId, member.id);
       await queueFightPositionRefresh(tx, guildId, member.id);
@@ -415,7 +405,6 @@ export class MemberService {
     memberId: string,
     actorDiscordUserId: string,
     targetStatus: 'ACTIVE',
-    roleIds: MemberRoleIds,
   ): Promise<Member> {
     return this.db.transaction(async (tx) => {
       const member = await lockMember(tx, guildId, memberId);
@@ -439,7 +428,7 @@ export class MemberService {
         throw new Error('Member approval did not return a row');
       }
 
-      await queueRoleSync(tx, guildId, member.discordUserId, roleIds.activeMemberRoleId, roleIds.formerMemberRoleId, member.id);
+      await queueRoleSync(tx, guildId, member.discordUserId, member.id);
       await queueMemberRosterRefresh(tx, guildId, member.id);
       await queueFightPositionRefresh(tx, guildId, member.id);
       await queueRegistrationRequestSync(tx, guildId, member.id);
@@ -479,16 +468,13 @@ async function queueRoleSync(
   tx: Transaction,
   guildId: string,
   discordUserId: string,
-  addRoleId: string,
-  removeRoleId: string,
   memberId: string,
 ): Promise<void> {
-  const payload: MemberRoleSyncPayload = { discordUserId, addRoleId, removeRoleId };
   await tx.insert(scheduledJobs).values({
     guildId,
     jobType: 'MEMBER_ROLE_SYNC',
     deduplicationKey: `member-role-sync:${memberId}:${crypto.randomUUID()}`,
-    payload: { ...payload },
+    payload: { discordUserId },
     runAt: new Date(),
   });
 }

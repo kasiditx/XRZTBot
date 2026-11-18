@@ -6,14 +6,14 @@ Discord bot สำหรับบริหารจัดการแก๊ง �
 
 Foundation, Member, Activity, Attendance/Leave, Fine, Treasury, Weekly Dues และ Stock/Withdrawal/Deposit vertical slice พร้อมสำหรับ Discord UAT:
 
-- ตั้งค่า Role: Dev, หัวแก๊ง, รองแก๊ง, สมาชิก และอดีตสมาชิก/พี่น้อง
+- ตั้งค่า Role Dev, หัวแก๊ง, รองแก๊ง และสมาชิก
 - ตั้งค่า Channel ทุกประเภทด้วย Discord ID โดยไม่ผูกกับชื่อ Channel
 - Control Panel เดียวใน Channel ของ Admin
 - สมาชิกลงทะเบียนเองด้วย Modal และรอ Admin อนุมัติ
 - คำขอลงทะเบียนแต่ละรายการถูกส่งไปยัง Channel Admin พร้อมปุ่มอนุมัติ/ปฏิเสธโดยตรง
 - Bot ป้องกันสมาชิกสถานะรอตรวจสอบหรือใช้งานกดเปิดแบบฟอร์มและส่งคำขอซ้ำ
 - Admin อนุมัติ ปฏิเสธ เพิ่มสมาชิกโดยตรง และให้ออกจากแก๊ง
-- เปลี่ยน Role สมาชิก/อดีตสมาชิกผ่าน durable job พร้อม retry
+- เพิ่ม Role สมาชิกเมื่ออนุมัติหรือเพิ่มเข้าทะเบียน และถอด Role สมาชิกเมื่อออกจากแก๊งผ่าน durable job พร้อม retry
 - รายชื่อสมาชิกสถานะใช้งานแบบ public แบ่งหน้าละ 25 คน และอัปเดตอัตโนมัติเมื่อสถานะสมาชิกเปลี่ยน
 - Dev/หัวแก๊งกำหนดตำแหน่งในรายชื่อเป็นหัวแก๊ง รองแก๊ง บัญชีแก๊ง สำรอง หรือสมาชิกทั่วไปได้ โดยเลือกจากสมาชิก ACTIVE เท่านั้น
 - ตำแหน่งหัวแก๊ง/รองแก๊งซิงก์ Discord Role อัตโนมัติ; บัญชีแก๊งและสำรองเป็นป้ายแสดงผลโดยไม่มี Role/สิทธิ์พิเศษ
@@ -85,7 +85,7 @@ Foundation, Member, Activity, Attendance/Leave, Fine, Treasury, Weekly Dues แ�
 2. เปิด `Server Members Intent`
 3. เชิญ Bot ด้วย scope `bot` และ `applications.commands`
 4. ให้ permission อย่างน้อย `Manage Roles`, `View Channels`, `Send Messages`, `Embed Links`, `Attach Files` และ `Read Message History`
-5. วาง Role ของ MiruBot ไว้สูงกว่า Role หัวแก๊ง รองแก๊ง สมาชิก และอดีตสมาชิก ไม่เช่นนั้น Discord จะไม่อนุญาตให้ Bot เปลี่ยน Role
+5. วาง Role ของ MiruBot ไว้สูงกว่า Role หัวแก๊ง รองแก๊ง และสมาชิก เพื่อให้ Bot เปลี่ยน Role ได้
 6. ห้าม commit Bot token ลง Git; เก็บใน Quaxly Environment Variables เท่านั้น
 
 ## Local setup
@@ -114,7 +114,7 @@ Environment variables:
 
 ## First-time Discord commands
 
-1. Server Owner หรือผู้มี Discord Administrator ใช้ `/mirubot setup-roles`
+1. Server Owner หรือผู้มี Discord Administrator ใช้ `/mirubot setup-roles` เลือก `dev`, `head`, `deputy` และ `member`
 2. Dev หรือหัวแก๊งใช้ `/mirubot set-channel` กำหนด Channel ทีละประเภท โดยแยก Channel ใช้งานออกจาก `รายการเช็กชื่อ (หลักฐาน Airdrop)`, `Log ส่งเงินรายสัปดาห์`, `Log เบิกเงินแก๊ง` และ `Log ค่าปรับ`; เมื่อรายการได้รับอนุมัติ รายรับ–รายจ่ายจะถูกบันทึกซ้ำใน `Log การเงินรวม (เงินแก๊ง)` พร้อมยอดคงเหลือล่าสุด
 3. ใช้ `/mirubot panel` ใน Control Channel
 4. ใช้ `/mirubot publish-registration` เพื่อส่งปุ่มลงทะเบียนไปยัง Channel ลงทะเบียนสมาชิก

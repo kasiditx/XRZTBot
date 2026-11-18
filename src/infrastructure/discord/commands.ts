@@ -24,8 +24,7 @@ const adminCommand = new SlashCommandBuilder()
       .addRoleOption((option) => option.setName('dev').setDescription('Role Dev').setRequired(true))
       .addRoleOption((option) => option.setName('head').setDescription('Role หัวแก๊ง').setRequired(true))
       .addRoleOption((option) => option.setName('deputy').setDescription('Role รองแก๊ง').setRequired(true))
-      .addRoleOption((option) => option.setName('member').setDescription('Role สมาชิกที่ใช้งานระบบ').setRequired(true))
-      .addRoleOption((option) => option.setName('former').setDescription('Role อดีตสมาชิก/พี่น้อง').setRequired(true)),
+      .addRoleOption((option) => option.setName('member').setDescription('Role สมาชิกที่ใช้งานระบบ').setRequired(true)),
   )
   .addSubcommand((command) =>
     command
@@ -100,7 +99,7 @@ const adminCommand = new SlashCommandBuilder()
   .addSubcommand((command) =>
     command
       .setName('remove-member')
-      .setDescription('ให้ออกจากแก๊งและเปลี่ยน Role เป็นอดีตสมาชิก/พี่น้อง')
+      .setDescription('ให้ออกจากแก๊งและถอด Role สมาชิก')
       .addUserOption((option) => option.setName('user').setDescription('Discord user').setRequired(true))
       .addStringOption((option) => option.setName('reason').setDescription('เหตุผล').setMinLength(2).setMaxLength(500).setRequired(true)),
   )

@@ -250,11 +250,10 @@ export class DiscordInteractionHandler {
       headRoleId: interaction.options.getRole('head', true).id,
       deputyRoleId: interaction.options.getRole('deputy', true).id,
       activeMemberRoleId: interaction.options.getRole('member', true).id,
-      formerMemberRoleId: interaction.options.getRole('former', true).id,
     };
     ensureDistinctRoleIds(roleIds);
     await this.dependencies.guildConfig.configureRoles(guild.id, roleIds);
-    await interactionResponse(interaction).editReply(buildNotice('success', 'บันทึก Role สำเร็จ', 'ระบบบันทึก Role ทั้ง 5 รายการเรียบร้อยแล้ว', 'System Setup'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'บันทึก Role สำเร็จ', 'ระบบบันทึก Role Dev, หัวแก๊ง, รองแก๊ง และสมาชิกแล้ว', 'System Setup'));
   }
 
   private async setChannel(interaction: ChatInputCommandInteraction, guild: Guild): Promise<void> {
@@ -373,10 +372,10 @@ export class DiscordInteractionHandler {
     await interactionResponse(interaction).deferReply({ flags: MessageFlags.Ephemeral });
     await this.requireAuthority(guild, interaction.user.id, 'MEMBER_MANAGE');
     const settings = await this.requireSettings(guild.id);
-    const roleIds = requireMemberRoleIds(settings);
+    requireMemberRoleIds(settings);
     const target = interaction.options.getUser('user', true);
     const inGameName = interaction.options.getString('name', true);
-    const member = await this.dependencies.members.addDirectly(guild.id, target.id, inGameName, interaction.user.id, roleIds);
+    const member = await this.dependencies.members.addDirectly(guild.id, target.id, inGameName, interaction.user.id);
     await interactionResponse(interaction).editReply(buildNotice('success', 'เพิ่มสมาชิกสำเร็จ', `<@${target.id}> • **${member.inGameName}**\nระบบกำลังซิงก์ Role อัตโนมัติ`, 'Member Management'));
   }
 
@@ -388,7 +387,7 @@ export class DiscordInteractionHandler {
     const target = interaction.options.getUser('user', true);
     const reason = interaction.options.getString('reason', true);
     await this.dependencies.members.markFormer(guild.id, target.id, interaction.user.id, reason, roleIds);
-    await interactionResponse(interaction).editReply(buildNotice('success', 'อัปเดตสถานะสมาชิกแล้ว', `<@${target.id}> ถูกเปลี่ยนเป็นอดีตสมาชิก/พี่น้อง\nระบบกำลังซิงก์ Role อัตโนมัติ`, 'Member Management'));
+    await interactionResponse(interaction).editReply(buildNotice('success', 'อัปเดตสถานะสมาชิกแล้ว', `<@${target.id}> ถูกเปลี่ยนเป็นอดีตสมาชิก\nระบบกำลังถอด Role ที่บอทจัดการ`, 'Member Management'));
   }
 
   private async showHealth(interaction: ChatInputCommandInteraction, guild: Guild): Promise<void> {
@@ -502,7 +501,8 @@ export class DiscordInteractionHandler {
       await this.requireAuthority(guild, interaction.user.id, 'MEMBER_MANAGE');
       const memberId = requireEntityId(interaction.customId, 'member:approve:');
       const settings = await this.requireSettings(guild.id);
-      const member = await this.dependencies.members.approve(guild.id, memberId, interaction.user.id, requireMemberRoleIds(settings));
+      requireMemberRoleIds(settings);
+      const member = await this.dependencies.members.approve(guild.id, memberId, interaction.user.id);
       await interaction.message.edit(buildMemberRegistrationRequest(member));
       await interactionResponse(interaction).editReply(buildNotice('success', 'อนุมัติสมาชิกแล้ว', 'สถานะคำขอและ Role กำลังซิงก์อัตโนมัติ', 'Member Registration'));
       return;
@@ -705,22 +705,19 @@ function requireMemberRoleIds(settings: GuildSettings): MemberRoleIds {
     settings.headRoleId === null
     || settings.deputyRoleId === null
     || settings.activeMemberRoleId === null
-    || settings.formerMemberRoleId === null
   ) {
-    throw new ValidationError('กรุณาตั้งค่า Role หัวแก๊ง รองแก๊ง สมาชิก และอดีตสมาชิกก่อน');
+    throw new ValidationError('กรุณาตั้งค่า Role หัวแก๊ง รองแก๊ง และสมาชิกก่อน');
   }
   return {
     headRoleId: settings.headRoleId,
     deputyRoleId: settings.deputyRoleId,
-    activeMemberRoleId: settings.activeMemberRoleId,
-    formerMemberRoleId: settings.formerMemberRoleId,
   };
 }
 
 function ensureDistinctRoleIds(roles: Record<string, string>): void {
   const ids = Object.values(roles);
   if (new Set(ids).size !== ids.length) {
-    throw new ValidationError('Role ทั้ง 5 ประเภทต้องไม่ซ้ำกัน');
+    throw new ValidationError('Role ทั้ง 4 ประเภทต้องไม่ซ้ำกัน');
   }
 }
 

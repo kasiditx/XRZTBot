@@ -42,8 +42,6 @@ import type { DailyLogPublisher } from './daily-log-publisher.js';
 
 const memberRoleSyncSchema = z.object({
   discordUserId: z.string().regex(/^\d+$/),
-  addRoleId: z.string().regex(/^\d+$/),
-  removeRoleId: z.string().regex(/^\d+$/),
 });
 
 const memberAdminRoleSyncSchema = z.object({
@@ -180,15 +178,25 @@ export function createDiscordJobHandlers(
     [
       'MEMBER_ROLE_SYNC',
       async (job) => {
-        const payload = memberRoleSyncSchema.parse(job.payload);
-        const guild = await client.guilds.fetch(job.guildId);
-        const member = await guild.members.fetch(payload.discordUserId);
-
-        if (member.roles.cache.has(payload.removeRoleId)) {
-          await member.roles.remove(payload.removeRoleId, 'MiruBot member status synchronization');
+        const { discordUserId } = memberRoleSyncSchema.parse(job.payload);
+        // Retries and older jobs must follow current membership, without applying obsolete role IDs.
+        const [membership, settings] = await Promise.all([
+          members.findByDiscordUserId(job.guildId, discordUserId),
+          guildConfig.get(job.guildId),
+        ]);
+        if (membership === null) return;
+        const roleId = settings?.activeMemberRoleId;
+        if (roleId === undefined || roleId === null) {
+          throw new ValidationError('กรุณาตั้งค่า Role สมาชิกก่อน');
         }
-        if (!member.roles.cache.has(payload.addRoleId)) {
-          await member.roles.add(payload.addRoleId, 'MiruBot member status synchronization');
+        const guild = await client.guilds.fetch(job.guildId);
+        const member = await guild.members.fetch(discordUserId);
+        const shouldHaveRole = membership.status === 'ACTIVE';
+        if (shouldHaveRole === member.roles.cache.has(roleId)) return;
+        if (shouldHaveRole) {
+          await member.roles.add(roleId, 'MiruBot member status synchronization');
+        } else {
+          await member.roles.remove(roleId, 'MiruBot member status synchronization');
         }
       },
     ],

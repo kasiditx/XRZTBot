@@ -39,7 +39,6 @@ export interface RoleSettingsInput {
   readonly headRoleId: string;
   readonly deputyRoleId: string;
   readonly activeMemberRoleId: string;
-  readonly formerMemberRoleId: string;
 }
 
 export class GuildConfigService {
